@@ -3,6 +3,14 @@
 # BBDown
 一款命令行式哔哩哔哩下载器. Bilibili Downloader.
 
+# 快速开始
+本软件已经以 [Dotnet Tool](https://www.nuget.org/packages/BBDown/) 形式发布  
+
+如果你本地有dotnet环境，使用如下命令即可安装使用
+```
+dotnet tool install --global BBDown
+```
+
 # 下载
 https://github.com/nilaoda/BBDown/releases
 
@@ -20,6 +28,7 @@ Arguments:
 
 Options:
   -tv, --use-tv-api                    使用TV端解析模式
+  -intl, --use-intl-api                使用国际版解析模式
   -hevc, --only-hevc                   只下载hevc编码
   -info, --only-show-info              仅解析而不进行下载
   -hs, --hide-streams                  不要显示所有可用音视频流

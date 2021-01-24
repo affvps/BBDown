@@ -82,6 +82,11 @@ namespace BBDown
                     string mid = Regex.Match(input, "space.bilibili.com/(\\d{1,})").Groups[1].Value;
                     return $"mid:{mid}";
                 }
+                else if (input.Contains("ep_id="))
+                {
+                    string epId = GetQueryString("ep_id", input);
+                    return $"ep:{epId}";
+                }
                 else
                 {
                     string web = GetWebSource(input);
@@ -93,15 +98,15 @@ namespace BBDown
             }
             else if (input.StartsWith("BV"))
             {
-                return GetAidByBV(input.Replace("BV", ""));
+                return GetAidByBV(input.Substring(2));
             }
             else if (input.StartsWith("bv"))
             {
-                return GetAidByBV(input.Replace("bv", ""));
+                return GetAidByBV(input.Substring(2));
             }
             else if (input.ToLower().StartsWith("av")) //av
             {
-                return input.ToLower().Replace("av", "");
+                return input.ToLower().Substring(2);
             }
             else if (input.StartsWith("ep"))
             {
