@@ -1,13 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace BBDown
+﻿namespace BBDown.Core
 {
-    class BBDownLogger
+    public class Logger
     {
-        public static bool DEBUG_LOG = false;
-
         public static void Log(object text, bool enter = true)
         {
             Console.Write(DateTime.Now.ToString("[yyyy-MM-dd HH:mm:ss.fff]") + " - " + text);
@@ -36,13 +30,29 @@ namespace BBDown
             Console.WriteLine();
         }
 
+        public static void LogWarn(object text, bool time = true)
+        {
+            if (time)
+                Console.Write(DateTime.Now.ToString("[yyyy-MM-dd HH:mm:ss.fff]") + " - ");
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            if (time)
+                Console.Write(text);
+            else
+                Console.Write("                            " + text);
+            Console.ResetColor();
+            Console.WriteLine();
+        }
+
         public static void LogDebug(string toFormat, params object[] args)
         {
-            if (DEBUG_LOG)
+            if (Config.DEBUG_LOG)
             {
                 Console.ForegroundColor = ConsoleColor.DarkGray;
                 Console.Write(DateTime.Now.ToString("[yyyy-MM-dd HH:mm:ss.fff]") + " - ");
-                Console.Write(string.Format(toFormat, args).Trim());
+                if (args.Length > 0)
+                    Console.Write(string.Format(toFormat, args).Trim());
+                else
+                    Console.Write(toFormat);
                 Console.ResetColor();
                 Console.WriteLine();
             }
