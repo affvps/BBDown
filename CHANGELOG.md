@@ -2,6 +2,12 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **选项值以 `-` 开头时无法用空格写法传入**：`BBDown sub add mid:19231317 --name "-尾野"` 此前报 `Option 'name' is defined but no value has been provided.`——Spectre.Console.Cli 的 tokenizer 把任何以 `-` 开头的 argv 一律判为选项，值以 `-` 开头的场景（订阅显示名、以 `-` 开头的路径/正则/文件模式等）只能用等号或冒号写法传。现在 argv 预处理会按 GNU getopt 语义把这类值并入前一个取值选项（`--name -尾野` → `--name=-尾野`），命令行与 `BBDown.config` 同样生效。两条护栏：bool 开关后面的 `-` 开头 token 不合并（`--skip-mux --skip-subtitle` 仍是合法写法），下一个 token 是已知选项名时不合并（漏写值的 `--name --cookie x` 仍报原错误）。
+
 ## [1.6.21] - 2026-09-26
 
 ### 新增

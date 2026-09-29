@@ -156,6 +156,12 @@ partial class Program
             return 130;
         }
 
+        // 选项值以 '-' 开头时补齐 getopt 语义：`--name -尾野` → `--name=-尾野`
+        // （Spectre 的 tokenizer 把任何以 '-' 开头的 argv 都判为选项，否则报
+        // "Option 'name' is defined but no value has been provided."）。放在配置合并
+        // 之后：配置文件里的值同样以独立 token 透传给 Spectre，漏合并会得到同一个报错。
+        mergedArgs = CliArgJoiner.JoinDashLeadingOptionValues(mergedArgs);
+
         if (mergedArgs.Contains("--debug"))
         {
             Config.Apply(Config.Current with { DebugLog = true });

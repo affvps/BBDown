@@ -1,10 +1,8 @@
 using System;
 using BBDown.Core;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Spectre.Console.Cli;
@@ -23,25 +21,6 @@ internal static partial class BBDownConfigParser
     private static readonly string[] SubCommandNames =
         { "login", "logintv", "serve", "live", "article", "watchlater", "sub" };
 
-    /// <summary>不消耗值的选项（bool 开关）的规范属性名。</summary>
-    private static readonly HashSet<string> FlagOptionCanonicals = BuildFlagCanonicals();
-
-    private static HashSet<string> BuildFlagCanonicals()
-    {
-        var flags = new HashSet<string>(StringComparer.Ordinal);
-        void ScanType([System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
-        {
-            foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                if (prop.GetCustomAttribute<CommandOptionAttribute>() != null && prop.PropertyType == typeof(bool))
-                    flags.Add(prop.Name);
-            }
-        }
-        ScanType(typeof(MyOption));
-        ScanType(typeof(Commands.ServeSettings));
-        return flags;
-    }
-
     /// <summary>
     /// 判断本次调用是否是子命令。子命令总是第一个位置参数；
     /// 需要值的选项会吞掉下一个 token，扫描时必须跳过，否则
@@ -49,7 +28,6 @@ internal static partial class BBDownConfigParser
     /// </summary>
     internal static bool IsSubCommandInvocation(string[] args)
     {
-        var aliasMap = BuildAliasMap();
         for (int i = 0; i < args.Length; i++)
         {
             var arg = args[i];
@@ -59,7 +37,7 @@ internal static partial class BBDownConfigParser
             var token = arg;
             var eq = token.IndexOf('=');
             if (eq > 0) continue; // "--opt=value"：值已含在 token 内，不消耗下一项
-            if (aliasMap.TryGetValue(token, out var canonical) && !FlagOptionCanonicals.Contains(canonical))
+            if (CliOptionIndex.TakesValue(token))
                 i++; // 该选项需要值：下一 token 是它的值，跳过
         }
         return false;
@@ -76,7 +54,6 @@ internal static partial class BBDownConfigParser
     /// </summary>
     internal static List<string> GetPositionalTokens(string[] args)
     {
-        var aliasMap = BuildAliasMap();
         var positionals = new List<string>();
         for (int i = 0; i < args.Length; i++)
         {
@@ -89,7 +66,7 @@ internal static partial class BBDownConfigParser
             var token = arg;
             var eq = token.IndexOf('=');
             if (eq > 0) continue; // "--opt=value"：值已含在 token 内，不消耗下一项
-            if (aliasMap.TryGetValue(token, out var canonical) && !FlagOptionCanonicals.Contains(canonical))
+            if (CliOptionIndex.TakesValue(token))
                 i++; // 该选项需要值：下一 token 是它的值，跳过
         }
         return positionals;
@@ -161,8 +138,6 @@ internal static partial class BBDownConfigParser
             return result;
         }
 
-        var aliasMap = BuildAliasMap();
-
         // 命令行已显式给出 URL 时，配置文件里的位置参数（URL）不再合并，
         // 否则 MyOption 只声明一个 <URL> 位置参数，Spectre 会报 unexpected positional argument。
         // 与"命令行显式给出的选项必须压过配置文件"的合并原则保持一致。
@@ -179,7 +154,7 @@ internal static partial class BBDownConfigParser
             var token = cliArgs[i];
             var eq = token.IndexOf('=');
             if (eq > 0) token = token[..eq];
-            if (aliasMap.TryGetValue(token, out var canonical))
+            if (CliOptionIndex.TryGetCanonical(token, out var canonical))
             {
                 explicitOptions.Add(canonical);
             }
@@ -195,7 +170,7 @@ internal static partial class BBDownConfigParser
                 continue;
             }
 
-            if (aliasMap.TryGetValue(name, out var canonical))
+            if (CliOptionIndex.TryGetCanonical(name, out var canonical))
             {
                 if (!explicitOptions.Contains(canonical))
                 {
@@ -203,7 +178,7 @@ internal static partial class BBDownConfigParser
                     i++;
                     // 收集该选项的值。仅当"以 - 开头且是已知选项名"时才视为下一个选项终止收集：
                     // 否则配置文件里值本身以 - 开头（如 --access-token -abc、负数参数）会被误当选项丢弃。
-                    while (i < configArgs.Count && (!configArgs[i].StartsWith('-') || !aliasMap.ContainsKey(configArgs[i])))
+                    while (i < configArgs.Count && (!configArgs[i].StartsWith('-') || !CliOptionIndex.IsKnownOption(configArgs[i])))
                     {
                         result.Add(configArgs[i]);
                         i++;
@@ -213,7 +188,7 @@ internal static partial class BBDownConfigParser
                 {
                     i++;
                     // 命令行已显式指定该选项：跳过配置文件里的值，判定规则同上
-                    while (i < configArgs.Count && (!configArgs[i].StartsWith('-') || !aliasMap.ContainsKey(configArgs[i]))) i++;
+                    while (i < configArgs.Count && (!configArgs[i].StartsWith('-') || !CliOptionIndex.IsKnownOption(configArgs[i]))) i++;
                 }
             }
             else
@@ -225,34 +200,5 @@ internal static partial class BBDownConfigParser
 
         Logger.LogDebug("新的命令行参数: " + string.Join(" ", result));
         return result;
-    }
-
-    private static Dictionary<string, string> BuildAliasMap()
-    {
-        var map = new Dictionary<string, string>();
-
-        void ScanType([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
-        {
-            foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                var attr = prop.GetCustomAttribute<CommandOptionAttribute>();
-                if (attr != null)
-                {
-                    var canonical = prop.Name;
-                    foreach (var name in attr.LongNames)
-                    {
-                        map["--" + name] = canonical;
-                    }
-                    foreach (var name in attr.ShortNames)
-                    {
-                        map["-" + name] = canonical;
-                    }
-                }
-            }
-        }
-
-        ScanType(typeof(MyOption));
-        ScanType(typeof(Commands.ServeSettings));
-        return map;
     }
 }
