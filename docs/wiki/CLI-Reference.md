@@ -22,6 +22,18 @@ BBDown [选项] <URL或标识符>
 | **公开收藏夹** | `https://space.bilibili.com/163637592/favlist?fid=123456` |
 | **合集与系列** | `https://space.bilibili.com/163637592/channel/seriesdetail?sid=12345` |
 
+### 1.2 选项值的书写形式
+
+同一份参数的三种写法等价，全部子命令通用：
+
+| 写法 | 示例 |
+| :--- | :--- |
+| 空格分隔 | `BBDown sub add mid:19231317 --name "尾野"` |
+| 等号 | `BBDown sub add mid:19231317 --name=尾野` |
+| 冒号 | `BBDown sub add mid:19231317 --name:尾野` |
+
+值本身以 `-` 开头时（订阅显示名 `-尾野`、以 `-` 开头的路径/正则/文件模式等）三种写法都可以——空格写法会由 argv 预处理按 GNU getopt 语义并入选项（`--name -尾野` → `--name=-尾野`）。唯一例外是值恰好与某个选项同名（如 `--name --debug`）：空格写法会被判为"漏写了值"并报 `Option 'name' is defined but no value has been provided.`，改用等号写法即可。
+
 ---
 
 ## 2. 完整参数速查总表
