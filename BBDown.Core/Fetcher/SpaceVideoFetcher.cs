@@ -12,8 +12,10 @@ namespace BBDown.Core.Fetcher;
 ///
 /// 投稿列表接口不返回 cid，而 Page 必须要有，因此需要逐个请求视频详情来展开分P。
 /// 这意味着一次解析会发出「投稿数」量级的请求，风控与瞬时故障都必须认真处理。
+/// 只关心"有哪些稿件、哪些没下载过"的调用方（sub check 增量扫描）应改用
+/// <see cref="IAidLister"/>（<see cref="ListNewAidsAsync"/>）走轻量列举，不要为此付全量展开的代价。
 /// </summary>
-public class SpaceVideoFetcher : IFetcher
+public class SpaceVideoFetcher : IFetcher, IAidLister
 {
     private const int PageSize = 50;
 
@@ -70,6 +72,108 @@ public class SpaceVideoFetcher : IFetcher
             // 自动降级永远不会触发
             IsSteinGate = steinGate,
         };
+    }
+
+    /// <summary>
+    /// <see cref="IAidLister"/> 实现：只枚举新投稿的 aid，不展开分P详情。
+    /// 对比 <see cref="FetchAsync"/>——后者要为每个投稿发一次详情请求（本项目里最贵的一步），
+    /// 而 sub check 只需要 aid 集合。
+    /// </summary>
+    public async Task<List<string>> ListNewAidsAsync(string id, IReadOnlySet<string> known, bool fullScan, CancellationToken cancellationToken = default)
+    {
+        var mid = id[4..];
+        // 与 FetchAsync 同因：投稿列表接口需要设备标识，未登录时 Cookie 为空。
+        // EnsureAsync 返回注入后的新 Cookie，必须在本方法流程内显式应用（AsyncLocal 写入不回流，
+        // 见 BuvidProvider 说明），否则后续请求读到的仍是空 buvid3。
+        var updatedCookie = await BuvidProvider.EnsureAsync(cancellationToken);
+        if (updatedCookie is not null) Core.Config.COOKIE_FLOW = updatedCookie;
+
+        return await CollectNewAidsAsync(mid, known, fullScan,
+            async pageNumber =>
+            {
+                var (entries, totalCount) = await FetchPageAsync(pageNumber, mid, cancellationToken);
+                return (entries.Select(e => e.Aid).ToList(), totalCount);
+            },
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// 逐页收集"尚未下载过"的 aid，遇到**整页都已下载过**即停止翻页。
+    ///
+    /// 投稿列表接口固定 order=pubdate（倒序），因此某页全部命中订阅历史时，更旧的页
+    /// 必然也都是已下载过的内容——继续翻页只是白花请求额度并加重风控。判据取"整页"
+    /// 而非"遇到第一个已下载 aid"：列表在翻页期间会被 UP 主新增/删除稿件扰动，按单个
+    /// 已下载条目停会更容易漏掉边界上的新投稿。
+    ///
+    /// 代价（文档已明示）：停止点**之后**的页里若存在历史中没有的稿件（例如上次下载失败、
+    /// 或手动清理过历史），增量模式不会发现它——需要 <paramref name="fullScan"/>
+    /// （CLI: <c>sub check --full-scan</c>）重扫；已扫到的页内则不受影响，未知 aid 会让该页
+    /// 继续被判为"有新增"，扫描不会在那里提前结束。
+    /// </summary>
+    /// <remarks>页抓取以委托注入，便于用假分页做单测（本方法本身不触网）。</remarks>
+    internal static async Task<List<string>> CollectNewAidsAsync(
+        string mid,
+        IReadOnlySet<string> known,
+        bool fullScan,
+        Func<int, Task<(IReadOnlyList<string> Aids, int TotalCount)>> fetchPage,
+        CancellationToken cancellationToken)
+    {
+        var newAids = new List<string>();
+        // 翻页期间 UP 主新增投稿会让边界条目在相邻两页各出现一次（与全量解析路径同因）。
+        var seen = new HashSet<string>();
+        var pageNumber = 1;
+
+        var (firstAids, totalCount) = await fetchPage(pageNumber);
+        if (firstAids.Count == 0)
+        {
+            throw new InvalidOperationException($"未获取到 mid:{mid} 的任何投稿视频");
+        }
+        var pageHasNew = AddNewAids(newAids, seen, firstAids, known);
+
+        var totalPage = Math.Max(1, (int)Math.Ceiling((double)totalCount / PageSize));
+        while (pageNumber < totalPage && (fullScan || pageHasNew))
+        {
+            pageNumber++;
+            Logger.Log($"正在获取第 {pageNumber}/{totalPage} 页投稿列表...");
+            var (moreAids, _) = await fetchPage(pageNumber);
+            // 空页意味着接口提前结束（翻页上限、风控降级、条目在翻页间被删减）；继续翻页
+            // 既拿不到数据又会平白加重风控（与全量解析路径同一判据）。
+            if (moreAids.Count == 0)
+            {
+                Logger.LogWarn($"第 {pageNumber} 页未返回任何投稿，停止翻页（已取到 {seen.Count}/{totalCount} 个）");
+                break;
+            }
+            pageHasNew = AddNewAids(newAids, seen, moreAids, known);
+        }
+
+        if (!fullScan && !pageHasNew && pageNumber < totalPage)
+        {
+            Logger.Log($"第 {pageNumber} 页起均为已下载过的内容，提前结束扫描（共 {totalPage} 页；--full-scan 可强制全量扫描）");
+        }
+        else if (totalCount > 0 && seen.Count < totalCount)
+        {
+            // 翻完了全部页却少于接口声称的数量时必须出声，否则用户会把残缺列表当成完整结果
+            Logger.LogWarn($"接口声称共 {totalCount} 个投稿，实际只取到 {seen.Count} 个");
+        }
+
+        return newAids;
+    }
+
+    /// <summary>
+    /// 把本页"尚未下载过且未见过"的 aid 追加进结果，返回本页是否有新增。
+    /// 跨页边界重复的 aid 已被上一页收进结果，不计为本页新增（否则会在边界反复多翻一页）。
+    /// </summary>
+    private static bool AddNewAids(List<string> target, HashSet<string> seen, IReadOnlyList<string> aids, IReadOnlySet<string> known)
+    {
+        var anyNew = false;
+        foreach (var aid in aids)
+        {
+            if (string.IsNullOrEmpty(aid) || !seen.Add(aid)) continue;
+            if (known.Contains(aid)) continue;
+            target.Add(aid);
+            anyNew = true;
+        }
+        return anyNew;
     }
 
     private static async Task<(List<Page> pages, bool steinGate)> ExpandEntriesAsync(
