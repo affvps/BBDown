@@ -78,6 +78,10 @@ public class SubCheckSettings : SubSettings
     [CommandOption("--per-sub-dir")]
     [Description("每个订阅下载到 <work-dir>/<订阅名>/ 子目录(订阅名取 sub add --name, 缺省为 target, 经路径净化)")]
     public bool PerSubDir { get; set; }
+
+    [CommandOption("--full-scan")]
+    [Description("禁用增量提前结束: 无视已下载历史翻完所有投稿列表页(默认遇到整页均已下载即停止翻页)")]
+    public bool FullScan { get; set; }
 }
 
 [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
@@ -202,8 +206,20 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
     /// 逐订阅检查并增量下载新内容，返回失败的订阅数。用户取消与订阅数据损坏异常原样上抛，
     /// 由 <see cref="SubCheckCommand.ExecuteAsync"/> 分类为退出码（RF-30/RF-32）。
     /// </summary>
-    private static async Task<int> CheckSubscriptionsAsync(List<Subscription> subs, SubCheckSettings settings, CancellationToken cancellationToken)
+    /// <param name="fetcherFactory">
+    /// RF-97：fetcher 创建点改为可注入（默认仍为 <see cref="FetcherFactory.CreateFetcher"/>），
+    /// 使"mid: 目标是否真的走 <see cref="IAidLister"/> 轻量路径"这一接线可被单测钉住。
+    /// 此前 PR 新增的 10 例全部只测 <c>SpaceVideoFetcher.CollectNewAidsAsync</c>，把本方法的
+    /// <c>fetcher is IAidLister</c> 分支强制失效后 746 例仍全绿——性能优化被静默旁路是这类
+    /// 改动最常见的回归形态。
+    /// </param>
+    internal static async Task<int> CheckSubscriptionsAsync(
+        List<Subscription> subs,
+        SubCheckSettings settings,
+        CancellationToken cancellationToken,
+        Func<string, bool, IFetcher>? fetcherFactory = null)
     {
+        var createFetcher = fetcherFactory ?? FetcherFactory.CreateFetcher;
         // -w 已由 ExecuteAsync 经 TryResolveWorkDir 绝对化且只解析一次（RF-89）：本方法内不得
         // 再解析——循环前的解析点不在任何 try 内，抛出的 ArgumentException 会逃出命令级
         // 异常过滤器（ExecuteAsync 只捕获 OperationCanceledException）。
@@ -224,12 +240,26 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
                 string resolved = await UrlResolver.ResolveAsync(sub.Target, cancellationToken);
                 if (string.IsNullOrEmpty(resolved)) continue;
 
-                var fetcher = FetcherFactory.CreateFetcher(resolved, settings.UseIntlApi);
-                var vInfo = await fetcher.FetchAsync(resolved, cancellationToken);
+                var fetcher = createFetcher(resolved, settings.UseIntlApi);
 
-                var allAids = vInfo.PagesInfo.Select(p => p.aid).Where(a => !string.IsNullOrEmpty(a)).Distinct().ToList();
                 var history = await SubscriptionStore.LoadHistoryAsync(sub.Target, cancellationToken);
-                var newAids = allAids.Where(a => !history.Contains(a)).ToList();
+
+                // 列表型目标（mid:，见 IAidLister）走轻量列举：IFetcher.FetchAsync 会为
+                // **每个**投稿再发一次详情请求展开分P（千稿量级请求 + 120ms 间隔，单订阅即
+                // 十秒到分钟级且显著加重风控），而这里只关心 aid 集合——每个新 aid 的下载
+                // （DoWorkAsync → av{aid}）本来就会各自重新解析一次。
+                // 未实现 IAidLister 的目标（收藏夹/合集/番剧等）保持原全量解析路径。
+                List<string> newAids;
+                if (fetcher is IAidLister lister)
+                {
+                    newAids = await lister.ListNewAidsAsync(resolved, history, settings.FullScan, cancellationToken);
+                }
+                else
+                {
+                    var vInfo = await fetcher.FetchAsync(resolved, cancellationToken);
+                    var allAids = vInfo.PagesInfo.Select(p => p.aid).Where(a => !string.IsNullOrEmpty(a)).Distinct().ToList();
+                    newAids = allAids.Where(a => !history.Contains(a)).ToList();
+                }
 
                 if (newAids.Count == 0)
                 {

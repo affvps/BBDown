@@ -455,3 +455,29 @@
 | 基线（消纳后） | ✅ dotnet build Release 0 警告 0 错误；dotnet format --verify-no-changes exit 0 |
 
 | Info 级观察（不登记 RF） | ① PR #50 提交时 `statusCheckRollup` 为空：fork 首次贡献者的 `pull_request` workflow 处于 `action_required`，需维护者批准后才运行（master 保护要求 `Build & Test`/`Format Check`/`NuGet Vulnerability Scan` 三项）——`mergeStateStatus: BLOCKED` 由此而来而非冲突，合并前必须先批准 workflow。② `ResolveSubDirName` 为测试便利而暴露 `internal` + 外部 `HashSet<string>` 参数；若后续扩展分目录命名逻辑，可考虑封装为独立小类 |
+
+---
+
+## 第 18 轮：PR #53 / PR #55 审查 + 消纳（2026-09-30）
+
+> 本轮对象为两个外部贡献 PR（#53 `fix(cli): 选项值以 '-' 开头时可用空格写法传入`，Closes #52；#55 `perf(sub): sub check 增量扫描改为轻量列举 aid（不再逐个展开投稿）+ --full-scan`，Closes #54；作者均为 Weidows），非全库续审。审查方式：源码精读 + **隔离 worktree 内实构建/实测试/A-B 对比** + Spectre 行为探针 + **变异验证**。新发现 **2 Medium + 3 Low**，登记 REVIEW_FINDINGS（RF-94~RF-98），并在**各自 PR 分支内**由维护者提交完成消纳（`maintainerCanModify` 开启）。
+
+| 项 | 结果 |
+|----|------|
+| 基线复现（#52） | ✅ A/B 实测：基线 10e1049 下 `sub add mid:19231317 --name "-尾野"` 报 `Option 'name' is defined but no value has been provided.`（退出码 1）；`BBDown.config` 侧 `--work-dir` + `-wdtest` 报 `Option 'work-dir' is defined but no value has been provided.`（issue 描述的 `Short option does not have a valid name.` 文案与实测不符，结论本身成立） |
+| PR #53 有效性 | ✅ 修复后同命令行输出 `已添加订阅`，`sub list` 显示 `[-尾野]`；配置文件侧正常解析；`--name --cookie x` 保持原报错（非零退出且不写订阅） |
+| PR #53 关键假设 | ✅ 自建 Spectre 探针（驱动 `CommandApp`）：合并产出的 `-q=-1080P`（短选项+等号）、`--name=-尾野`、文档宣称的 `--name:-尾野`（冒号）三种形式均被正确绑定——原 PR 单测只钉字符串合并结果，未钉上游库接受该形式 |
+| PR #53 护栏 | ✅ bool 开关不合并（`--skip-mux --skip-subtitle` 实测无 `Flags cannot be assigned a value`）；下一 token 是已知选项名时不合并（恢复原 `no value` 报错） |
+| PR #55 有效性 | ✅ 路径核对：旧路径确为逐稿 `NormalInfoFetcher` 展开 + 120ms 间隔而调用方只取 aid；新路径只翻投稿列表页（issue 的机制描述属实；性能数字无法离线复现，机制与请求量降幅一致） |
+| PR #55 历史键一致性 | ✅ **排除错位风险**：旧路径写历史的 aid 来自 `NormalInfoFetcher` 的 `new Page(..., id, ...)`，其 `id` 即空间列表 `entry.Aid`；新路径比较同一 `entry.Aid`，同源同格式（`Page.aid` 的 `SanitizePathSegment` 对纯数字 aid 为恒等变换） |
+| PR #55 边界 | ✅ 首屏空抛错、空页 break 不丢结果、`page.count` 解析、跨页去重、`pageNumber < totalPage` 均与既有 `FetchAllEntriesAsync` 对齐；`IsSteinGate` 旧路径本就丢弃，无语义损失 |
+| RF-94 (M) | ✅ 入口 E2E +3 例（进程内直调 `Program.Main`，覆盖 argv→配置合并→并入→Spectre→命令执行）；变异验证：禁用入口调用则 2 例失败 |
+| RF-95 (L) | ✅ `SettingsTypeCatalog` 反射枚举 + AOT root 对拍；当场发现三处硬编码清单都漏掉的 `SubSettings`/`ServeRequestOptions` |
+| RF-96 (L) | ✅ `CliOptionIndex` 前提固化 + canonical 类型一致性用例（102 属性 / 132 token 全量核对无冲突） |
+| RF-97 (M) | ✅ `CheckSubscriptionsAsync` 可注入 fetcher 工厂 + `SubCheckPathSelectionTests` 5 例；变异验证：强制旁路轻量路径则 4 例失败 |
+| RF-98 (L) | ✅ README 提示 + wiki「已知限制与建议」小节 |
+| 测试 | ✅ #53 分支 **757/757 全绿**（750 + 7）；#55 分支 **751/751 全绿**（746 + 5）；新增用例均经**变异验证** |
+| 两 PR 组合 | ✅ 本地虚拟合并：唯一冲突 `CHANGELOG.md`（纯格式），解冲突后 build 0 警告 0 错误、**760/760 全绿**、`dotnet format --verify-no-changes` exit 0 |
+| 合并 | ✅ 走 merge commit（自定义标题+正文，沿 PR #50 先例）；CI 三项必过检查（`Build & Test`/`Format Check`/`NuGet Vulnerability Scan`）全绿后合并 |
+
+| Info 级观察（不登记 RF） | ① `sub check` 轻量路径不再触发旧路径的"逐稿展开连续失败 ≥5 即中止"早失败——详情 API 系统性风控时会退化成"发现 N 个新内容 + 逐个下载失败"（退出码仍非 0、错误仍逐条打印），请求量更大、诊断粒度更粗，判定可接受。② 两 PR 均为作者自建 issue 自修复（issue 与 PR 同分钟创建），符合 CONTRIBUTING 的 issue-first 要求；`CHANGELOG.md` 的 `## [未发布]` 小节两者都要新增，合并第二个前需 rebase 一次。③ `REVIEW_FINDINGS.md` 的「状态总览」表此前只维护到 RF-88（RF-89~RF-93 只有详情段、无索引行），本轮一并补齐 89~98 的索引行，消除该文档漂移。 |
