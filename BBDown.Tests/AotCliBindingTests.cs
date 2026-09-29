@@ -1,5 +1,4 @@
 using System.Reflection;
-using BBDown.Commands;
 using Spectre.Console.Cli;
 
 namespace BBDown.Tests;
@@ -25,22 +24,38 @@ public class AotCliBindingTests
         typeof(string), typeof(int), typeof(bool),
     ];
 
-    public static TheoryData<Type> SettingsTypes =>
-    [
-        // RF-76：必须覆盖全部命令的 Settings 类型——先前列了 3 个（MyOption/Serve/Login），
-        // 子命令参数类型改动不会失败（如把 WatchLaterSettings.Limit 改成非 AOT 安全类型），
-        // 直到用户拿到 release 二进制才发现。
-        typeof(MyOption),
-        typeof(ServeSettings),
-        typeof(LoginSettings),
-        typeof(LiveSettings),
-        typeof(ArticleSettings),
-        typeof(WatchLaterSettings),
-        typeof(SubAddSettings),
-        typeof(SubListSettings),
-        typeof(SubRemoveSettings),
-        typeof(SubCheckSettings),
-    ];
+    public static TheoryData<Type> SettingsTypes
+    {
+        get
+        {
+            // RF-76：必须覆盖全部命令的 Settings 类型——先前列了 3 个（MyOption/Serve/Login），
+            // 子命令参数类型改动不会失败（如把 WatchLaterSettings.Limit 改成非 AOT 安全类型），
+            // 直到用户拿到 release 二进制才发现。
+            // RF-95：清单改为反射枚举（SettingsTypeCatalog），新增命令自动纳入，不再三处各自硬编码。
+            var data = new TheoryData<Type>();
+            foreach (var type in SettingsTypeCatalog.All) data.Add(type);
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// RF-95：<see cref="Program.Main"/> 上的 <c>[DynamicDependency]</c> root 清单也必须覆盖全部
+    /// Settings 类型。这份清单是本项目 Native AOT 下 Spectre 反射绑定能工作的唯一依据，但它是
+    /// 手写的——新增命令时漏 root，日常 JIT 测试完全不会暴露，只有发布产物的 AOT smoke 才会炸。
+    /// 这里把它与反射枚举的 Settings 集合对拍。
+    /// </summary>
+    [Fact]
+    public void EverySettingsType_IsRootedForAot()
+    {
+        var missing = SettingsTypeCatalog.All
+            .Where(t => !SettingsTypeCatalog.AotRootedTypes.Contains(t))
+            .Select(t => t.Name)
+            .ToList();
+
+        Assert.True(missing.Count == 0,
+            $"以下 Settings 类型未被 Program.Main 的 [DynamicDependency] root，Native AOT 下绑定会失败：" +
+            $"{string.Join(", ", missing)}。请在 Program.cs 的 Main 上补 [DynamicDependency(All, typeof(...))]。");
+    }
 
     [Theory]
     [MemberData(nameof(SettingsTypes))]

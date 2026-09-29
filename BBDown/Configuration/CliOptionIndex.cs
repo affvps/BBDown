@@ -23,7 +23,14 @@ internal static class CliOptionIndex
     /// <summary>token → canonical 属性名；只含本项目声明的选项，未知 token 不在其中。</summary>
     private static readonly Dictionary<string, string> AliasMap = new(StringComparer.Ordinal);
 
-    /// <summary>不消耗值的选项（bool 开关）的 canonical 属性名。</summary>
+    /// <summary>
+    /// 不消耗值的选项（bool 开关）的 canonical 属性名。
+    ///
+    /// RF-96：bool 与否是**按属性名（canonical）**记录的，因此隐含前提是“同名选项属性在所有
+    /// Settings 里的类型一致”。当前 10 个 Settings 无冲突（已全量核对 102 个 option 属性 /
+    /// 132 个别名 token），且该前提由 <c>CliArgJoinerTests.CanonicalPropertyName_HasConsistentTypeAcrossSettings</c>
+    /// 钉住：新增命令复用同名属性却换非 bool 类型时会在那里失败，而不是静默把取值选项当开关。
+    /// </summary>
     private static readonly HashSet<string> FlagCanonicals = new(StringComparer.Ordinal);
 
     /// <summary>已扫描的 Settings 类型（按声明顺序）。</summary>
@@ -31,13 +38,15 @@ internal static class CliOptionIndex
 
     static CliOptionIndex()
     {
-        // 新增命令时补上其 Settings 类型（同一清单也出现在 AotCliBindingTests）。
+        // 新增命令时补上其 Settings 类型（RF-95：CliArgJoinerTests.OptionIndex_CoversEverySettingsType
+        // 以反射枚举对拍本清单，漏加会让子命令选项在 argv 预处理里被当成未知 token）。
         ScanOptionType(typeof(MyOption));
         ScanOptionType(typeof(ServeSettings));
         ScanOptionType(typeof(LoginSettings));
         ScanOptionType(typeof(LiveSettings));
         ScanOptionType(typeof(ArticleSettings));
         ScanOptionType(typeof(WatchLaterSettings));
+        ScanOptionType(typeof(SubSettings));
         ScanOptionType(typeof(SubAddSettings));
         ScanOptionType(typeof(SubListSettings));
         ScanOptionType(typeof(SubRemoveSettings));

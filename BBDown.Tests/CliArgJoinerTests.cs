@@ -1,5 +1,4 @@
 using System.Reflection;
-using BBDown.Commands;
 using Spectre.Console.Cli;
 
 namespace BBDown.Tests;
@@ -107,32 +106,58 @@ public class CliArgJoinerTests
         Assert.Equal([only], Join(only));
     }
 
-    /// <summary>全部命令的 Settings 类型（与 AotCliBindingTests 同一清单）。</summary>
-    private static readonly Type[] AllSettingsTypes =
-    [
-        typeof(MyOption),
-        typeof(ServeSettings),
-        typeof(LoginSettings),
-        typeof(LiveSettings),
-        typeof(ArticleSettings),
-        typeof(WatchLaterSettings),
-        typeof(SubAddSettings),
-        typeof(SubListSettings),
-        typeof(SubRemoveSettings),
-        typeof(SubCheckSettings),
-    ];
+    /// <summary>全部命令的 Settings 类型（RF-95：反射枚举，与 AotCliBindingTests 共用同一份真相）。</summary>
+    private static IReadOnlyList<Type> AllSettingsTypes => SettingsTypeCatalog.All;
 
     /// <summary>
     /// 索引必须覆盖**全部命令**的 Settings：遗漏子命令会让 sub 的 <c>--name</c>
     /// 不再被识别为取值选项，本 PR 的修复对子命令整体失效（且失败方式是静默的——
-    /// 只是回到旧的报错），因此这条清单同时钉住"没有多扫/少扫"。
+    /// 只是回到旧的报错）。
+    ///
+    /// RF-95：对照清单改为<see cref="SettingsTypeCatalog">反射枚举</see>。此前两边都是硬编码清单，
+    /// 断言等价于“清单与自己相等”：清单内被删确实会失败，但**新增命令而忘记加入两处清单时
+    /// 测试不会失败**——注释里“少扫即失败”的名声与实际不符（新增 Settings 类才是真实的漂移场景）。
     /// </summary>
     [Fact]
     public void OptionIndex_CoversEverySettingsType()
     {
         Assert.Equal(
-            AllSettingsTypes.OrderBy(t => t.FullName),
-            CliOptionIndex.ScannedTypes.OrderBy(t => t.FullName));
+            SettingsTypeCatalog.All.Select(t => t.FullName).OrderBy(n => n, StringComparer.Ordinal),
+            CliOptionIndex.ScannedTypes.Select(t => t.FullName).OrderBy(n => n, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// RF-96：<c>CliOptionIndex</c> 的 bool 判定是按**属性名（canonical）**记录的，因此隐含前提是
+    /// “同名选项属性在所有 Settings 里的类型一致”。当前 10 个 Settings 无冲突（已全量核对），
+    /// 但新增命令复用同名属性却换成非 bool 时，会静默把取值选项当开关（或反之）。
+    /// 这条用例把该前提钉住：冲突时在这里失败，而不是等用户撞上“no value”报错。
+    /// </summary>
+    [Fact]
+    public void CanonicalPropertyName_HasConsistentTypeAcrossSettings()
+    {
+        var kinds = new Dictionary<string, Type>(StringComparer.Ordinal);
+        var conflicts = new List<string>();
+
+        foreach (var type in SettingsTypeCatalog.All)
+        {
+            foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (prop.GetCustomAttribute<CommandOptionAttribute>() is null) continue;
+                if (kinds.TryGetValue(prop.Name, out var existing))
+                {
+                    if (existing != prop.PropertyType)
+                        conflicts.Add($"{prop.Name}: {existing.Name} ({type.Name}) vs {prop.PropertyType.Name}");
+                }
+                else
+                {
+                    kinds[prop.Name] = prop.PropertyType;
+                }
+            }
+        }
+
+        Assert.True(conflicts.Count == 0,
+            "同名选项属性在不同命令里的类型不一致，CliOptionIndex 按属性名记录的 bool 判定会误判取值语义："
+            + string.Join("; ", conflicts));
     }
 
     /// <summary>
