@@ -96,6 +96,16 @@
 | RF-86 | `DownloadTask.Snapshot()` 在锁外读 `Status`/`IsSuccessful`（与自身契约注释不符，可能返回短暂不一致快照） | Low | 采纳（整段入锁） | ✅ 已修复（第 16 轮消纳批） |
 | RF-87 | CI 卫生：PR CI 从不构建 Docker 镜像；`build_latest.yml` 无 `concurrency` 组 | Low | 采纳（PR CI 加 docker smoke + concurrency） | ✅ 已修复（第 16 轮消纳批） |
 | RF-88 | 测试假绿/名实不符：`WvdDeviceKeyTests` 用 `ThrowsAny<Exception>`；`WidevineCdmTests` 名含 Logs 却不断言日志 | Low（测试） | 采纳（改精确异常类型/改名） | ✅ 已修复（第 16 轮消纳批） |
+| RF-89 | `sub check` 的 `-w` 绝对化抛出点不在任何 try 内（单订阅输入错误升级为整批中止 + 误导性报错） | Medium | 采纳（抽 `TryResolveWorkDir` 双返回值） | ✅ 已修复（第 17 轮消纳批） |
+| RF-90 | `watchlater` 与 RF-89 同源的相对 `-w` 嵌套缺陷（根因只在单命令内打补丁） | Medium | 采纳（两命令共用同一入口） | ✅ 已修复（第 17 轮消纳批） |
+| RF-91 | `ResolveSubDirName` 的 target 回退是死代码，且回归测试假绿/含死断言 | Low | 采纳（判据改净化前原值 + 修测试） | ✅ 已修复（第 17 轮消纳批） |
+| RF-92 | PR #50 的 `-w` 绝对化改动零测试覆盖（影响面大于被测的 `ResolveSubDirName`） | Low | 采纳（提为 internal 纯函数 + 4 例） | ✅ 已修复（第 17 轮消纳批） |
+| RF-93 | 未指定 `--name` 时 `--per-sub-dir` 的目录名不可辨认（UX） | Low | 采纳（`sub add` 加提示 + wiki 建议） | ✅ 已修复（第 17 轮消纳批） |
+| RF-94 | PR #53：`CliArgJoiner` 的入口调用点零覆盖（禁用入口调用后 750 例仍全绿） | Medium（测试） | 采纳（新增进程内直调 `Main` 的入口 E2E） | ✅ 已修复（第 18 轮消纳批） |
+| RF-95 | Settings 类型清单三处各自硬编码自证，新增命令时三处一起漏且测试假绿 | Low（测试） | 采纳（反射枚举 + AOT root 对拍） | ✅ 已修复（第 18 轮消纳批） |
+| RF-96 | `CliOptionIndex` 按属性名记录 bool 判定的隐含前提未固化 | Low | 采纳（注释固化 + canonical 类型一致性用例） | ✅ 已修复（第 18 轮消纳批） |
+| RF-97 | PR #55：`sub check` 的轻量路径选择零覆盖（强制旁路后 746 例仍全绿） | Medium（测试） | 采纳（fetcher 创建点可注入 + 5 例） | ✅ 已修复（第 18 轮消纳批） |
+| RF-98 | 默认增量扫描漏检旧稿件的用户预期管理（“首次部署建议 `--full-scan`”缺失） | Low（文档） | 采纳（README 提示 + wiki 已知限制小节） | ✅ 已修复（第 18 轮消纳批） |
 
 ---
 
@@ -992,6 +1002,51 @@
 - **发现**：显示名缺省回退 target，净化后形如 `mid_163637592`；target 为 URL 时形如 `https___space_bilibili_com_163637592_video`——多订阅场景下目录名几乎无法辨认，削弱该特性的主要价值。文档已如实声明该行为，但无任何提示引导用户命名。
 - **结论**：采纳——`sub add` 未带 `--name` 时提示一次（不改既有行为）；wiki 补命名建议。
 - **状态**：✅ 已修复（2026-09-26，第 17 轮消纳批）：`SubAddCommand` 加 `LogWarn` 提示；`docs/wiki/Subcommands.md` 补"建议用 `--name`"说明。
+
+---
+
+## RF-94：PR #53 的 `CliArgJoiner` 入口调用点零覆盖——"整个修复静默失效"无任何防线
+
+- **位置**：`BBDown/Program.cs`（`mergedArgs = CliArgJoiner.JoinDashLeadingOptionValues(mergedArgs)` 调用点）；`BBDown.Tests/CliArgJoinerTests.cs`（14 例全部直调纯函数）。
+- **发现**：变异实验——注释掉入口调用后，全库 **750 例仍全绿**。新增的 14 例把 `CliArgJoiner` 自身的合并/护栏行为钉得很牢（bool 判定翻转则 6 例失败），但"入口确实调用了它"无人守：整块修复被回退/被旁路时测试不会有任何反应。与 RF-92（PR #50 的 `-w` 绝对化零覆盖）同族：**改动影响面 ≫ 测试覆盖范围**。
+- **结论**：采纳——新增 `BBDown.Tests/CliEntryPointTests.cs`，**进程内直调 `Program.Main`**（测试并行已全局关闭，`SubscriptionStore.StoreRoot` 注入临时目录隔离）覆盖「argv → 配置合并 → 选项值并入 → Spectre 解析 → 命令执行」整链：① `sub add mid:19231317 --name "-尾野"` 真的落到订阅清单；② `BBDown.config` 侧的 `--work-dir`/`-wdtest` 可解析（同时断言合并+并入的组合结果，避免"配置文件没被读到"时假绿）；③ `--name --cookie x` 仍非零退出且不写订阅。
+- **状态**：✅ 已修复（2026-09-30，第 18 轮消纳批）：入口 E2E +3 例；变异验证——禁用入口调用则 2 例失败。
+
+---
+
+## RF-95：Settings 类型清单三处各自硬编码、自证式对拍——新增命令时一起漏且测试假绿
+
+- **位置**：`BBDown/Configuration/CliOptionIndex.cs`（扫描清单）、`BBDown.Tests/AotCliBindingTests.cs`（`SettingsTypes`）、`BBDown.Tests/CliArgJoinerTests.cs`（`AllSettingsTypes`）；`Program.cs` 的 `[DynamicDependency]` 清单是第四处。
+- **发现**：`OptionIndex_CoversEverySettingsType` 注释宣称"少扫即失败"，实际是**硬编码清单与自身对拍**：清单内被删确实会失败，但**新增 Settings 类时三处清单一起漏、测试仍全绿**（真实的漂移场景无人守）。实测全仓测试无任何 `GetTypes()`/程序集枚举。另：`AotCliBindingTests` 的同类清单同样硬编码，新增命令漏写 `[DynamicDependency]` 时只有发布产物的 AOT smoke 才会发现。
+- **结论**：采纳——新增 `BBDown.Tests/SettingsTypeCatalog.cs`：反射枚举程序集内全部非抽象 `CommandSettings` 派生类型（`CliArgJoinerTests`/`AotCliBindingTests` 共用同一真相），并对拍两件事：① `CliOptionIndex.ScannedTypes` 覆盖全部类型；② `Program.Main` 的 `[DynamicDependency]` root 覆盖全部类型。非 CLI 命令模型的派生类型（`ServeRequestOptions`，serve 的 `/add-task` JSON DTO，走 System.Text.Json 源生成绑定）在目录里**显式登记排除理由**。
+- **状态**：✅ 已修复（2026-09-30，第 18 轮消纳批）：反射枚举当场发现三处清单都漏掉的两类——`SubSettings`（`sub` 分支的 settings，已并入 `CliOptionIndex` 扫描，与 `Program.cs` 的 root 清单对齐）与 `ServeRequestOptions`（已显式排除）；新增 AOT root 对拍用例（该用例的检测力已由发现 `ServeRequestOptions` 自证）。
+
+---
+
+## RF-96：`CliOptionIndex` 按属性名记录 bool 判定的隐含前提未固化
+
+- **位置**：`BBDown/Configuration/CliOptionIndex.cs`（`FlagCanonicals.Add(prop.Name)`；`TakesValue` = `AliasMap[token]` + `FlagCanonicals.Contains(canonical)`）。
+- **发现**：bool 与否是**按 canonical（属性名）**记录的，隐含前提是"同名选项属性在所有 Settings 里的类型一致"。当前 10 个 Settings 无冲突（已全量核对 **102 个 option 属性 / 132 个别名 token**，零 token→canonical 冲突、零同名不同类型），但该前提既未写进注释也无测试：将来某命令复用同名属性却换成非 bool（如 `--debug` 变 string），会把取值选项静默当开关（或反之），失败方式是"回到旧的 no value 报错"。
+- **结论**：采纳（轻量）——注释固化前提；新增 `CanonicalPropertyName_HasConsistentTypeAcrossSettings` 用反射枚举把前提钉住（同名属性类型不一致即失败）；同时把"新增命令须同步 `CliOptionIndex`"的注释指向 RF-95 的对拍用例。
+- **状态**：✅ 已修复（2026-09-30，第 18 轮消纳批）：用例 +1；`CliOptionIndex` 注释补前提说明与用例指引。
+
+---
+
+## RF-97：PR #55 的 `sub check` 轻量路径选择零覆盖——性能优化可被静默旁路
+
+- **位置**：`BBDown/Commands/SubCommand.cs`（`CheckSubscriptionsAsync` 内 `if (fetcher is IAidLister lister)`）；`BBDown.Tests/SubCheckIncrementalScanTests.cs`（10 例全部只测 `SpaceVideoFetcher.CollectNewAidsAsync`）。
+- **发现**：变异实验——把路径选择分支强制失效（`lister = null`，等价于"轻量路径从未启用"）后，全库 **746 例仍全绿**。新增的 10 例把停止判据（退化为"遇首个已下载即停"则 3 例失败）与跨页去重（去掉则 1 例失败）钉得很牢，但"调用方真的走了这条路径"无人守；`SpaceFetcher_ImplementsAidLister_SoMidTargetsUseTheLightPath` 只证明工厂产物实现了接口。性能优化被静默旁路是这类改动最常见的回归形态。
+- **结论**：采纳——`CheckSubscriptionsAsync` 提为 `internal` 并增加可注入的 `fetcherFactory`（默认仍为 `FetcherFactory.CreateFetcher`，调用点不变）；新增 `SubCheckPathSelectionTests`（5 例、不触网）：mid: 目标必须走 `IAidLister` 且**绝不调用** `FetchAsync`、`--full-scan` 原样转发（此前同样零覆盖）、加载后的下载历史确实交给列举器、非列表目标回退全量解析。
+- **状态**：✅ 已修复（2026-09-30，第 18 轮消纳批）：用例 +5；变异验证——强制旁路轻量路径则 4 例失败。
+
+---
+
+## RF-98：默认增量扫描漏检旧稿件的用户预期管理
+
+- **位置**：`README.md`（`sub` 行）、`docs/wiki/Subcommands.md`（选项表与增量扫描说明）。
+- **发现**：默认增量以"稿件发布时间倒序 + 整页均已下载"为停止判据，停止点之后更旧页里历史没有的稿件不会被发现（设计如此并有 `--full-scan` 逃生舱）。代码在提前结束时已打印 `第 N 页起均为已下载过的内容…--full-scan 可强制全量扫描`，文档也已声明代价，但"**什么时候该主动跑一次 `--full-scan`**"没有给用户可操作的指引（首次部署、历史文件重建/清理、怀疑漏下旧稿件这三种场景都写在选项说明里，位置偏深）。推演确认实际损失有限：失败稿件若是最新投稿（最常见），未知 aid 会让所在页判为"有新增"，仍会被重试。
+- **结论**：采纳——README 的 `sub` 行补"首次部署/历史重建后先跑一次 `--full-scan`"；wiki 增加独立的"已知限制与建议"小节，明确"只保证不遗漏新投稿，不保证重扫全部历史"及三种建议场景。
+- **状态**：✅ 已修复（2026-09-30，第 18 轮消纳批）：`README.md` + `docs/wiki/Subcommands.md`。
 
 ---
 

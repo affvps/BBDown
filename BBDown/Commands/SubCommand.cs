@@ -206,8 +206,20 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
     /// 逐订阅检查并增量下载新内容，返回失败的订阅数。用户取消与订阅数据损坏异常原样上抛，
     /// 由 <see cref="SubCheckCommand.ExecuteAsync"/> 分类为退出码（RF-30/RF-32）。
     /// </summary>
-    private static async Task<int> CheckSubscriptionsAsync(List<Subscription> subs, SubCheckSettings settings, CancellationToken cancellationToken)
+    /// <param name="fetcherFactory">
+    /// RF-97：fetcher 创建点改为可注入（默认仍为 <see cref="FetcherFactory.CreateFetcher"/>），
+    /// 使"mid: 目标是否真的走 <see cref="IAidLister"/> 轻量路径"这一接线可被单测钉住。
+    /// 此前 PR 新增的 10 例全部只测 <c>SpaceVideoFetcher.CollectNewAidsAsync</c>，把本方法的
+    /// <c>fetcher is IAidLister</c> 分支强制失效后 746 例仍全绿——性能优化被静默旁路是这类
+    /// 改动最常见的回归形态。
+    /// </param>
+    internal static async Task<int> CheckSubscriptionsAsync(
+        List<Subscription> subs,
+        SubCheckSettings settings,
+        CancellationToken cancellationToken,
+        Func<string, bool, IFetcher>? fetcherFactory = null)
     {
+        var createFetcher = fetcherFactory ?? FetcherFactory.CreateFetcher;
         // -w 已由 ExecuteAsync 经 TryResolveWorkDir 绝对化且只解析一次（RF-89）：本方法内不得
         // 再解析——循环前的解析点不在任何 try 内，抛出的 ArgumentException 会逃出命令级
         // 异常过滤器（ExecuteAsync 只捕获 OperationCanceledException）。
@@ -228,7 +240,7 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
                 string resolved = await UrlResolver.ResolveAsync(sub.Target, cancellationToken);
                 if (string.IsNullOrEmpty(resolved)) continue;
 
-                var fetcher = FetcherFactory.CreateFetcher(resolved, settings.UseIntlApi);
+                var fetcher = createFetcher(resolved, settings.UseIntlApi);
 
                 var history = await SubscriptionStore.LoadHistoryAsync(sub.Target, cancellationToken);
 
