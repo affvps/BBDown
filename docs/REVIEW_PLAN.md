@@ -2,22 +2,29 @@
 
 > 审查来源：R1/R2/R3/R4 四轮审查（安全/可读性/可靠性/韧性），2026-08 批次。
 > 本文件跟踪**剩余未处理项**；已修复项见 git log（13766b0..2ab54d1 五连提交）与各代码注释。
+> 轮次记录见下方第 1~18 轮，逐项处置结论见 [`REVIEW_FINDINGS.md`](REVIEW_FINDINGS.md)（RF-1~RF-98）。
 
 ## 状态总览
+
+> **回填说明（2026-09-30，第 18 轮消纳后）**：本表自 2026-08 起未同步，F/G 两组实际已清零、B3 已结项、I8 已完成但未回填；本次逐项核验后重算。
+> H/I 剩余项的核验口径：逐符号检查重构产物是否存在（`ServeSecurityMiddleware`/`TaskRouteMapper`/`TaskFileStore`/`CallbackGuard`、`MuxRequest`、`RangeDownloadRequest`、`DownloadContext`、`BiliApiKeys`、`PickDataRoot`/`PickTrackBaseUrl`、`IsRetryableDownloadException`、`ReadHistoryLocked`、`EstimatedBytes` 均不存在 → 未落地）。
+> 另注：**I16 的范围已被 PR #53 部分消化**（“静态缓存 BuildAliasMap”由新增的 `CliOptionIndex` 承担，四处手工扫参尚未收敛）；H/I 与 [`OPTIMIZATION_PLAN.md`](OPTIMIZATION_PLAN.md) 存在重叠（P0-1 ≈ I1/I2/I10、P1-1 ≈ H5、P1-2 ≈ I2、P1-3 ≈ J1），评估时请合并口径，避免重复排期。
 
 | 组 | 总数 | 已完成 | 剩余 |
 |----|------|--------|------|
 | A 安全 Infra | 7 | 7 | 0 |
-| B 安全 Core | 3 | 2 | **1**（B3） |
+| B 安全 Core | 3 | 3 | 0（B3 已结项：无 High / 无当前可利用 Medium；未消纳项均有“已修复 / 维持现状”结论） |
 | C 功能缺陷 | 3 | 3 | 0 |
 | D 韧性 Infra | 10 | 10 | 0 |
 | E 韧性 Core | 6 | 6 | 0 |
-| F 测试 Infra | 12 | 6 | **6** |
-| G 测试结构 | 10 | 4 | **6** |
-| H 可读性 Infra | 13 | 1 | **12**（H11 同 C3 已修） |
-| I 可读性 App/Core | 22 | 3 | **19**（I4 同 C1 已修、I21/I22 验证通过） |
+| F 测试 Infra | 12 | 12 | 0 |
+| G 测试结构 | 10 | 10 | 0 |
+| H 可读性 Infra | 13 | 4 | **9**（H1~H6、H8、H9、H10；H7/H11/H12/H13 已完成） |
+| I 可读性 App/Core | 22 | 8 | **14**（I1~I3、I5~I7、I9~I16；I4/I8/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **44** | **46** |
+| **合计** | **90** | **65** | **25** |
+
+> 回填前的历史快照为 `90 / 44 / 46`（2026-08）；本次补记的 21 项完成度分布为 F +6、G +6、B +1（B3）、H +3（H7/H11/H12/H13 中除 H11 外新补）、I +5（I8 与 I17~I20）。
 
 ---
 
