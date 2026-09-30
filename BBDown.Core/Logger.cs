@@ -1,4 +1,5 @@
 using System.Text;
+using BBDown.Core.Util;
 
 namespace BBDown.Core;
 
@@ -69,7 +70,7 @@ public static class Logger
                 FileShare.ReadWrite | FileShare.Delete);
             return new StreamWriter(fs, new UTF8Encoding(false)) { AutoFlush = true };
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
             // 路径不可写：降级为仅控制台
             return null;
@@ -158,7 +159,7 @@ public static class Logger
             // 文件被删除，或长度小于已写字节数（mv+新建/截断替换）→ 持久句柄已指向旧文件
             return !fi.Exists || fi.Length < _fileWriter!.BaseStream.Position;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
             return false;
         }

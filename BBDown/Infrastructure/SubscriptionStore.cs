@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using BBDown.Core;
+using BBDown.Core.Util;
 
 namespace BBDown;
 
@@ -99,7 +100,7 @@ public static class SubscriptionStore
         finally
         {
             try { if (File.Exists(tmp)) File.Delete(tmp); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
     }
 
@@ -131,7 +132,7 @@ public static class SubscriptionStore
             return JsonSerializer.Deserialize(await File.ReadAllTextAsync(SubFile, cancellationToken),
                 SubscriptionJsonContext.Default.ListSubscription) ?? [];
         }
-        catch (Exception ex) when (ex is JsonException or IOException)
+        catch (Exception ex) when (ExceptionPolicies.IsJsonOrIoFailure(ex))
         {
             // 订阅清单损坏不能静默当空：否则 sub list/check 显示"没有订阅"并成功，
             // 下一次 sub add/remove 会用空列表覆盖原文件。隔离为 .corrupt-时间戳并抛
@@ -216,7 +217,7 @@ public static class SubscriptionStore
                 }
                 return result;
             }
-            catch (Exception ex) when (ex is JsonException or IOException)
+            catch (Exception ex) when (ExceptionPolicies.IsJsonOrIoFailure(ex))
             {
                 // 损坏历史隔离而非当空历史/静默重置：保留现场供排查，同时以专用异常中止。
                 // 静默当空历史会让已下载内容被当作新增重新下载；静默重置会丢失所有订阅的历史。

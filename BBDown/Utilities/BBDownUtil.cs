@@ -374,7 +374,7 @@ public static partial class BBDownUtil
             var is_login = json.TryGetPropertySafe("data")?.GetBooleanSafe("isLogin") ?? false;
             return (is_login, false, newWbi);
         }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException or InvalidOperationException or TimeoutException)
+        catch (Exception ex) when (ExceptionPolicies.IsProbeRequestFailure(ex))
         {
             Logger.LogDebug("检测登录状态失败: {0}", ex.Message);
             return (false, false, null);
@@ -400,7 +400,7 @@ public static partial class BBDownUtil
             }
             return GetMixinKey(RSubString(imgUrl) + RSubString(subUrl));
         }
-        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+        catch (Exception ex) when (ExceptionPolicies.IsMissingResponseNodeFailure(ex))
         {
             Logger.LogDebug("提取 wbi 密钥失败: {0}", ex.Message);
             return null;

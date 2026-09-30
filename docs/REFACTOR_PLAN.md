@@ -8,13 +8,14 @@
 
 ## 0. 结论摘要
 
-**7 批 / 7 PR / 约 6.5~9.5 人日**，风险由"纯机械"递增到"复杂逻辑拆解"。每批都有现存测试网兜底；R3 批次要求**先验基线再动刀**。
+**7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
 | 批次 | 包含项 | 主题 | 风险 | 主要安全网 | 估算 |
 |:---:|---|---|:---:|---|---|
-| 1 | I7、I11、I14、I15、I3 | 一致化收口 | **R1** | 全量单测 + 编译期 | 0.5~1 天 |
+| 1a | **I7** | 异常过滤策略收口（94 处 when-过滤器 → 9 条具名策略 / 64 处） | **R1** | 真值表 + 全量单测 | 0.5 天 |
+| 1b | I11、I14、I15、I3 | 命名/重复/常量一致化 | **R1** | 全量单测 + 编译期 | 0.5 天 |
 | 2 | H8、H9、H10 | 命名 / 魔法数 / 持久化单入口 | **R1~R2** | 全量单测 | 0.5~1 天 |
 | 3 | H2、H3、I13、I5 | 参数对象与结构收敛 | **R2** | MuxerArgs 9 · 下载 34 · *Entity 需先补* | 1~1.5 天 |
 | 4 | **I2**（+I16 可选） | Parser 巨方法拆解 | **R3** | **夹具回放 18 文件 / 15 用例** | 1.5~2 天 |
@@ -71,15 +72,32 @@
 
 ## 3. 批次明细
 
-### 批 1 — 一致化收口（`refactor/consistency-cleanup`，R1）
+### 批 1 — 一致化收口（R1）
+
+#### 批 1a — I7 异常过滤策略（`refactor/exception-policies`）
+
+**开工前审计实测（2026-09-30）**：全库 `catch (Exception ex) when (…)` 共 **94 处 / 40 种类型集合**（计划原述"30 处"口径不准），分为：
+
+| 层 | 站点数 | 处置 |
+|---|---:|---|
+| 集合完全一致且无附加条件的族 | **64**（9 族） | 抽为具名策略（本批） |
+| 过滤器级带附加条件（如 `ex is TaskCanceledException && !ct.IsCancellationRequested`） | 2 | **保留原地**（抽无条件谓词会吞掉用户取消） |
+| 集合唯一（28 种） | 28 | **保留原地**（2~4 类型条件本身即最优表达） |
+
+九条具名策略（`BBDown.Core/Util/ExceptionPolicies.cs`）与站点数：`IsBestEffortFailure`(44)、`IsJsonOrIoFailure`(4)、`IsSubtitleFetchFailure`(3)、`IsTransportFailure`(3)、`IsMissingResponseNodeFailure`(2)、`IsTaskStoreFailure`(2)、`IsParseDowngradeFailure`(2)、`IsProbeRequestFailure`(2)、`IsSkippableItemFailure`(2)。
+
+纪律：① 每族集合与迁移前**逐字一致**（零行为变更）；② 站点自有守卫不并入谓词；③ `ExceptionPolicyTests` 真值表逐类型钉住集合（子类型感知：`ArgumentException` 会命中 `ArgumentOutOfRangeException`），增删类型或写成近似集合即失败。
+
+> **待决策（本批不做）**：长链"单条目可跳过"族沿 4 个集合漂移（`SubCommand` 10 型 / `WatchLater` 9 型 / 下载页 11 型 / `DownloadPageExecution` 10 型），代码注释自称"与下载页过滤器同步扩充"——**合并为一个集合会改变 4 个站点的捕获面**（行为变更），登记为后续决策项，本批保留现状。
+
+#### 批 1b — 命名/重复/常量一致化（`refactor/consistency-cleanup`）
 
 | 项 | 实测现状 | 做法 | 注意 |
 |---|---|---|---|
-| **I7** | `catch (Exception ex) when (ex is HttpRequestException or …)` **30 处**，逐字重复且类型集合有细微差异 | 抽 `IsRetryableDownloadException(Exception)`（命名沿用 I7 原议） | **必须逐处核对原有类型集合**：个别站点故意不含 `InvalidOperationException`（如 `SubscriptionDataCorruptException` 重抛守卫在前），一把梭会改变异常分类 → 每处保留其原语义 |
-| **I11** | `Config.cs` 84 行；`SET_CLOCK_OFFSET`/`COOKIE`/`TOKEN`/`DEBUG_LOG`/`HOST`/`EPHOST`/`TVHOST`/`AREA`/`WBI`/`SKIP_SSL_CHECK`/`COOKIE_FLOW`/`WBI_FLOW` + `qualitys`（拼写错误） | 门面统一 PascalCase：`SetClockOffset`/`Cookie`/`Wbi`/`CookieFlow`/`Qualities`… | `AppSettings` record 属性已是 PascalCase，不动；**CLI/JSON 契约字段（`MyOption`/`*Settings`/`ServeRequestOptions`）绝对不动** |
-| **I14** | `AppHelper.cs:497 internal AudioMaterial` 与 `Entity.cs:240 public AudioMaterial` 同名 | 前者改为 `AppRoleAudioDto` | 仅 AppHelper 内引用 |
-| **I15** | `pDur * bandwidth * 1024 / 8` ×6、`.Replace("[] ", "")` ×4、带宽估算散落 | 抽 `EstimatedBytes(bandwidth, seconds)` + 展示行组装 | 纯展示层，无行为变化 |
-| **I3** | `BBDownUtil.GetSign` 与 `Parser.GetSign(x, bool)` 两套；`appkey` / 盐散落 | 集中 `BiliApiKeys` 常量 + 单实现 | **签名算法本身不得改动**（风控面）；只做常量收口与去重 |
+| **I11** | `Config.cs` 84 行；`SET_CLOCK_OFFSET`/`COOKIE`/`WBI`/`COOKIE_FLOW`… 12 个门面成员 + `qualitys` 拼写错误 | 门面统一 PascalCase | `AppSettings` 已是 PascalCase，不动；**CLI/JSON 契约字段绝对不动** |
+| **I14** | `AppHelper.cs:497 internal AudioMaterial` 与 `Entity.cs:240 public AudioMaterial` 同名 | 前者改 `AppRoleAudioDto` | 仅 AppHelper 内引用 |
+| **I15** | `pDur * bandwidth * 1024 / 8` ×6、`.Replace("[] ", "")` ×4 | 抽 `EstimatedBytes(bandwidth, seconds)` + 展示行组装 | 纯展示层 |
+| **I3** | `BBDownUtil.GetSign` 与 `Parser.GetSign(x, bool)` 两套；`appkey`/盐散落 | 集中 `BiliApiKeys` 常量 + 单实现 | **签名算法本身不得改动**（风控面） |
 
 **验收**：build 0 警告 0 错误 → 全量单测（基线 772）→ format → CI 9 项；重命名靠编译期暴露遗漏。
 
@@ -157,7 +175,8 @@ dotnet format BBDown.sln --verify-no-changes
 ## 6. 执行顺序与进度追踪
 
 ```
-批 1（半天见效：30 处 or 链 + 12 个门面成员）
+批 1a（I7 异常策略：64 处收口，真值表钉住）
+  → 批 1b（命名/常量）
   → 批 4（存量最大：532 行，护栏最强）
   → 批 6（文件最大：1683 行，护栏 51 例）
   → 批 3 → 批 5 → 批 2 → 批 7
@@ -166,7 +185,8 @@ dotnet format BBDown.sln --verify-no-changes
 
 | 批次 | 分支 | PR | 状态 |
 |:---:|---|---|---|
-| 1 | `refactor/consistency-cleanup` | — | ⏳ 待开工 |
+| 1a | `refactor/exception-policies` | — | 🔄 实施中 |
+| 1b | `refactor/consistency-cleanup` | — | ⏳ 待开工 |
 | 4 | `refactor/parser-extract-tracks` | — | ⏳ 待开工 |
 | 6 | `refactor/serve-decomposition` | — | ⏳ 待开工 |
 | 3 | `refactor/parameter-objects` | — | ⏳ 待开工 |

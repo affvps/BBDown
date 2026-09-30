@@ -38,7 +38,7 @@ internal partial class Program
             {
                 await BBDownDownloadUtil.DownloadFileAsync(pic == "" ? page.cover! : pic, coverPath, new BBDownDownloadUtil.DownloadConfig(), cancellationToken);
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+            catch (Exception ex) when (ExceptionPolicies.IsTransportFailure(ex))
             {
                 if (cancellationToken.IsCancellationRequested) throw;
                 Logger.LogWarn($"封面下载失败（已跳过）: {ex.Message}");
@@ -95,7 +95,7 @@ internal partial class Program
         var aidDirectory = PathUtil.ResolveWorkPath(page.aid);
         if (Directory.Exists(aidDirectory) && Directory.GetFiles(aidDirectory).Length == 0)
         {
-            try { Directory.Delete(aidDirectory, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            try { Directory.Delete(aidDirectory, true); } catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
 
         if (!anyProductProduced)
@@ -129,12 +129,12 @@ internal partial class Program
         if (danmakus == null)
         {
             Logger.Log("弹幕Xml解析失败, 删除Xml...");
-            try { File.Delete(danmakuXmlPath); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            try { File.Delete(danmakuXmlPath); } catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
         else if (danmakus.Length == 0)
         {
             Logger.Log("当前视频没有弹幕, 删除Xml...");
-            try { File.Delete(danmakuXmlPath); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            try { File.Delete(danmakuXmlPath); } catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
         else if (downloadDanmakuFormats.Contains(BBDownDanmakuFormat.Ass))
         {
@@ -153,7 +153,7 @@ internal partial class Program
         // delete xml if possible
         if (!downloadDanmakuFormats.Contains(BBDownDanmakuFormat.Xml) && File.Exists(danmakuXmlPath))
         {
-            try { File.Delete(danmakuXmlPath); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            try { File.Delete(danmakuXmlPath); } catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
 
         if (!options.DanmakuOnly) return null;
@@ -174,7 +174,7 @@ internal partial class Program
         var aidDir = PathUtil.ResolveWorkPath(page.aid);
         if (Directory.Exists(aidDir) && Directory.GetFiles(aidDir).Length == 0)
         {
-            try { Directory.Delete(aidDir, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            try { Directory.Delete(aidDir, true); } catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
 
         if (!danmakuProduced)
@@ -207,7 +207,7 @@ internal partial class Program
         var aidDir = PathUtil.ResolveWorkPath(page.aid);
         if (Directory.Exists(aidDir) && Directory.GetFiles(aidDir).Length == 0)
         {
-            try { Directory.Delete(aidDir, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            try { Directory.Delete(aidDir, true); } catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
         relatedTask?.AddSavePath(coverPath);
         return true;
@@ -231,17 +231,17 @@ internal partial class Program
         relatedTask?.AddSavePath(savePath);
         // 封面可能刚下载完成，短暂文件占用不应把成功跳过翻成页面重试。
         try { if (File.Exists(coverPath)) File.Delete(coverPath); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         foreach (var subtitle in subtitleInfo)
         {
             try { if (File.Exists(subtitle.path)) File.Delete(subtitle.path); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
         var aidDir = PathUtil.ResolveWorkPath(aid);
         DownloadFileCleanup.DeleteResidualChapterFiles(aidDir);
         if (cleanupEmptyAidDir && Directory.Exists(aidDir) && Directory.GetFiles(aidDir).Length == 0)
         {
-            try { Directory.Delete(aidDir, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            try { Directory.Delete(aidDir, true); } catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
 
         return true;

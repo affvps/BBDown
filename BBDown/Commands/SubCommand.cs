@@ -294,9 +294,7 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
                     // UnauthorizedAccessException（RF-44）：与下载页过滤器同步扩充——
                     // 只读属性文件/受控文件夹访问等本地权限错误按"单 aid 失败"继续。
                     // InvalidDataException（RF-72）：有界响应体/帧校验抛型，同族。
-                    catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException
-                                                or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException
-                                                or TimeoutException or TaskCanceledException or InvalidDataException)
+                    catch (Exception ex) when (ExceptionPolicies.IsSkippableItemFailure(ex))
                     {
                         anyAidFailed = true;
                         Logger.LogWarn($"  av{aid} 下载失败（继续下一个）: {ex.Message}");
@@ -321,9 +319,7 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
             }
             // UnauthorizedAccessException（RF-44）：与下载页过滤器同步扩充。
             // InvalidDataException（RF-72）：有界响应体/帧校验抛型，同族。
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException
-                                        or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException
-                                        or TimeoutException or TaskCanceledException or InvalidDataException)
+            catch (Exception ex) when (ExceptionPolicies.IsSkippableItemFailure(ex))
             {
                 // 单个订阅失败不中止其余订阅，但必须计入失败数：
                 // 全部失败仍返回 0 会让脚本/CI 无法区分"全部成功"与"全部失败"

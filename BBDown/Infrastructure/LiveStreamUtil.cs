@@ -307,7 +307,7 @@ public static class LiveStreamUtil
 
                     // 零字节/头部不完整段：连接刚建立就结束。若直播仍进行，这是连接到期/CDN 切换，
                     // 退避后重连，避免高速轮询。
-                    try { File.Delete(segPath); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                    try { File.Delete(segPath); } catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
                     if (!await IsRoomLiveAsync()) break; // 确认下播：结束录制
                     Logger.LogWarn($"直播流连接立即结束（收到 {segBytes} 字节，不足完整 FLV 头）但直播间仍在直播，正在退避后重连...");
                     await BackoffAsync(new IOException("直播流零字节 EOF"));
@@ -373,7 +373,7 @@ public static class LiveStreamUtil
             {
                 File.Move(segmentFiles[0], path, true);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
             {
                 // 改名失败（目标目录不存在/被占用等）：保留分段供手动恢复
                 Logger.LogWarn($"保存最终文件失败: {ex.Message}；已录分段保留在 {segDir}");
@@ -422,13 +422,13 @@ public static class LiveStreamUtil
     private static void CleanupSessionDir(string segDir, string segRoot)
     {
         try { if (Directory.Exists(segDir)) Directory.Delete(segDir, true); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         try
         {
             if (Directory.Exists(segRoot) && !Directory.EnumerateFileSystemEntries(segRoot).Any())
                 Directory.Delete(segRoot);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
     }
 
     /// <summary>
@@ -448,7 +448,7 @@ public static class LiveStreamUtil
                     Logger.LogWarn($"发现上次直播录制未完成的分段，保留在: {stale}（可用 ffmpeg 手动 concat 恢复）");
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
             Logger.LogDebug("扫描直播分段残留失败: {0}", ex.Message);
         }
@@ -494,7 +494,7 @@ public static class LiveStreamUtil
             }
             return false;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
             Logger.LogDebug("裁剪 FLV 截断尾失败: {0}", ex.Message);
             return false;
@@ -648,7 +648,7 @@ public static class LiveStreamUtil
                     // 半截缓冲，与网络中断截断的语义一致，concat 时按截断标签处理即可。
                     return (written, ReadInterrupted: true);
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
                 {
                     // 本地写盘失败（磁盘满/权限/文件被占用）：不可重试的本地故障，
                     // 不能按网络瞬断处理——否则磁盘故障会陷入无限重连循环。
