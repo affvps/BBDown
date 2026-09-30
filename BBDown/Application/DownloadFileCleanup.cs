@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using BBDown.Core.Util;
 
 namespace BBDown;
 
@@ -18,9 +19,9 @@ internal static class DownloadFileCleanup
             foreach (var file in Directory.GetFiles(dir, "chapters*"))
             {
                 try { File.Delete(file); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
     }
 }

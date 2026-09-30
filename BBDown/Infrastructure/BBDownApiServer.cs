@@ -709,7 +709,7 @@ public partial class BBDownApiServer
             // 写盘成功：清零连续失败计数
             Interlocked.Exchange(ref _persistFailures, 0);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ExceptionPolicies.IsTaskStoreFailure(ex))
         {
             // 升 Warn：任务记录落盘失败意味着重启后记录丢失，此前仅 LogDebug（默认抑制）
             // 会让磁盘满等故障完全无痕。连续失败升级 Error（持续性故障）。
@@ -785,7 +785,7 @@ public partial class BBDownApiServer
         {
             throw;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ExceptionPolicies.IsTaskStoreFailure(ex))
         {
             // 升 Warn：加载失败意味着上次的全部任务记录无法恢复（损坏/权限/磁盘故障），
             // 此前仅 LogDebug（默认抑制）会让记录静默丢失。

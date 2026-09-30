@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using BBDown.Core;
+using BBDown.Core.Util;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -87,7 +88,7 @@ public static class ExternalToolHelper
             var mode = File.GetUnixFileMode(path);
             return (mode & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
             return false;
         }

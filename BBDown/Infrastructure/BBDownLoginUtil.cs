@@ -89,7 +89,7 @@ internal static class BBDownLoginUtil
                 await File.WriteAllBytesAsync("qrcode.png", pngByteCode.GetGraphic(QrCodePngScale));
                 Logger.Log("生成二维码成功: qrcode.png, 请打开并扫描, 或扫描打印的二维码");
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
             {
                 Logger.LogDebug("无法写入本地二维码图片文件: {0}", ex.Message);
                 Logger.Log("请扫描下方打印的控制台二维码");
@@ -233,7 +233,7 @@ internal static class BBDownLoginUtil
                 await File.WriteAllBytesAsync("qrcode.png", pngByteCode.GetGraphic(QrCodePngScale));
                 Logger.Log("生成二维码成功: qrcode.png, 请打开并扫描, 或扫描打印的二维码");
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
             {
                 Logger.LogDebug("无法写入本地二维码图片文件: {0}", ex.Message);
                 Logger.Log("请扫描下方打印的控制台二维码");

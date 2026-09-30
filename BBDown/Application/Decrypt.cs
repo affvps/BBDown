@@ -215,7 +215,7 @@ internal partial class Program
                     File.Delete(keyFile);
                 }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* best effort */ }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { /* best effort */ }
         }
     }
 

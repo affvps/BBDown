@@ -503,7 +503,7 @@ internal static class BBDownDownloadUtil
                 await WriteResumeManifestAsync(tmpName, url, fileSize, probeHeaders, probeContentHeaders, token);
                 Logger.LogDebug("Content-Range 总长与探测大小不符，已按权威总长({0})继续下载", fileSize);
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+            catch (Exception ex) when (ExceptionPolicies.IsTransportFailure(ex))
             {
                 // 退避基数用 retry + 1：否则首次重试的等待时间为 0，
                 // 面对限流的服务器会立刻再打一次
@@ -580,7 +580,7 @@ internal static class BBDownDownloadUtil
             if (File.Exists(path)) File.Delete(path);
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
             Logger.LogDebug("清理残留文件失败: {0}: {1}", path, ex.Message);
             return false;
@@ -841,7 +841,7 @@ internal static class BBDownDownloadUtil
                         {
                             throw; // non-retryable
                         }
-                        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+                        catch (Exception ex) when (ExceptionPolicies.IsTransportFailure(ex))
                         {
                             int backoffMs = (retry + 1) * Config.Current.RetryDelayMs;
                             Logger.LogDebug("分段下载失败(第{0}次重试, {1}ms后): {2}", retry + 1, backoffMs, ex.Message);
@@ -1102,13 +1102,13 @@ internal static class BBDownDownloadUtil
             finally
             {
                 try { if (File.Exists(tmp)) File.Delete(tmp); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
                 {
                     /* 清理失败不影响主流程 */
                 }
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
             // 清单写入失败只降级为日志：资源身份校验退化为"仅长度"，与旧行为一致。
             // 不阻断下载（清单是信任增强，不是必需）。
@@ -1166,7 +1166,7 @@ internal static class BBDownDownloadUtil
             }
             return (true, null);
         }
-        catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException)
+        catch (Exception ex) when (ExceptionPolicies.IsJsonOrIoFailure(ex))
         {
             return (false, $"续传清单读取失败: {ex.Message}");
         }
@@ -1176,7 +1176,7 @@ internal static class BBDownDownloadUtil
     private static void DeleteResumeManifest(string tmpName)
     {
         try { if (File.Exists(ResumeManifestPath(tmpName))) File.Delete(ResumeManifestPath(tmpName)); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* 清理失败不影响主流程 */ }
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { /* 清理失败不影响主流程 */ }
     }
 
     /// <summary>读取续传清单里的 If-Range 值（ETag 优先，其次 Last-Modified）；清单缺失返回 null。</summary>
@@ -1192,7 +1192,7 @@ internal static class BBDownDownloadUtil
             if (!string.IsNullOrEmpty(m.ETag)) return m.ETag;
             return m.LastModified;
         }
-        catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException)
+        catch (Exception ex) when (ExceptionPolicies.IsJsonOrIoFailure(ex))
         {
             return null;
         }

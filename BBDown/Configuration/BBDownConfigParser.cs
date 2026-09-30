@@ -2,6 +2,7 @@ using System;
 using BBDown.Core;
 using System.Collections.Generic;
 using System.IO;
+using BBDown.Core.Util;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -132,7 +133,7 @@ internal static partial class BBDownConfigParser
                 })
                 .ToList();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
             Logger.LogWarn($"读取配置文件失败（已忽略）: {ex.Message}");
             return result;

@@ -77,11 +77,11 @@ internal sealed class DownloadFinalizer
             if (Directory.Exists(aidDir) && !Directory.EnumerateFileSystemEntries(aidDir).Any())
             {
                 try { Directory.Delete(aidDir, true); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
             }
 
             try { if (File.Exists(request.CoverPath)) File.Delete(request.CoverPath); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
             return MuxOutcome.Skipped;
         }
 
@@ -106,7 +106,7 @@ internal sealed class DownloadFinalizer
             if (muxingPath is not null)
             {
                 try { if (File.Exists(muxingPath)) File.Delete(muxingPath); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
             }
 
             CleanupDownloadedTracks(request);
@@ -130,13 +130,13 @@ internal sealed class DownloadFinalizer
         if (request.ParsedResult.VideoTracks.Any() && File.Exists(request.VideoPath))
         {
             try { File.Delete(request.VideoPath); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
 
         if (!string.IsNullOrEmpty(request.AudioPath) && request.ParsedResult.AudioTracks.Any() && File.Exists(request.AudioPath))
         {
             try { File.Delete(request.AudioPath); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
 
         if (request.Page.points.Any())
@@ -148,13 +148,13 @@ internal sealed class DownloadFinalizer
         foreach (var subtitle in request.SubtitleInfo)
         {
             try { if (File.Exists(subtitle.path)) File.Delete(subtitle.path); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
 
         foreach (var audio in request.AudioMaterial)
         {
             try { if (File.Exists(audio.path)) File.Delete(audio.path); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
 
         if (request.SelectedPagesInfo.Count == 1 ||
@@ -162,14 +162,14 @@ internal sealed class DownloadFinalizer
             request.Page.aid != request.SelectedPagesInfo.Last().aid)
         {
             try { if (File.Exists(request.CoverPath)) File.Delete(request.CoverPath); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
 
         var aidDir = _resolveWorkPath(request.Page.aid);
         if (Directory.Exists(aidDir))
         {
             try { if (Directory.GetFiles(aidDir).Length == 0) Directory.Delete(aidDir, true); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { }
         }
     }
 }

@@ -359,16 +359,16 @@ internal partial class Program
                 if (!File.Exists(tmp + ".manifest.json"))
                 {
                     try { File.Delete(tmp); }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* 占用时跳过，下次再清 */ }
+                    catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { /* 占用时跳过，下次再清 */ }
                 }
             }
             if (Directory.GetFiles(dir).Length == 0)
             {
                 try { Directory.Delete(dir, true); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* 目录被占用时跳过 */ }
+                catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex)) { /* 目录被占用时跳过 */ }
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
             Logger.LogDebug("取消清理工作目录失败: {0}", ex.Message);
         }

@@ -191,7 +191,7 @@ static partial class BBDownMuxer
             if (metaFile != null && File.Exists(metaFile))
             {
                 try { File.Delete(metaFile); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
                 {
                     Logger.LogDebug("清理章节文件失败: {0}", ex.Message);
                 }
@@ -410,7 +410,7 @@ static partial class BBDownMuxer
             if (metaFile != null && File.Exists(metaFile))
             {
                 try { File.Delete(metaFile); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
                 {
                     Logger.LogDebug("清理章节文件失败: {0}", ex.Message);
                 }

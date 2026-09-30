@@ -324,7 +324,7 @@ public static partial class Parser
                             // 原 :518 注释"真正的用户取消是 OperationCanceledException"的前提有误）。
                             throw;
                         }
-                        catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or TimeoutException or TaskCanceledException)
+                        catch (Exception ex) when (ExceptionPolicies.IsParseDowngradeFailure(ex))
                         {
                             Logger.LogDebug("免二压重新请求失败（降级沿用第一轮结果）: {0}", ex.Message);
                         }
@@ -440,7 +440,7 @@ public static partial class Parser
                                 if (firstVideo.TryGetProperty("widevine_pssh", out var pssh) && pssh.GetString() is string ps && ps.Length > 0)
                                     parsedResult.PsshBase64 = ps;
                             }
-                            catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+                            catch (Exception ex) when (ExceptionPolicies.IsMissingResponseNodeFailure(ex))
                             { Logger.LogWarn($"DRM license info extraction error: {ex.Message}"); }
                         }
                     }
@@ -546,7 +546,7 @@ public static partial class Parser
                     // 同 dash 分支（RF-17）：真正的用户取消须传播，不能被记为"沿用首次结果"。
                     throw;
                 }
-                catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or TimeoutException or TaskCanceledException)
+                catch (Exception ex) when (ExceptionPolicies.IsParseDowngradeFailure(ex))
                 {
                     Logger.LogWarn($"最高清晰度重发失败（沿用首次解析结果）: {ex.Message}");
                     parsedResult.WebJsonString = firstWebJson;

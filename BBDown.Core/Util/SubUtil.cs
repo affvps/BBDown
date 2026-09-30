@@ -259,7 +259,7 @@ public static partial class SubUtil
             }
             return subtitles;
         }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException or TimeoutException)
+        catch (Exception ex) when (ExceptionPolicies.IsSubtitleFetchFailure(ex))
         {
             Logger.LogDebug("GetIntlSubtitlesFromApi1 failed: {0}", ex.Message);
             return null;
@@ -337,7 +337,7 @@ public static partial class SubUtil
             //}
             return subtitles;
         }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException or TimeoutException)
+        catch (Exception ex) when (ExceptionPolicies.IsSubtitleFetchFailure(ex))
         {
             Logger.LogDebug("GetSubtitlesFromApi1 failed: {0}", ex.Message);
             return null;
@@ -376,7 +376,7 @@ public static partial class SubUtil
 
             return subtitles;
         }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException or TimeoutException)
+        catch (Exception ex) when (ExceptionPolicies.IsSubtitleFetchFailure(ex))
         {
             Logger.LogDebug("GetSubtitlesFromApi2 failed: {0}", ex.Message);
             return null;
