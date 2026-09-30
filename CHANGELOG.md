@@ -2,6 +2,12 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **发布校验文件无法直接使用**：Release 附带的 `sha256sums.txt` 内路径带 `artifacts/` 前缀（CI 里由 `sha256sum artifacts/*.zip` 在工作目录下生成），用户下载后直接 `sha256sum -c sha256sums.txt` 必然报 `FAILED open or read`，须先自建一个同名目录才能校验——与“下载后验包”的初衷相悖。现改为在 `artifacts/` 内生成（文件名不带目录前缀），下载的 zip 与校验文件放同一目录即可直接校验；校验方法同时写入 README 与 wiki 快速上手（含 Windows / macOS 等价命令）。
+
 ## [1.6.22] - 2026-09-30
 
 ### 修复

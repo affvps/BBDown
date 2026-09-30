@@ -58,6 +58,8 @@ BBDown 把复杂的下载流程串成一条自动化流水线：粘贴链接 →
 - Release 版本：https://github.com/AliverAnme/BBDown/releases
 - 自动构建的测试版本：https://github.com/AliverAnme/BBDown/actions
 
+> 每个 Release 附带 `sha256sums.txt`（6 平台包的 SHA-256）。把下载的压缩包与它放在同一目录，`sha256sum -c sha256sums.txt --ignore-missing` 即可校验（Windows 用 `Get-FileHash`，macOS 用 `shasum -a 256 -c`）。详见 [快速上手 · 校验下载包完整性](https://github.com/aliveranme/BBDown/wiki/Getting-Started)。
+
 ### 查看完整参数
 
 ```bash
