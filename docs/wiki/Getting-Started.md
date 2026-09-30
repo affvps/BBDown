@@ -13,6 +13,27 @@ BBDown 为 Windows、Linux 与 macOS 提供了开箱即用的原生单文件可�
 
 下载对应系统架构的压缩包并解压，即可直接在终端运行 `BBDown`（Windows 下为 `BBDown.exe`）。
 
+#### 1.1.1 校验下载包完整性（推荐）
+
+每个 Release 都附带 `sha256sums.txt`（含全部平台包的 SHA-256）。把**下载的那个 zip 与 `sha256sums.txt` 放在同一目录**，然后：
+
+```bash
+# Linux
+sha256sum -c sha256sums.txt --ignore-missing
+
+# macOS（shasum 无 --ignore-missing，未下载的平台包会报 No such file，
+# 只需确认自己下载的那一行 OK）
+shasum -a 256 -c sha256sums.txt
+```
+
+```powershell
+# Windows PowerShell：算出哈希后与 sha256sums.txt 中同名行比对
+Get-FileHash .\BBDown_v<版本>_win-x64.zip -Algorithm SHA256
+```
+
+> [!NOTE]
+> v1.6.22 及更早的 Release 中，`sha256sums.txt` 里的文件名带 `artifacts/` 前缀（CI 旧写法所致），直接校验会报 `FAILED open or read`：先新建 `artifacts\` 子目录并把 zip 放进去即可，或直接下载 v1.6.23+ 的校验文件。
+
 ### 1.2 从源码编译构建
 若需本地定制或二次开发，需要安装 [.NET 10.0 SDK](https://dotnet.microsoft.com/download)：
 

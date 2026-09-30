@@ -249,8 +249,11 @@ jobs:
           # 直接失败（'a release with the same tag name already exists'），构建产物永远传不上去。
           # 先探测：已存在则跳过创建、仅补齐 assets；不存在则正常创建并随附 assets。
           # --clobber 覆盖同名资产，保证重复运行/重跑安全。
-          # 生成 SHA256 校验文件：供用户下载后验证包完整性
-          sha256sum artifacts/*.zip > artifacts/sha256sums.txt
+          # 生成 SHA256 校验文件：供用户下载后验证包完整性。
+          # 必须在 artifacts/ 内生成："sha256sum artifacts/*.zip" 会把工作目录前缀写进文件名列，
+          # 用户下载后直接 `sha256sum -c sha256sums.txt` 必然报 FAILED open or read，
+          # 得先自建一个同名目录才能校验——校验文件因此形同虚设。
+          (cd artifacts && sha256sum *.zip > sha256sums.txt)
           RELEASE_ASSETS="artifacts/*.zip artifacts/sha256sums.txt"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
