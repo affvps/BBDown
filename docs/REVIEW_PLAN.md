@@ -9,6 +9,7 @@
 > **回填说明（2026-09-30，第 18 轮消纳后）**：本表自 2026-08 起未同步，F/G 两组实际已清零、B3 已结项、I8 已完成但未回填；本次逐项核验后重算。
 > H/I 剩余项的核验口径：逐符号检查重构产物是否存在（`ServeSecurityMiddleware`/`TaskRouteMapper`/`TaskFileStore`/`CallbackGuard`、`MuxRequest`、`RangeDownloadRequest`、`DownloadContext`、`BiliApiKeys`、`PickDataRoot`/`PickTrackBaseUrl`、`IsRetryableDownloadException`、`ReadHistoryLocked`、`EstimatedBytes` 均不存在 → 未落地）。
 > 另注：**I16 的范围已被 PR #53 部分消化**（“静态缓存 BuildAliasMap”由新增的 `CliOptionIndex` 承担，四处手工扫参尚未收敛）；H/I 与 [`OPTIMIZATION_PLAN.md`](OPTIMIZATION_PLAN.md) 存在重叠（P0-1 ≈ I1/I2/I10、P1-1 ≈ H5、P1-2 ≈ I2、P1-3 ≈ J1），评估时请合并口径，避免重复排期。
+> **H/I 剩余项的执行计划见 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md)**（7 批 7 PR、逐批范围/风险/安全网/验收口径与进度追踪）。
 
 | 组 | 总数 | 已完成 | 剩余 |
 |----|------|--------|------|
