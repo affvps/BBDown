@@ -20,12 +20,12 @@
 | E 韧性 Core | 6 | 6 | 0 |
 | F 测试 Infra | 12 | 12 | 0 |
 | G 测试结构 | 10 | 10 | 0 |
-| H 可读性 Infra | 13 | 4 | **9**（H1~H6、H8、H9、H10；H7/H11/H12/H13 已完成） |
+| H 可读性 Infra | 13 | 5 | **8**（H2~H6、H8、H9、H10；H1/H7/H11/H12/H13 已完成） |
 | I 可读性 App/Core | 22 | 13 | **9**（I1、I5~I7、I9、I10、I12、I13、I16；I2/I3/I4/I8/I11/I14/I15/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **70** | **20** |
+| **合计** | **90** | **71** | **19** |
 
-> **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮），I 组已完成 8 → 13；剩余 9 项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余 8 项按该计划 §6 批次序推进，下一批为批 6）。
+> **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 + 批 6 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮）、H1 随批 6 落地（第 21 轮），I 组已完成 8 → 13、H 组 4 → 5；剩余项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余按该计划 §6 批次序推进，下一批为批 3）。
 
 > 回填前的历史快照为 `90 / 44 / 46`（2026-08）；本次补记的 21 项完成度分布为 F +6、G +6、B +1（B3）、H +3（H7/H11/H12/H13 中除 H11 外新补）、I +5（I8 与 I17~I20）。
 
@@ -103,7 +103,7 @@
 
 | 项 | 级别 | 位置 | 处理 |
 |----|------|------|------|
-| H1 | High | BBDownApiServer.cs 全文件 | God 类拆 ServeSecurityMiddleware / TaskRouteMapper / TaskFileStore / CallbackGuard；SetUpServer ~200 行 lambda 内联无法单测。⚠️ **第 12 轮勘误**：四个拆分文件在 git 全历史中从未存在（零提交记录），功能实际仍集中在本文件（现 1543 行）——本条记录失实，文件结构上 god 类未拆分；功能层面（中间件/持久化/回调防护）已实现并经审查通过 |
+| H1 | High | BBDownApiServer.cs 全文件 | God 类拆 ServeSecurityMiddleware / TaskRouteMapper / TaskFileStore / CallbackGuard；SetUpServer ~200 行 lambda 内联无法单测。⚠️ **第 12 轮勘误**：四个拆分文件在 git 全历史中从未存在（零提交记录），功能实际仍集中在本文件（现 1543 行）——本条记录失实，文件结构上 god 类未拆分；功能层面（中间件/持久化/回调防护）已实现并经审查通过。**✅ 2026-10-01 批 6 已按文件级切分落地**（PR #64：7 个 partial 文件 + DTO/源生成上下文迁出，见第 21 轮） |
 | H2 | High | BBDownMuxer.cs:64,174 | MuxAV 20 参 / MuxByMp4box 15 参改 MuxRequest 参数对象 |
 | H3 | High | BBDownDownloadUtil.cs:28 | RangeDownloadToTmpAsync 10 参 → RangeDownloadRequest + 拆两段 |
 | H4 | High | BBDownDownloadUtil.cs:227,611 | Core 170/200 行嵌套 6-7 层：预检决策方法 + DownloadClipWithRetryAsync；6 个"检查 .tmp/.aria2"块收敛 |
@@ -525,3 +525,20 @@
 | 偏差（写入计划 §1） | ① **`ApiMode` 枚举未落地**：三 bool 组合语义无法用单一枚举等价表达（`tvApi && appApi` 同时为真时两处 `!tvApi` 门控与"Intl > App > Tv"优先级不等价），且 `Workflow.cs:159` 的 `apiType` 用的是另一套优先级（TV > APP > INTL > WEB）——两处口径不一致已记为本批 Info 观察；② **I16 未并入**（跨子系统，留待批 7）；③ 顺带清理 FLV 分支冗余局部变量（`url` 恒为空串、`quality`/`videoCodecid`/`size`/`length` 声明即赋值） |
 | 基线（收批） | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**（拆解期间含临时转储用例时为 785，删除后 784）；`dotnet format --verify-no-changes` exit 0；`Parser.cs` 784 → 885 行（新增 XML 文档与所有权助手，主方法净减 493 行） |
 | Info 级观察（不登记 RF） | ① `Workflow.apiType`（用于 `<apiType>` 占位符与日志）与 `Parser.GetPlayJsonAsync` 的实际分派优先级不一致：前者 TV > APP > INTL > WEB、后者 INTL > APP > TV > WEB——同时给出多个 `--use-*-api` 时展示值与实际走的接口可能不同（当前无用户可见后果，登记待评估）；② 拆解后 `Parser.cs` 行数上升 101 行，属"注释与所有权助手换行数"，主方法规模才是本项收益口径 |
+
+---
+
+## 第 21 轮：REFACTOR_PLAN 批 6 落地（H1 serve 文件级切分，2026-10-01）
+
+> 按 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md) §6 批次序执行批 6：`BBDownApiServer.cs` **1683 行 → 7 个文件**，`SetupServer()` 245 行 → 编排 + 5 个具名映射方法。**无新发现登记**——一处偏差（不新建 4 个独立类型）已记入该计划 §1/§6。用户可见行为零变化，故不改 CHANGELOG/README/wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**（PR gate 过滤器）；`dotnet format --verify-no-changes` exit 0 |
+| 切分 | ✅ 7 文件：主 **163** 行（构造 / `SetupServer` 编排 / `ValidateListenUrl` / `RunAsync`）、`Security` **456**、`Routes` **183**、`Tasks` **321**、`TaskFileStore` **159**、`Callback` **283**、`ServeApiModels` **235**（6 个顶层类型 + 2 个 AOT 源生成上下文） |
+| 编排 | ✅ `SetupServer()` 拆为 `UseServeSecurityMiddleware` / `MapTaskQueryRoutes` / `MapAddTaskRoute` / `MapCancelRoute` / `MapFinishedRemovalRoutes`（端点 lambda 逐字保留，仅换宿主方法） |
+| 零丢失验证 | ✅ 有效行多重集比对：原文件 1060 行 vs 新 7 文件 1201 行，**34 处差异全部是新脚手架**（每文件的 using/namespace/partial 包装、5 个方法声明与其调用点）——**无代码行丢失或重复**；成员逐字搬运（不重排 / 不重命名 / 不重新格式化），各文件按需精简 using |
+| 偏差（写入计划 §1） | ✅ **不新建 `ServeSecurityMiddleware` / `TaskRouteMapper` / `TaskFileStore` / `CallbackGuard` 四个独立类型**：这些成员共享同一份实例状态（任务列表 / `_taskLock` / 闸门 / token），外置状态或引入门面属行为风险改动，超出"类已 `partial`，可零风险按成员切分"的范围；将来若要抽类，应先给 serve 端点补可注入缝（与端点处理器具名化同一议题） |
+| AOT 纪律 | ✅ `[JsonSerializable]` 源生成上下文与它们序列化的类型**同文件迁移**（`ServeApiModels.cs`），CI 的 Native AOT smoke 通过 |
+| 基线（收批） | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**；`dotnet format --verify-no-changes` exit 0；7 个文件字节卫生（无 BOM / 纯 LF / 末尾换行） |
+| Info 级观察（不登记 RF） | ① 端点处理器仍是内联 lambda（`SetupServer` 时代遗留）：抽成具名 `internal` 处理器即可直接单测，但需把任务注册表状态以参数/门面显式传入，属独立议题；② 第 5 轮 H1 提出的"四个拆分文件"名称与本次落地形态不同（`BBDownApiServer.<职责>.cs` 而非四个独立类），勘误链在此闭环：**文件结构上 god 类已拆分，功能层面维持原先已验证的实现** |
