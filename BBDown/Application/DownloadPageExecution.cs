@@ -189,7 +189,9 @@ internal sealed class DownloadPageExecutor
             }
         }
 
-        if (parsedResult.IsDrm && options.DecryptDrm &&
+        // 自动解密：解析结果标记为 DRM 且拿到 kid/PSSH 即走取钥解密（默认开启，
+        // --no-decrypt-drm 时 AutoDecryptDrm 为 false，行为回到旧版）
+        if (parsedResult.IsDrm && options.AutoDecryptDrm &&
             (!string.IsNullOrEmpty(parsedResult.KidHex) || !string.IsNullOrEmpty(parsedResult.PsshBase64)))
         {
             await _services.DecryptDrmAsync(parsedResult, videoPath, audioPath, options, context.CancellationToken);

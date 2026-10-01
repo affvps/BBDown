@@ -15,39 +15,43 @@ BBDown 内置了**纯原生 C# 实现的 Widevine Content Decryption Module (CDM
 
 ---
 
-## 2. 准备工作：配置 `device.wvd`
+## 2. 准备：开箱即用（无需自备设备文件）
 
-解密 Widevine DRM 内容必须提供一个有效的 Widevine L3 设备凭据文件（`device.wvd`）。
+**发布包已内置 `device.wvd`**（Widevine L3 设备凭据），与可执行文件解压在同一目录即可，无需再自行提取或寻找设备文件。
 
-### 2.1 放置位置与检索优先级
-BBDown 在启动时会按以下优先级自动在系统中检索 `device.wvd`：
-1. **当前程序目录**：直接将 `device.wvd` 文件放置在与 `BBDown.exe` 相同的目录下。
-2. **环境变量 `PATH` 目录**：放置在任意已加入系统 `PATH` 的路径中。
-3. **操作系统标准路径**：
-   - **Windows**：程序所在目录
-   - **macOS**：`/opt/homebrew/bin` 或 `/usr/local/bin`
-   - **Linux**：`/usr/local/bin`
-4. **显式命令行指定**：通过 `--wvd-path` 手动指定：
-   ```bash
-   BBDown --decrypt-drm --wvd-path "/path/to/device.wvd" <URL>
-   ```
+BBDown 解析设备文件的优先级（前者优先）：
+1. **`--wvd-path` 显式指定**（文件存在时采用）——内置证书被吊销/封禁时用它替换；
+2. **环境变量 `PATH` / 程序目录**中的 `device.wvd`；
+3. **程序目录内置的 `device.wvd`**（发布包自带，默认走这一条）。
+
+唯一需要自行准备的是 **`mp4decrypt`**（Bento4 的解密工具，原生二进制，不随包分发）：
+从 [Bento4 releases](https://github.com/axiomatic-systems/Bento4/releases) 下载后放入 `PATH` 或程序目录，或用 `--mp4decrypt-path` 指定路径。缺失时 BBDown 会在**下载流之前**报错并给出指引。
 
 ---
 
 ## 3. 自动解密下载实战
 
 ### 3.1 下载 DRM 付费课程（Cheese 课堂）
-确保已登录拥有该课程购买权限的账号（执行过 `BBDown login`），然后追加 `--decrypt-drm`：
+确保已登录拥有该课程购买权限的账号（执行过 `BBDown login`），**直接下载即可**——默认自动检测 DRM 并自动解密：
 
 ```bash
-BBDown --decrypt-drm "https://www.bilibili.com/cheese/play/ep1243104"
+BBDown "https://www.bilibili.com/cheese/play/ep1243104"
 ```
 
 **内部执行流程**：
-1. BBDown 检测到 DRM 流（`drm_tech_type=2`）。
-2. 从本地加载 `device.wvd` 构建 CDM 客户端。
+1. 解析请求携带 `drm_tech_type=2`，响应中的 `is_drm` 即"是否 DRM"的判定来源。
+2. 命中 DRM 时从内置 `device.wvd` 加载 CDM 客户端（下载流之前先检查 `mp4decrypt`/`device.wvd` 是否齐备）。
 3. 向 B 站许可证服务器发送 Challenge 请求并获取解密密钥（Key & KID）。
 4. 对下载的加密分片完成原生解密，并混流为标准 `.mp4` 文件。
+
+### 3.2 关闭自动解密
+不需要解密能力（或希望完全保持旧请求形态）时：
+
+```bash
+BBDown --no-decrypt-drm <URL>
+```
+
+此时不携带 `drm_tech_type=2`，遇到受 DRM 保护的内容按普通解析失败处理。旧脚本里的 `--decrypt-drm` 仍然有效（等价于默认行为）。
 
 ---
 
@@ -63,8 +67,10 @@ BBDown --key "0123456789abcdef0123456789abcdef" --kid "fedcba9876543210fedcba987
 
 ## 5. 常见问题与排障
 
-- **报错 `Cannot find device.wvd`**：
-  未检测到设备凭据文件。请确认文件名确为 `device.wvd` 并放置在程序所在目录。
+- **报错缺少 `mp4decrypt`**：
+  受 DRM 保护的内容需要 Bento4 的 `mp4decrypt`。请从 [Bento4 releases](https://github.com/axiomatic-systems/Bento4/releases) 下载后放入 `PATH` 或程序目录，或用 `--mp4decrypt-path` 指定；BBDown 会在下载流之前就报错，不会浪费带宽。
+- **报错找不到 `device.wvd`**：
+  发布包内置该文件，通常是解压不完整（只取了可执行文件）。请确认 `device.wvd` 与可执行文件在同一目录，或用 `--wvd-path` 指定。
 - **获取许可证返回 403 / 失败**：
   请检查当前登录账号是否已购买该课程/番剧。DRM 解密无法绕过账号的购买鉴权，必须拥有合法的播放权限。
 - **部分超高清画质未下发密钥**：

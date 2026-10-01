@@ -67,10 +67,11 @@ BBDown [选项] <URL或标识符>
 | | `--danmaku-filter-user` | `string?` | 弹幕发送者 midHash 黑名单过滤（逗号分隔） |
 | | `--comments` | `bool (false)` | 同时下载视频评论区，保存为 JSON |
 | | `--allow-preview` | `bool (false)` | 允许下载充电专属视频的试看片段 |
-| | `--decrypt-drm` | `bool (false)` | 启用原生 C# CDM 尝试解密 DRM 保护视频 |
+| | `--decrypt-drm` | `bool (false)` | 解密 DRM 保护视频（**默认已自动检测并解密**，保留该开关以兼容旧脚本） |
+| | `--no-decrypt-drm` | `bool (false)` | 关闭 DRM 自动检测与解密（不请求 DRM 流，遇到受保护内容按普通失败处理） |
 | | `--key` | `string?` | 手动指定 DRM 解密 Key（16进制字符串） |
 | | `--kid` | `string?` | 手动指定 DRM 密钥 ID（16进制字符串） |
-| | `--wvd-path` | `string ("")` | 手动指定 `device.wvd` 文件路径 |
+| | `--wvd-path` | `string ("")` | 手动指定 `device.wvd` 文件路径（默认用程序目录内置的 device.wvd） |
 | | `--mp4decrypt-path` | `string ("")` | 手动指定 `mp4decrypt` 可执行文件路径 |
 | | `--skip-mux` | `bool (false)` | 跳过混流步骤，保留单独的音视频源文件 |
 | | `--simply-mux` | `bool (false)` | 精简混流（混流时不注入视频描述、UP主等元数据） |

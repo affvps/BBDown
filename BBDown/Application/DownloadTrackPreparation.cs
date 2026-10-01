@@ -69,7 +69,9 @@ internal partial class Program
         bool selected,
         CancellationToken cancellationToken)
     {
-        if (options.DecryptDrm)
+        // DRM 内容没有可用的 FLV 流：给出账号侧的可操作提示（仅当解析结果确实标记为 DRM，
+        // 避免把普通的"无 FLV 流"误导成"需要大会员"）
+        if (parsedResult.IsDrm && options.AutoDecryptDrm)
         {
             Logger.LogError("此视频需要大会员登录才能获取完整DRM内容。");
             Logger.LogError("请先运行: BBDown login  或使用 --cookie 参数");
@@ -93,7 +95,7 @@ internal partial class Program
             parsedResult = await Parser.ExtractTracksAsync(
                 aidOri, page.aid, page.cid, page.epid,
                 options.UseTvApi, options.UseIntlApi, options.UseAppApi,
-                firstEncoding!, options.DecryptDrm, dfns[videoIndex], cancellationToken);
+                firstEncoding!, options.AutoDecryptDrm, dfns[videoIndex], cancellationToken);
             if (!page.points.Any()) page.points = parsedResult.ExtraPoints;
             selected = true;
             videoIndex = 0;

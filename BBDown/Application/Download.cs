@@ -187,7 +187,7 @@ internal partial class Program
     /// </summary>
     private static bool ReportNoTrackFailure(ParsedResult parsedResult, MyOption options)
     {
-        if (options.DecryptDrm)
+        if (parsedResult.IsDrm && options.AutoDecryptDrm)
         {
             Logger.LogError("此视频需要大会员登录才能获取完整DRM内容。");
             Logger.LogError("请先运行: BBDown login  或使用 --cookie 参数");
@@ -249,8 +249,9 @@ internal partial class Program
                         request.Page, request.Job.Options, title, pic, request.SavePathFormat, pagesCount, pubTime, request.Job.ApiType, request.Job.RelatedTask, cancellationToken);
                     subtitleInfo = pageAssets.SubtitleInfo;
                     if (pageAssets.EarlyResult.HasValue) return pageAssets.EarlyResult.Value;
-                    //调用解析
-                    ParsedResult parsedResult = await Parser.ExtractTracksAsync(request.Job.AidOri, request.Page.aid, request.Page.cid, request.Page.epid, request.Job.Options.UseTvApi, request.Job.Options.UseIntlApi, request.Job.Options.UseAppApi, request.Job.FirstEncoding!, request.Job.Options.DecryptDrm, token: cancellationToken);
+                    //调用解析（默认携带 drm_tech_type=2；响应里的 is_drm 就是"是否 DRM"的判定来源，
+                    // 取到 DRM 流后由下方 DownloadPageExecutor 自动走取钥解密，无需用户显式开关）
+                    ParsedResult parsedResult = await Parser.ExtractTracksAsync(request.Job.AidOri, request.Page.aid, request.Page.cid, request.Page.epid, request.Job.Options.UseTvApi, request.Job.Options.UseIntlApi, request.Job.Options.UseAppApi, request.Job.FirstEncoding!, request.Job.Options.AutoDecryptDrm, token: cancellationToken);
                     List<AudioMaterial> audioMaterial = [];
                     if (!request.Page.points.Any())
                     {
@@ -260,6 +261,10 @@ internal partial class Program
                     var previewPolicy = ApplyPreviewPolicy(request.Job.VideoInfo, request.Page, parsedResult, request.Job.Options, title);
                     title = previewPolicy.Title;
                     if (!previewPolicy.ShouldContinue) return false;
+
+                    // DRM 预检：受保护内容在下载流之前先确认解密链路齐备（缺 mp4decrypt/device.wvd
+                    // 时本分P立即失败并打印可操作指引），避免下完几个 G 才发现无法解密。
+                    if (!EnsureDrmToolsAvailable(parsedResult, request.Job.Options)) return false;
 
                     await WriteDebugParseResponseAsync(parsedResult, cancellationToken);
 

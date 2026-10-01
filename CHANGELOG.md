@@ -2,6 +2,17 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- **DRM 开箱即用**：发布包重新内置 `device.wvd`（Widevine L3 设备文件，与可执行文件在同一压缩包内），解压即具备 Widevine 解密能力，无需再自行提取设备文件；`--wvd-path` 仍可用于替换内置设备文件（如内置证书被吊销/封禁）。**注意**：`mp4decrypt`（Bento4）仍需自行安装，缺失时会在下载流之前报错并给出指引。
+- **DRM 自动检测与自动解密（默认开启）**：解析默认携带 `drm_tech_type=2`，响应标记为 DRM 时自动取钥并解密，不再需要显式传 `--decrypt-drm`（该开关保留以兼容旧脚本）；新增 `--no-decrypt-drm` 关闭自动检测与解密（回到旧请求形态与旧行为）。
+
+### 改进
+
+- **解密前置检查**：受 DRM 保护的内容在下载流之前检查 `mp4decrypt` 与 `device.wvd`（或手动 `--key/--kid`）是否齐备，缺失时立即失败并打印可操作指引——此前要下完整个视频才会在解密阶段报错。
+
 ## [1.7.0] - 2026-10-01
 
 ### 修复

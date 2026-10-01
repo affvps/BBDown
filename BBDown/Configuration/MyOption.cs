@@ -99,8 +99,12 @@ public class MyOption : CommandSettings
     public bool Insecure { get; set; }
 
     [CommandOption("--decrypt-drm")]
-    [Description("尝试解密DRM保护视频")]
+    [Description("解密DRM保护视频(默认已自动检测并解密，保留该开关以兼容旧脚本)")]
     public bool DecryptDrm { get; set; }
+
+    [CommandOption("--no-decrypt-drm")]
+    [Description("关闭DRM自动检测与解密(不请求DRM流，遇到受保护内容按普通失败处理)")]
+    public bool NoDecryptDrm { get; set; }
 
     [CommandOption("--allow-preview")]
     [Description("允许下载充电专属视频的试看片段(默认遇到试看片段直接中止)")]
@@ -119,8 +123,19 @@ public class MyOption : CommandSettings
     public string Mp4decryptPath { get; set; } = "";
 
     [CommandOption("--wvd-path")]
-    [Description("设置device.wvd的路径")]
+    [Description("设置device.wvd的路径(默认使用程序目录内置的 device.wvd)")]
     public string WvdPath { get; set; } = "";
+
+    /// <summary>
+    /// 是否启用 DRM 自动处理（默认**开启**）：解析请求携带 <c>drm_tech_type=2</c>，
+    /// 响应标记为 DRM（<c>is_drm</c> 且 tech=2）时自动取钥并解密，无需用户显式传
+    /// <c>--decrypt-drm</c>。关闭方式：<c>--no-decrypt-drm</c>（回到旧行为：既不请求
+    /// DRM 流也不尝试解密）；<c>--decrypt-drm</c> 是旧脚本兼容开关，显式给出时覆盖
+    /// <c>--no-decrypt-drm</c>；手动 <c>--key</c>/<c>--kid</c> 同样视为启用。
+    /// internal：不是 CLI 选项，不参与 Spectre 绑定与 JSON 契约。
+    /// </summary>
+    internal bool AutoDecryptDrm
+        => !NoDecryptDrm || DecryptDrm || !string.IsNullOrEmpty(DrmKeyHex) || !string.IsNullOrEmpty(DrmKidHex);
 
     [CommandOption("--skip-subtitle")]
     [Description("跳过字幕下载")]

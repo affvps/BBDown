@@ -61,10 +61,23 @@ jobs:
       - name: Package [win]
         run: |
           $ver = "${{ github.ref_name }}"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
           cd artifact-win-x64
-          zip ../BBDown_${ver}_win-x64.zip BBDown.exe
+          # device.wvd 是内置的 Widevine 设备文件：必须与可执行文件一起打包，
+          # 否则用户拿到的是"需要自己找 device.wvd"的半成品（解压即用是承诺）
+          if (-not (Test-Path device.wvd)) { throw "device.wvd 未随 publish 产出" }
+          zip ../BBDown_${ver}_win-x64.zip BBDown.exe device.wvd
           cd ../artifact-win-arm64
-          zip ../BBDown_${ver}_win-arm64.zip BBDown.exe
+          if (-not (Test-Path device.wvd)) { throw "device.wvd 未随 publish 产出" }
+          zip ../BBDown_${ver}_win-arm64.zip BBDown.exe device.wvd
+          # 打包后校验：zip 少了 device.wvd 时让构建失败，而不是等用户报告无法解密
+          foreach ($rid in @("win-x64", "win-arm64")) {
+            $zipPath = Resolve-Path "../BBDown_${ver}_${rid}.zip"
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+            try {
+              if (-not ($zip.Entries | Where-Object { $_.Name -eq "device.wvd" })) { throw "$rid zip 缺少 device.wvd" }
+            } finally { $zip.Dispose() }
+          }
 
       - name: Upload Artifact [win-x64]
         uses: actions/upload-artifact@v5
@@ -124,10 +137,18 @@ jobs:
 
       - name: Package [linux]
         run: |
+          # device.wvd 是内置的 Widevine 设备文件，必须与可执行文件一起打包（解压即用）
           cd artifact-linux-x64
-          zip ../BBDown_${{ github.ref_name }}_linux-x64.zip BBDown
+          test -f device.wvd || { echo "device.wvd 未随 publish 产出"; exit 1; }
+          zip ../BBDown_${{ github.ref_name }}_linux-x64.zip BBDown device.wvd
           cd ../artifact-linux-arm64
-          zip ../BBDown_${{ github.ref_name }}_linux-arm64.zip BBDown
+          test -f device.wvd || { echo "device.wvd 未随 publish 产出"; exit 1; }
+          zip ../BBDown_${{ github.ref_name }}_linux-arm64.zip BBDown device.wvd
+          cd ..
+          for rid in linux-x64 linux-arm64; do
+            unzip -l "BBDown_${{ github.ref_name }}_${rid}.zip" | grep -q device.wvd \
+              || { echo "${rid} zip 缺少 device.wvd"; exit 1; }
+          done
 
       - name: Upload Artifact [linux-x64]
         uses: actions/upload-artifact@v5
@@ -164,10 +185,18 @@ jobs:
 
       - name: Package [osx]
         run: |
+          # device.wvd 是内置的 Widevine 设备文件，必须与可执行文件一起打包（解压即用）
           cd artifact-osx-x64
-          zip ../BBDown_${{ github.ref_name }}_osx-x64.zip BBDown
+          test -f device.wvd || { echo "device.wvd 未随 publish 产出"; exit 1; }
+          zip ../BBDown_${{ github.ref_name }}_osx-x64.zip BBDown device.wvd
           cd ../artifact-osx-arm64
-          zip ../BBDown_${{ github.ref_name }}_osx-arm64.zip BBDown
+          test -f device.wvd || { echo "device.wvd 未随 publish 产出"; exit 1; }
+          zip ../BBDown_${{ github.ref_name }}_osx-arm64.zip BBDown device.wvd
+          cd ..
+          for rid in osx-x64 osx-arm64; do
+            unzip -l "BBDown_${{ github.ref_name }}_${rid}.zip" | grep -q device.wvd \
+              || { echo "${rid} zip 缺少 device.wvd"; exit 1; }
+          done
 
       - name: Upload Artifact [osx-x64]
         uses: actions/upload-artifact@v5
