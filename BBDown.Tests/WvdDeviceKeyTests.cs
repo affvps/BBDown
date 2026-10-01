@@ -120,6 +120,42 @@ public class WvdDeviceKeyTests
     }
 
     /// <summary>
+    /// P2-3：Dispose 必须清零 client_id 原始字节（设备身份材料），而不只是释放 RSA 句柄。
+    /// 变异验证：去掉 Dispose 里的 ZeroMemory 本用例即失败。
+    /// </summary>
+    [Fact]
+    public void Dispose_ClearsClientIdBytes()
+    {
+        using var key = RSA.Create(2048);
+        var privateKey = key.ExportRSAPrivateKey();
+        var clientId = new byte[] { 0x08, 0x01 };
+        var wvd = new List<byte> { 2, 1, 3, 0 };
+        wvd.Add((byte)(privateKey.Length >> 8));
+        wvd.Add((byte)(privateKey.Length & 0xFF));
+        wvd.AddRange(privateKey);
+        wvd.Add((byte)(clientId.Length >> 8));
+        wvd.Add((byte)(clientId.Length & 0xFF));
+        wvd.AddRange(clientId);
+
+        var path = Path.Combine(Path.GetTempPath(), $"bbdown-wipe-{Guid.NewGuid():N}.wvd");
+        File.WriteAllBytes(path, wvd.ToArray());
+        try
+        {
+            var device = WvdDevice.Load(path);
+            var bytes = device.ClientIdBytes;
+            Assert.Contains(bytes, b => b != 0); // 加载后确有内容
+
+            device.Dispose();
+
+            Assert.All(bytes, b => Assert.Equal(0, b));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>
     /// 加密 v2（flags 第 0 位 = 1，私钥被 AES 加密）必须被 ParseWvd 显式拒绝，
     /// 探测放宽到首字节 2 后不得把加密 v2 误放行。
     /// </summary>

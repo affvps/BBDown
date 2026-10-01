@@ -315,7 +315,9 @@ internal partial class Program
                 // 受控文件夹访问/ACL 拒写等本地权限错误）。
                 // InvalidDataException（RF-72）：RF-28/RF-51 的 64MB 上限与 gRPC 帧校验抛型，
                 // 不在白名单内会穿透中止整批——补入后按单 P 失败重试。
-                catch (Exception ex) when (ex is HttpRequestException or JsonException or IOException or UnauthorizedAccessException or InvalidOperationException or TimeoutException or AggregateException or FormatException or OverflowException or InvalidDataException
+                // 类型集与"单条目可跳过"策略共用同一核心（IsRetryablePageFailure），本处额外
+                // 附加取消条件：超时（token 未取消）参与重试，用户取消立即上抛。
+                catch (Exception ex) when (ExceptionPolicies.IsRetryablePageFailure(ex)
                                   || (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
                 {
                     // 风控页（200+HTML 的 RiskControlResponseException，继承 JsonException）也参与

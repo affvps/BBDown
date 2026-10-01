@@ -23,23 +23,66 @@ internal static partial class BBDownConfigParser
         { "login", "logintv", "serve", "live", "article", "watchlater", "sub" };
 
     /// <summary>
+    /// 剥掉 "--opt=value" 的内联值，返回选项名；无内联值时原样返回。
+    /// I16：此前三处扫参循环各自写一遍 <c>IndexOf('=')</c> 判定。
+    /// </summary>
+    private static string OptionName(string token)
+    {
+        var eq = token.IndexOf('=');
+        return eq > 0 ? token[..eq] : token;
+    }
+
+    /// <summary>
+    /// 返回"跳过当前 token（含其值，若有）"之后的下标。规则三处共用（I16）：
+    /// "--opt=value" 的值已含在 token 内、bool 开关不取值——都只前进 1；
+    /// 只有 <see cref="CliOptionIndex.TakesValue"/> 认可的取值选项才吞掉下一个 token。
+    /// </summary>
+    private static int SkipArgument(string[] args, int index)
+    {
+        var token = args[index];
+        if (OptionName(token) != token) return index + 1; // "--opt=value"：值已含在 token 内
+        return CliOptionIndex.TakesValue(token) ? index + 2 : index + 1;
+    }
+
+    /// <summary>
+    /// 取命令行上某个选项的值（支持 "--name value" 与 "--name=value" 两种写法），
+    /// 选项未出现（或写在末尾无值）时返回 null。
+    /// </summary>
+    private static string? GetOptionValue(string[] args, string name)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == name) return i + 1 < args.Length ? args[i + 1] : null;
+            if (args[i].StartsWith(name + "=", StringComparison.Ordinal)) return args[i][(name.Length + 1)..];
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 从 <paramref name="index"/> 起，返回一个选项值的 token 数：值本身以 '-' 开头
+    /// （<c>--access-token -abc</c>、负数参数）时不被误判为下一个选项，只有"以 - 开头且是
+    /// 已知选项名"才终止收集。收集与跳过两条路径共用（I16）。
+    /// </summary>
+    private static int CountOptionValueTokens(List<string> args, int index)
+    {
+        int i = index;
+        while (i < args.Count && (!args[i].StartsWith('-') || !CliOptionIndex.IsKnownOption(args[i]))) i++;
+        return i - index;
+    }
+
+    /// <summary>
     /// 判断本次调用是否是子命令。子命令总是第一个位置参数；
     /// 需要值的选项会吞掉下一个 token，扫描时必须跳过，否则
     /// "--config-file <path> sub list" 的 path 会被误判为位置参数。
     /// </summary>
     internal static bool IsSubCommandInvocation(string[] args)
     {
-        for (int i = 0; i < args.Length; i++)
+        for (int i = 0; i < args.Length;)
         {
             var arg = args[i];
             if (!arg.StartsWith('-'))
                 return SubCommandNames.Contains(arg, StringComparer.OrdinalIgnoreCase);
-
-            var token = arg;
-            var eq = token.IndexOf('=');
-            if (eq > 0) continue; // "--opt=value"：值已含在 token 内，不消耗下一项
-            if (CliOptionIndex.TakesValue(token))
-                i++; // 该选项需要值：下一 token 是它的值，跳过
+            i = SkipArgument(args, i);
         }
         return false;
     }
@@ -56,19 +99,16 @@ internal static partial class BBDownConfigParser
     internal static List<string> GetPositionalTokens(string[] args)
     {
         var positionals = new List<string>();
-        for (int i = 0; i < args.Length; i++)
+        for (int i = 0; i < args.Length;)
         {
             var arg = args[i];
             if (!arg.StartsWith('-'))
             {
                 positionals.Add(arg);
+                i++;
                 continue;
             }
-            var token = arg;
-            var eq = token.IndexOf('=');
-            if (eq > 0) continue; // "--opt=value"：值已含在 token 内，不消耗下一项
-            if (CliOptionIndex.TakesValue(token))
-                i++; // 该选项需要值：下一 token 是它的值，跳过
+            i = SkipArgument(args, i);
         }
         return positionals;
     }
@@ -86,20 +126,7 @@ internal static partial class BBDownConfigParser
 
         // 同时支持 "--config-file path" 与 "--config-file=path" 两种写法；
         // 旧实现只认空格写法，等号写法会被忽略而回落到默认配置路径。
-        string? configPath = null;
-        for (int i = 0; i < cliArgs.Length; i++)
-        {
-            if (cliArgs[i] == "--config-file")
-            {
-                configPath = cliArgs.ElementAtOrDefault(i + 1);
-                break;
-            }
-            if (cliArgs[i].StartsWith("--config-file=", StringComparison.Ordinal))
-            {
-                configPath = cliArgs[i]["--config-file=".Length..];
-                break;
-            }
-        }
+        string? configPath = GetOptionValue(cliArgs, "--config-file");
 
         if (string.IsNullOrEmpty(configPath))
             configPath = Path.Combine(Program.APP_DIR, "BBDown.config");
@@ -152,10 +179,9 @@ internal static partial class BBDownConfigParser
             if (!cliArgs[i].StartsWith('-')) continue;
             // 命令行可写成 "--opt value" 或 "--opt=value"，识别"已显式指定"时
             // 必须剥掉等号后缀，否则等号写法匹配不到别名，会被配置文件反向覆盖。
-            var token = cliArgs[i];
-            var eq = token.IndexOf('=');
-            if (eq > 0) token = token[..eq];
-            if (CliOptionIndex.TryGetCanonical(token, out var canonical))
+            // 注意：本循环刻意**不**跳过选项的值（与上面两个扫描不同）——多识别一个
+            // "-" 开头的已知选项名只会让该选项更"显式"，漏识别才会被配置文件反向覆盖。
+            if (CliOptionIndex.TryGetCanonical(OptionName(cliArgs[i]), out var canonical))
             {
                 explicitOptions.Add(canonical);
             }
@@ -173,24 +199,16 @@ internal static partial class BBDownConfigParser
 
             if (CliOptionIndex.TryGetCanonical(name, out var canonical))
             {
+                // 收集该选项的值。仅当"以 - 开头且是已知选项名"时才视为下一个选项终止收集：
+                // 否则配置文件里值本身以 - 开头（如 --access-token -abc、负数参数）会被误当选项丢弃。
+                // 收集（命令行未指定）与跳过（命令行已显式指定）共用同一计数（I16 前是两段逐字相同的 while）。
+                int valueCount = CountOptionValueTokens(configArgs, i + 1);
                 if (!explicitOptions.Contains(canonical))
                 {
                     result.Add(name);
-                    i++;
-                    // 收集该选项的值。仅当"以 - 开头且是已知选项名"时才视为下一个选项终止收集：
-                    // 否则配置文件里值本身以 - 开头（如 --access-token -abc、负数参数）会被误当选项丢弃。
-                    while (i < configArgs.Count && (!configArgs[i].StartsWith('-') || !CliOptionIndex.IsKnownOption(configArgs[i])))
-                    {
-                        result.Add(configArgs[i]);
-                        i++;
-                    }
+                    for (int k = 0; k < valueCount; k++) result.Add(configArgs[i + 1 + k]);
                 }
-                else
-                {
-                    i++;
-                    // 命令行已显式指定该选项：跳过配置文件里的值，判定规则同上
-                    while (i < configArgs.Count && (!configArgs[i].StartsWith('-') || !CliOptionIndex.IsKnownOption(configArgs[i]))) i++;
-                }
+                i += 1 + valueCount;
             }
             else
             {

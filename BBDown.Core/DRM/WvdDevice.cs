@@ -21,6 +21,9 @@ public class WvdDevice : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        // P2-3：client_id 是设备身份材料（可用于关联/伪造设备），与 Rsa 一同清零；
+        // ClientIdentification（protobuf 副本）在字段里，不受影响。
+        System.Security.Cryptography.CryptographicOperations.ZeroMemory(ClientIdBytes);
         Rsa.Dispose();
     }
 
@@ -138,6 +141,13 @@ public class WvdDevice : IDisposable
             // 私钥导入/解析失败时 RSA 仍持有非托管句柄，必须释放，避免句柄泄漏
             rsa.Dispose();
             throw;
+        }
+        finally
+        {
+            // P2-3：私钥已进入 RSA（失败时也不再需要）——源字节立即清零，避免明文私钥
+            // 在托管堆上存活到下一次 GC。该数组由 ParseWvd 新建或 ParsePemPlusClientId
+            // 持有的整份文件内容，本方法返回后调用方均不再使用。
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(privateKeyBytes);
         }
     }
 

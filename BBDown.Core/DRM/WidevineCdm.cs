@@ -332,7 +332,9 @@ public sealed class WidevineCdm : IDisposable
 
         // Derive keys for signature verification and content decryption
         var (encContext, macContext) = WidevineCrypto.DeriveContext(challenge);
-        var (encKey, macKeyServer, _) = WidevineCrypto.DeriveKeys(sessionKey, encContext, macContext);
+        var (encKey, macKeyServer, macKeyClient) = WidevineCrypto.DeriveKeys(sessionKey, encContext, macContext);
+        // P2-3：客户端 MAC 密钥本实现不使用（只校验服务端签名）——立即清零，不留在托管堆。
+        CryptographicOperations.ZeroMemory(macKeyClient);
 
         try
         {

@@ -8,6 +8,13 @@
 
 - **发布校验文件无法直接使用**：Release 附带的 `sha256sums.txt` 内路径带 `artifacts/` 前缀（CI 里由 `sha256sum artifacts/*.zip` 在工作目录下生成），用户下载后直接 `sha256sum -c sha256sums.txt` 必然报 `FAILED open or read`，须先自建一个同名目录才能校验——与“下载后验包”的初衷相悖。现改为在 `artifacts/` 内生成（文件名不带目录前缀），下载的 zip 与校验文件放同一目录即可直接校验；校验方法同时写入 README 与 wiki 快速上手（含 Windows / macOS 等价命令）。
 
+- **单条目失败的异常过滤器三处漂移**：`sub check` 逐 aid/逐订阅、`watchlater` 逐视频、逐 P 下载编排与页面级重试各自维护一份"可跳过的异常类型"集合，历次扩充（RF-44 权限、RF-72 有界响应体）都漏过其中一两处——例如 `watchlater` 遇到 `KeyNotFoundException`、订阅检查遇到 `FormatException`/`OverflowException`（服务器可控 id 畸形）时会**中止整批**而不是记一次失败继续。现收敛为一份具名策略（"可跳过"与"页面级可重试"共用同一核心类型集），四处站点语义一致：单条目失败计入失败数后继续，用户取消仍按站点守卫立即上抛。
+- **`<apiType>` 与实际接口不一致**：同时给出多个 `--use-*-api` 时，日志与 `<apiType>` 占位符按 TV > APP > INTL 展示，而实际请求按 INTL > APP > TV 分派——用 `<apiType>` 命名产物时可能与实际来源不符。现优先级只有一处定义（`Parser.ResolveApiMode`），展示与分派共用。
+
+### 安全性
+
+- **DRM 密钥材料清零**：`WvdDevice` 释放时清零 client_id 原始字节（此前只释放 RSA 句柄），私钥导入后立即清零源字节；Widevine 许可证处理不再保留未使用的客户端 MAC 密钥。
+
 ### 改进
 
 - **`watchlater --help` 的选项顺序**：`--limit` 由首位移到末位。8 个下载选项（`-c/--cookie`、`-w/--work-dir` 等）在 `watchlater` 与 `sub check` 之间收敛到共用基类后，Spectre.Console.Cli 先枚举基类属性。选项名、描述与绑定行为均未变化，`sub add/list/remove` 的选项面同样不变。

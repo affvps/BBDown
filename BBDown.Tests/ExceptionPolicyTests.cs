@@ -33,13 +33,13 @@ public class ExceptionPolicyTests
         typeof(InvalidOperationException),
         typeof(ArgumentException),
         typeof(InvalidDataException),
+        typeof(AggregateException),
+        typeof(FormatException),
+        typeof(OverflowException),
         // —— 对照类型（不得被任何策略匹配）——
         // 注意：派生自已声明类型的异常（如 ArgumentOutOfRangeException : ArgumentException）
         // 会被子类型敏感的 `is` 命中，属预期行为，故不放对照区。
         typeof(OperationCanceledException),
-        typeof(AggregateException),
-        typeof(FormatException),
-        typeof(OverflowException),
         typeof(NotSupportedException),
         typeof(XmlException),
         typeof(DecoderFallbackException),
@@ -76,7 +76,14 @@ public class ExceptionPolicyTests
         ["IsSkippableItemFailure"] = (ExceptionPolicies.IsSkippableItemFailure,
             [typeof(HttpRequestException), typeof(System.Text.Json.JsonException), typeof(KeyNotFoundException),
              typeof(InvalidOperationException), typeof(IOException), typeof(UnauthorizedAccessException),
-             typeof(ArgumentException), typeof(TimeoutException), typeof(TaskCanceledException), typeof(InvalidDataException)]),
+             typeof(ArgumentException), typeof(TimeoutException), typeof(TaskCanceledException), typeof(InvalidDataException),
+             typeof(AggregateException), typeof(FormatException), typeof(OverflowException)]),
+        // 与上一行共用核心，唯一差别是不含 TaskCanceledException（取消条件由站点附加）
+        ["IsRetryablePageFailure"] = (ExceptionPolicies.IsRetryablePageFailure,
+            [typeof(HttpRequestException), typeof(System.Text.Json.JsonException), typeof(KeyNotFoundException),
+             typeof(InvalidOperationException), typeof(IOException), typeof(UnauthorizedAccessException),
+             typeof(ArgumentException), typeof(TimeoutException), typeof(InvalidDataException),
+             typeof(AggregateException), typeof(FormatException), typeof(OverflowException)]),
     };
 
     /// <summary>
@@ -107,7 +114,30 @@ public class ExceptionPolicyTests
 
     /// <summary>谓词条数钉住：批次内静默删除谓词会让共享站点失去命名策略。</summary>
     [Fact]
-    public void PolicyCount_IsPinned() => Assert.Equal(9, Policies.Count);
+    public void PolicyCount_IsPinned() => Assert.Equal(10, Policies.Count);
+
+    /// <summary>
+    /// 两条"批次内继续"策略必须严格同源：可跳过 = 可重试核心 + TaskCanceledException。
+    /// 这条关系式是收口后的防漂移护栏——将来只改其中一个谓词的集合会在此失败，
+    /// 而不是让 sub check / watchlater / 下载编排 / 页面重试重新各自漂移。
+    /// </summary>
+    [Fact]
+    public void SkippableAndRetryablePolicies_ShareTheSameCore()
+    {
+        var failures = new List<string>();
+        foreach (var type in Universe)
+        {
+            var instance = (Exception)Activator.CreateInstance(type)!;
+            var skippable = ExceptionPolicies.IsSkippableItemFailure(instance);
+            var retryable = ExceptionPolicies.IsRetryablePageFailure(instance);
+            var expected = retryable || type == typeof(TaskCanceledException)
+                || typeof(TaskCanceledException).IsAssignableFrom(type);
+            if (skippable != expected)
+                failures.Add($"{type.Name}: IsSkippableItemFailure={skippable}，核心+TaskCanceledException={expected}");
+        }
+
+        Assert.True(failures.Count == 0, "两条策略的核心集出现漂移：\n  " + string.Join("\n  ", failures));
+    }
 
     /// <summary>全集必须覆盖所有声明的类型，否则"集合写宽"可能被漏检（比对上一条更强的防假绿）。</summary>
     [Fact]

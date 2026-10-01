@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using BBDown.Core.Entity;
+using BBDown.Core.Util;
 using static BBDown.Core.Entity.Entity;
 
 namespace BBDown;
@@ -146,7 +147,8 @@ internal sealed class DownloadOrchestrator
                     new PageDownloadRequest(job, page, pagesInfo, savePathFormat), cancellationToken);
             }
             // 单 P 的网络、解析、文件系统和媒体数据异常记为失败后继续处理整批。
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or IOException or UnauthorizedAccessException or InvalidOperationException or TimeoutException or TaskCanceledException or AggregateException or FormatException or OverflowException or InvalidDataException)
+            // 与 sub check / watchlater 共用同一份"单条目可跳过"策略；用户取消由体内守卫重抛。
+            catch (Exception ex) when (ExceptionPolicies.IsSkippableItemFailure(ex))
             {
                 if (cancellationToken.IsCancellationRequested) throw;
                 _logError($"P{page.index} 下载失败: [{ex.GetType().Name}] {ex.Message}");
