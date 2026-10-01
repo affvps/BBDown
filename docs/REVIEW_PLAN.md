@@ -7,7 +7,7 @@
 ## 状态总览
 
 > **回填说明（2026-09-30，第 18 轮消纳后）**：本表自 2026-08 起未同步，F/G 两组实际已清零、B3 已结项、I8 已完成但未回填；本次逐项核验后重算。
-> H/I 剩余项的核验口径：逐符号检查重构产物是否存在（`ServeSecurityMiddleware`/`TaskRouteMapper`/`TaskFileStore`/`CallbackGuard`、`MuxRequest`、`RangeDownloadRequest`、`DownloadContext`、`BiliApiKeys`、`PickDataRoot`/`PickTrackBaseUrl`、`IsRetryableDownloadException`、`ReadHistoryLocked` 均不存在 → 未落地；`BiliApiKeys`/`EstimatedBytes` 已于 2026-10-01 的 REFACTOR_PLAN 批 1b 落地）。
+> H/I 剩余项的核验口径：逐符号检查重构产物是否存在（`ServeSecurityMiddleware`/`TaskRouteMapper`/`TaskFileStore`/`CallbackGuard`、`MuxRequest`、`RangeDownloadRequest`、`DownloadContext`、`BiliApiKeys`、`IsRetryableDownloadException`、`ReadHistoryLocked` 均不存在 → 未落地；`BiliApiKeys`/`EstimatedBytes` 已于 2026-10-01 的 REFACTOR_PLAN 批 1b 落地，`PickDataRoot`/`PickTrackBaseUrl` 已于同日批 4 落地）。
 > 另注：**I16 的范围已被 PR #53 部分消化**（“静态缓存 BuildAliasMap”由新增的 `CliOptionIndex` 承担，四处手工扫参尚未收敛）；H/I 与 [`OPTIMIZATION_PLAN.md`](OPTIMIZATION_PLAN.md) 存在重叠（P0-1 ≈ I1/I2/I10、P1-1 ≈ H5、P1-2 ≈ I2、P1-3 ≈ J1），评估时请合并口径，避免重复排期。
 > **H/I 剩余项的执行计划见 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md)**（7 批 7 PR、逐批范围/风险/安全网/验收口径与进度追踪）。
 
@@ -21,11 +21,11 @@
 | F 测试 Infra | 12 | 12 | 0 |
 | G 测试结构 | 10 | 10 | 0 |
 | H 可读性 Infra | 13 | 4 | **9**（H1~H6、H8、H9、H10；H7/H11/H12/H13 已完成） |
-| I 可读性 App/Core | 22 | 12 | **10**（I1、I2、I5~I7、I9、I10、I12、I13、I16；I3/I4/I8/I11/I14/I15/I17~I22 已完成） |
+| I 可读性 App/Core | 22 | 13 | **9**（I1、I5~I7、I9、I10、I12、I13、I16；I2/I3/I4/I8/I11/I14/I15/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **69** | **21** |
+| **合计** | **90** | **70** | **20** |
 
-> **回填（2026-10-01，REFACTOR_PLAN 批 1b 后）**：I3/I11/I14/I15 随批 1b 落地（见第 19 轮），I 组已完成 8 → 12；剩余 10 项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余 9 项按该计划 §6 批次序推进，下一批为批 4）。
+> **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮），I 组已完成 8 → 13；剩余 9 项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余 8 项按该计划 §6 批次序推进，下一批为批 6）。
 
 > 回填前的历史快照为 `90 / 44 / 46`（2026-08）；本次补记的 21 项完成度分布为 F +6、G +6、B +1（B3）、H +3（H7/H11/H12/H13 中除 H11 外新补）、I +5（I8 与 I17~I20）。
 
@@ -509,3 +509,19 @@
 | 测试 | ✅ 新增 `TrackLineFormatTests` 9 例（775 → **784**）：展示行组装与旧 `.Replace` 写法逐字符等价 ×4、字段内容不被误伤 ×1、估算算式 ×3、长整型不溢出 ×1；两个助手提 internal 供直测（沿用 `FormatSavePath`/`SortTracks`/`TryResolveWorkDir` 先例） |
 | 基线（收批） | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**；`dotnet format --verify-no-changes` exit 0；新增两文件字节卫生（无 BOM / 纯 LF / 末尾换行） |
 | Info 级观察（不登记 RF） | ① `Config.Wbi` 仍是"全局写"门面（serve 流内应走 `WbiFlow`），彻底移除需先改造 4 处调用点，留待后续评估；② `EstimatedBytes` 的 kbps 口径依赖 `Parser.cs` 的 `bandwidth / 1000`（接口给 bps），已写入 XML 文档与测试注释防漂移；③ `AppRoleAudioDto` 与 `Entity.AudioMaterial` 的同名冲突已消除，但两者的"元数据 vs 本地文件"语义差异仍只靠注释表达；④ **批 1a 的统计基数与收批实测对不上**：批 1a 记录称全库 when-过滤器 94 处 = 64 处收口 + 2 处带附加条件 + 28 种唯一集合（`ExceptionPolicies.cs` 类文档内又写"66 处重复族"，与 64/28/2 亦不自洽）；本轮按 `catch (Exception …) when (` 统一口径逐文件实测（排除 `bin`/`obj`）为 **102 处生产站点**（另 1 处命中是类文档中的示例文本），其中 **64 处**用具名谓词、**38 处**保留内联集合。差异不影响收口本身的正确性（64 处逐字等价 + 真值表钉住），但两处口径需重算统一，避免后续批次引用错误基数 |
+
+---
+
+## 第 20 轮：REFACTOR_PLAN 批 4 落地（I2 Parser 巨方法拆解，2026-10-01）
+
+> 按 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md) §6 批次序执行批 4：`ExtractTracksAsync` **532 行 → 39 行**，数据根定位 3 份漂移变体、轨道基址选择 6 处重复、两次重发的文档所有权全部收口。**无新发现登记**——两处偏差（不引入 `ApiMode`、I16 未并批）已记入该计划 §1/§6。用户可见行为零变化，故不改 CHANGELOG/README/wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **775/775 全绿**（PR gate 过滤器）；`dotnet format --verify-no-changes` exit 0 |
+| 前置（强制）· 基线存档 | ✅ 临时转储用例回放 **18 夹具 / 15 场景**（UGC web dash、pgc video_info/result 两种根、TV dash、INTL 双轮、FLV durl、TV durl qn_extras、DRM 好/坏 kid、免二压 dash 重发、durl 空重发降级、dolby+flac 追加、业务错误、播放限制、缺节点容忍），输出含轨道全字段（id/dfn/res/fps/codecs/bandwidth/dur/size/URL）、分段、清晰度、DRM 字段与**请求序列**（query 中 `wts`/`w_rid`/`sign`/`ts` 归一为 `<v>`）；**两次运行 SHA-256 一致**（`75FE2843…`），确认转储本身可复现（TV 场景的 `TvHost` 定向在首轮即被修正，避免误打真实网络） |
+| 拆解 | ✅ 主方法拆为"取文档 → `PlayResponse`（文档 + 当前数据根，接管即释放旧文档）→ `PickDataRoot` → dash/durl/intl 分派 → 轨道映射纯函数"；新增私有 `PlayRequest`（长参数收敛）与 15 个私有方法 |
+| 拆解后比对 | ✅ 同一转储 **SHA-256 完全相同**（逐字节）；9 条日志文案排序后逐字相等、`throw` 1 处 / `catch` 8 处 / `Logger.*` 9 处计数不变 |
+| 偏差（写入计划 §1） | ① **`ApiMode` 枚举未落地**：三 bool 组合语义无法用单一枚举等价表达（`tvApi && appApi` 同时为真时两处 `!tvApi` 门控与"Intl > App > Tv"优先级不等价），且 `Workflow.cs:159` 的 `apiType` 用的是另一套优先级（TV > APP > INTL > WEB）——两处口径不一致已记为本批 Info 观察；② **I16 未并入**（跨子系统，留待批 7）；③ 顺带清理 FLV 分支冗余局部变量（`url` 恒为空串、`quality`/`videoCodecid`/`size`/`length` 声明即赋值） |
+| 基线（收批） | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**（拆解期间含临时转储用例时为 785，删除后 784）；`dotnet format --verify-no-changes` exit 0；`Parser.cs` 784 → 885 行（新增 XML 文档与所有权助手，主方法净减 493 行） |
+| Info 级观察（不登记 RF） | ① `Workflow.apiType`（用于 `<apiType>` 占位符与日志）与 `Parser.GetPlayJsonAsync` 的实际分派优先级不一致：前者 TV > APP > INTL > WEB、后者 INTL > APP > TV > WEB——同时给出多个 `--use-*-api` 时展示值与实际走的接口可能不同（当前无用户可见后果，登记待评估）；② 拆解后 `Parser.cs` 行数上升 101 行，属"注释与所有权助手换行数"，主方法规模才是本项收益口径 |
