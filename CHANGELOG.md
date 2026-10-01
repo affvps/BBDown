@@ -2,7 +2,7 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [1.7.0] - 2026-10-01
 
 ### 修复
 
@@ -18,6 +18,7 @@
 ### 改进
 
 - **`watchlater --help` 的选项顺序**：`--limit` 由首位移到末位。8 个下载选项（`-c/--cookie`、`-w/--work-dir` 等）在 `watchlater` 与 `sub check` 之间收敛到共用基类后，Spectre.Console.Cli 先枚举基类属性。选项名、描述与绑定行为均未变化，`sub add/list/remove` 的选项面同样不变。
+- **维护性（用户不可见）**：H/I 组结构性重构计划（[REFACTOR_PLAN](docs/REFACTOR_PLAN.md)，批 1~7 + 收口批）执行完毕——异常过滤器收口为具名策略、`Parser`/下载管线/serve 按职责拆解、`watchlater` 与 `sub check` 的下载选项收敛到共用基类、`UrlResolver` 入口拆分、选项扫参与魔法数具名等；除本文件列出的条目外，用户可见行为与 CLI/配置契约保持不变。
 
 ## [1.6.22] - 2026-09-30
 
@@ -551,7 +552,8 @@
 
 ---
 
-[Unreleased]: https://github.com/AliverAnme/BBDown/compare/v1.6.22...HEAD
+[Unreleased]: https://github.com/AliverAnme/BBDown/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/AliverAnme/BBDown/compare/v1.6.22...v1.7.0
 [1.6.22]: https://github.com/AliverAnme/BBDown/compare/v1.6.21...v1.6.22
 [1.6.21]: https://github.com/AliverAnme/BBDown/compare/v1.6.20...v1.6.21
 [1.6.20]: https://github.com/AliverAnme/BBDown/compare/v1.6.19...v1.6.20
