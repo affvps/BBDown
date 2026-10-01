@@ -185,7 +185,7 @@ dotnet format BBDown.sln --verify-no-changes
 
 ```
 ✅ 批 1a（I7 异常策略：64 处收口，真值表钉住）— PR #60
-  → ✅ 批 1b（命名/常量/重复收敛）— 本批
+  → ✅ 批 1b（命名/常量/重复收敛）— PR #61
   → 批 4（存量最大：532 行，护栏最强）      ← 下一批（先跑夹具回放基线）
   → 批 6（文件最大：1683 行，护栏 51 例）
   → 批 3 → 批 5 → 批 2 → 批 7
@@ -205,7 +205,7 @@ dotnet format BBDown.sln --verify-no-changes
 
 #### 已完成批次记录
 
-**批 1a（I7）· PR #60**：`BBDown.Core/Util/ExceptionPolicies.cs` 9 条具名策略；生产代码 64 处站点全部改用具名谓词（Core 9 + App 55），`ExceptionPolicyTests` 以真值表逐类型钉住各策略集合（+9 引用）。站点自有守卫（`ct.IsCancellationRequested` 等 2 处）与 28 种唯一集合按要求保留原地。
+**批 1a（I7）· PR #60**：`BBDown.Core/Util/ExceptionPolicies.cs` 9 条具名策略；生产代码 64 处站点全部改用具名谓词（Core 9 + App 55），`ExceptionPolicyTests` 以真值表逐类型钉住各策略集合（+9 引用）。未收口站点保留内联集合与站点自有守卫（`ct.IsCancellationRequested` 等）。⚠️ **1a 记录的"94 处 = 64 收口 + 2 带附加条件 + 28 唯一集合"与收批实测对不上**：按同一口径（`catch (Exception …) when (`，排除 bin/obj）实测生产 when-过滤器 **102 处 = 64 具名 + 38 内联**；1a 类文档内"66 处重复族"亦与 64/28/2 不自洽。不影响收口正确性（64 处逐字等价 + 真值表钉住），口径待重算统一——详见 `REVIEW_PLAN.md` 第 19 轮 Info 观察④。
 
 **批 1b（I11/I14/I15/I3）· PR #61**：
 
