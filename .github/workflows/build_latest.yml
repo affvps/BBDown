@@ -14,6 +14,11 @@ concurrency:
 env:
   DOTNET_SDK_VERSION: "10.0.300"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # 与 release.yml 保持同一固定版本/SHA256（见该文件注释）
+  BENTO4_VERSION: "1-6-0-641"
+  BENTO4_SHA256_WIN: "6916a390f75878872594be74554b8b54ab220bb29812424441a8e1ecc9a6ac5e"
+  BENTO4_SHA256_LINUX: "d48dc6b164941212e5614237b4d9aeff81d4d111ee8b1508892764078a0870e8"
+  BENTO4_SHA256_MAC: "0570cf0dd59f362904d6f1cb472cbf4cdd37928fb0fe28e4c7f98c460e8e0ced"
 
 jobs:
   set-date:
@@ -68,12 +73,29 @@ jobs:
           dotnet publish BBDown -r win-x64 -c Release -o artifact
           dotnet publish BBDown -r win-arm64 -c Release -o artifact-arm64
 
+      # 内置 mp4decrypt（Bento4，GPLv2）：与 release.yml 同一固定版本/SHA256；
+      # win-arm64 也放 x64 版（Windows 11 on ARM 的 x64 模拟可运行）。
+      - name: Bundle mp4decrypt (Bento4)
+        shell: pwsh
+        run: |
+          $ver = "${{ env.BENTO4_VERSION }}"
+          $zip = Join-Path $env:RUNNER_TEMP "bento4-sdk-win.zip"
+          Invoke-WebRequest -Uri "https://www.bok.net/Bento4/binaries/Bento4-SDK-$ver.x86_64-microsoft-win32.zip" -OutFile $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($hash -ne "${{ env.BENTO4_SHA256_WIN }}") { throw "Bento4 归档 SHA256 不匹配: $hash" }
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $env:RUNNER_TEMP "bento4") -Force
+          $root = Get-ChildItem (Join-Path $env:RUNNER_TEMP "bento4") -Directory | Select-Object -First 1
+          Copy-Item (Join-Path $root.FullName "bin/mp4decrypt.exe") "artifact/mp4decrypt.exe"
+          Copy-Item (Join-Path $root.FullName "docs/LICENSE.txt") "artifact/mp4decrypt-LICENSE.txt"
+          Copy-Item (Join-Path $root.FullName "bin/mp4decrypt.exe") "artifact-arm64/mp4decrypt.exe"
+          Copy-Item (Join-Path $root.FullName "docs/LICENSE.txt") "artifact-arm64/mp4decrypt-LICENSE.txt"
+
       - name: Package [win]
         run: |
           cd artifact
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-x64.zip BBDown.exe device.wvd
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-x64.zip BBDown.exe device.wvd mp4decrypt.exe mp4decrypt-LICENSE.txt
           cd ../artifact-arm64
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-arm64.zip BBDown.exe device.wvd
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-arm64.zip BBDown.exe device.wvd mp4decrypt.exe mp4decrypt-LICENSE.txt
 
       - name: Upload Artifact [win-x64]
         uses: actions/upload-artifact@v5
@@ -144,10 +166,23 @@ jobs:
               dotnet publish BBDown -r linux-arm64 -c Release -p:StripSymbols=true -p:CppCompilerAndLinker=clang-9 -p:SysRoot=/crossrootfs/arm64 -o /workspace/artifact-arm64
             "
 
+      # 内置 mp4decrypt（Bento4，GPLv2）：仅 x64 有官方 Linux 二进制；arm64 不内置。
+      - name: Bundle mp4decrypt (Bento4, linux-x64)
+        run: |
+          set -e
+          ver="${{ env.BENTO4_VERSION }}"
+          curl -sSL -o /tmp/bento4-sdk.zip "https://www.bok.net/Bento4/binaries/Bento4-SDK-${ver}.x86_64-unknown-linux.zip"
+          echo "${{ env.BENTO4_SHA256_LINUX }}  /tmp/bento4-sdk.zip" | sha256sum -c -
+          unzip -q /tmp/bento4-sdk.zip -d /tmp/bento4
+          root=$(find /tmp/bento4 -mindepth 1 -maxdepth 1 -type d | head -n1)
+          cp "$root/bin/mp4decrypt" artifact/mp4decrypt
+          chmod +x artifact/mp4decrypt
+          cp "$root/docs/LICENSE.txt" artifact/mp4decrypt-LICENSE.txt
+
       - name: Package [linux]
         run: |
           cd artifact
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-x64.zip BBDown device.wvd
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-x64.zip BBDown device.wvd mp4decrypt mp4decrypt-LICENSE.txt
           cd ../artifact-arm64
           zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-arm64.zip BBDown device.wvd
 
@@ -184,12 +219,28 @@ jobs:
           dotnet publish BBDown -r osx-x64 -c Release -o artifact
           dotnet publish BBDown -r osx-arm64 -c Release -o artifact-arm64
 
+      # 内置 mp4decrypt（Bento4，GPLv2）：macOS 官方包为 universal 二进制，x64/arm64 通用。
+      - name: Bundle mp4decrypt (Bento4, universal)
+        run: |
+          set -e
+          ver="${{ env.BENTO4_VERSION }}"
+          curl -sSL -o /tmp/bento4-sdk.zip "https://www.bok.net/Bento4/binaries/Bento4-SDK-${ver}.universal-apple-macosx.zip"
+          echo "${{ env.BENTO4_SHA256_MAC }}  /tmp/bento4-sdk.zip" | shasum -a 256 -c -
+          unzip -q /tmp/bento4-sdk.zip -d /tmp/bento4
+          root=$(find /tmp/bento4 -mindepth 1 -maxdepth 1 -type d | head -n1)
+          cp "$root/bin/mp4decrypt" artifact/mp4decrypt
+          chmod +x artifact/mp4decrypt
+          cp "$root/docs/LICENSE.txt" artifact/mp4decrypt-LICENSE.txt
+          cp "$root/bin/mp4decrypt" artifact-arm64/mp4decrypt
+          chmod +x artifact-arm64/mp4decrypt
+          cp "$root/docs/LICENSE.txt" artifact-arm64/mp4decrypt-LICENSE.txt
+
       - name: Package [osx]
         run: |
           cd artifact
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-x64.zip BBDown device.wvd
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-x64.zip BBDown device.wvd mp4decrypt mp4decrypt-LICENSE.txt
           cd ../artifact-arm64
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-arm64.zip BBDown device.wvd
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-arm64.zip BBDown device.wvd mp4decrypt mp4decrypt-LICENSE.txt
 
       - name: Upload Artifact [osx-x64]
         uses: actions/upload-artifact@v5

@@ -365,7 +365,9 @@ BBDown 目前以**原生 C#** 实现了 Widevine CDM，可自动获取解密密�
 **开箱即用**
 - 发布包**内置 `device.wvd`**（Widevine L3 设备文件），解压后与可执行文件同目录即可，无需自行提取设备文件；
 - **默认自动检测 + 自动解密**：解析携带 `drm_tech_type=2`，响应标记为 DRM 时自动取钥解密，无需任何额外开关；
-- 唯一需要自行准备的是 `mp4decrypt`（Bento4 的解密工具）：从 [Bento4 releases](https://github.com/axiomatic-systems/Bento4/releases) 下载后放入 `PATH` 或程序目录，或用 `--mp4decrypt-path` 指定。缺失时会在**下载流之前**报错并给出指引（不会下完整个视频才发现无法解密）。
+- 发布包同时**内置 `mp4decrypt`**（Bento4 的解密工具，版本与归档 SHA256 在构建时固定校验）：Windows / macOS / Linux **x64** 解压即用，macOS 为 universal 二进制（x64/arm64 通用），Windows arm64 包内为 x64 版（Windows 11 on ARM 经 x64 模拟运行）；
+- **例外**：`linux-arm64` 暂无官方 Bento4 二进制，该平台需自行安装 `mp4decrypt` 或用 `--mp4decrypt-path` 指定；缺失时 BBDown 会在**下载流之前**报错并给出指引（不会下完整个视频才发现无法解密）。
+- 第三方分发与许可证说明见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。
 
 **使用**
 ```bash

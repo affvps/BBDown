@@ -6,7 +6,7 @@
 
 ### 新增
 
-- **DRM 开箱即用**：发布包重新内置 `device.wvd`（Widevine L3 设备文件，与可执行文件在同一压缩包内），解压即具备 Widevine 解密能力，无需再自行提取设备文件；`--wvd-path` 仍可用于替换内置设备文件（如内置证书被吊销/封禁）。**注意**：`mp4decrypt`（Bento4）仍需自行安装，缺失时会在下载流之前报错并给出指引。
+- **DRM 开箱即用**：发布包内置 `device.wvd`（Widevine L3 设备文件）**与 `mp4decrypt`（Bento4 解密工具）**，解压即具备完整的 Widevine 解密能力——无需自行提取设备文件，也无需另行安装解密工具；`--wvd-path` / `--mp4decrypt-path` 仍可用于替换内置文件。Bento4 版本与归档 SHA256 在构建时固定校验，许可证文本随包分发（见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)）。**例外**：`linux-arm64` 官方无 Bento4 二进制，该平台仍需自行安装 `mp4decrypt`；缺失时会在下载流之前报错并给出指引。
 - **DRM 自动检测与自动解密（默认开启）**：解析默认携带 `drm_tech_type=2`，响应标记为 DRM 时自动取钥并解密，不再需要显式传 `--decrypt-drm`（该开关保留以兼容旧脚本）；新增 `--no-decrypt-drm` 关闭自动检测与解密（回到旧请求形态与旧行为）。
 
 ### 改进

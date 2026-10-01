@@ -24,8 +24,17 @@ BBDown 解析设备文件的优先级（前者优先）：
 2. **环境变量 `PATH` / 程序目录**中的 `device.wvd`；
 3. **程序目录内置的 `device.wvd`**（发布包自带，默认走这一条）。
 
-唯一需要自行准备的是 **`mp4decrypt`**（Bento4 的解密工具，原生二进制，不随包分发）：
-从 [Bento4 releases](https://github.com/axiomatic-systems/Bento4/releases) 下载后放入 `PATH` 或程序目录，或用 `--mp4decrypt-path` 指定路径。缺失时 BBDown 会在**下载流之前**报错并给出指引。
+**`mp4decrypt`（Bento4）同样已内置**在发布包与 Docker 镜像中（版本与归档 SHA256 在构建时固定校验），Windows / macOS / Linux **x64** 解压即用：
+
+| 平台 | 内置 mp4decrypt |
+|---|---|
+| win-x64 / win-arm64 | ✅（arm64 包内为 x64 版，Windows 11 on ARM 经 x64 模拟运行） |
+| linux-x64 | ✅ |
+| linux-arm64 | ❌ 官方无 arm64 二进制：请自行安装或用 `--mp4decrypt-path` 指定 |
+| osx-x64 / osx-arm64 | ✅（官方 universal 二进制） |
+| Docker 镜像 | ✅ `/usr/local/bin/mp4decrypt` |
+
+若缺失（例如 linux-arm64），BBDown 会在**下载流之前**报错并给出指引。想用自备版本时，`--mp4decrypt-path` 优先级最高。第三方分发与许可证说明见仓库根目录 `THIRD-PARTY-NOTICES.md`。
 
 ---
 
