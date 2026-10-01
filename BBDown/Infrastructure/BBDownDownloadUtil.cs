@@ -402,86 +402,14 @@ internal static class BBDownDownloadUtil
             return;
         }
         int retry = 0;
-        // 临时文件保留目标扩展名（path + ".tmp"）：视频 xxx.mp4 与音频 xxx.m4a 路径只差
-        // 扩展名，此前用 GetFileNameWithoutExtension 会让两者共用同一 .tmp——视频中断
-        // 留下的 1MB 视频数据会被下次音频下载当成音频前缀续传（长度正确但内容损坏）。
-        // 保留扩展名即隔离音视频的临时文件，且与多线程分片（.vclip/.aclip）的隔离一致。
-        string tmpName = path + ".tmp";
-        // 必须要求 fileSize > 0：服务器未返回 Content-Length 时 fileSize 为 0，
-        // 此时若 path 恰好是上次失败留下的空文件，会被误判成"已下载完成"
-        if (fileSize > 0 && File.Exists(path) && new FileInfo(path).Length == fileSize)
-        {
-            // 长度匹配还须确认探测大小权威：HEAD 可能被 CDN 返回缓存/占位长度
-            //（与 RangeDownloadToTmpAsync 的 Content-Range 交叉校验同源的问题），等长陈旧
-            // 文件会被误报为"已完整下载"。用 GET 读权威总长复核，一致才跳过；删除只发生在
-            // 权威总长**已知**且与探测不符时——复核失败/未知总长一律退回纯长度跳过，
-            // 避免误删有效文件。
-            long? authoritativeSize = await GetAuthoritativeSizeAsync(url, token);
-            if (authoritativeSize is not { } known || known <= 0 || known == fileSize)
-            {
-                Logger.LogDebug("文件已下载过, 跳过下载");
-                return;
-            }
-            Logger.LogDebug("探测大小({0})与权威大小({1})不符，既有文件不可信，删除后完整重下", fileSize, known);
-            File.Delete(path);
-            DeleteResumeManifest(path);
-            // 用权威总长继续下载：占位 HEAD 会一路带进 expectedTotalSize，若服务器又无视
-            // Range（GET 回 200 全量，无 Content-Range 可交叉校验），written != fileSize
-            // 会空转重试直至永久失败——必须改为权威总长。
-            fileSize = known;
-        }
-        if (fileSize > 0 && File.Exists(tmpName) && new FileInfo(tmpName).Length == fileSize)
-        {
-            // 长度相等不等于内容可信：同一输出路径可能被 1080P→720P / AVC→HEVC 的
-            // 另一个资源复用（长度恰好相同）。只有续传清单确认资源身份一致时才直接采用，
-            // 否则删除完整重下——杜绝"长度正确但内容损坏"的假成功。
-            var (canResume, resumeReason) = await CanResumeFromAsync(
-                tmpName, url, fileSize, probeHeaders?.ETag?.Tag, probeContentHeaders?.LastModified?.ToString("R"), token);
-            if (canResume)
-            {
-                Logger.LogDebug("断点续传: 检测到已完整下载的临时文件且资源身份一致, 直接移动");
-                File.Move(tmpName, path, true);
-                DeleteResumeManifest(tmpName);
-                return;
-            }
-            Logger.LogDebug("断点续传: 临时文件长度与远端一致但资源身份不可信（{0}），删除后完整重下", resumeReason ?? "未知原因");
-            File.Delete(tmpName);
-            DeleteResumeManifest(tmpName);
-        }
-        // 部分下载的临时文件直接续传：RangeDownloadToTmpAsync 会从现有长度处
-        // 发起 Range: bytes=N- 续传。此前这里删除不完整临时文件导致大文件/弱网
-        // 每次中断都从头重下，实际无法断点续传。
-        string? resumeIfRange = null;
-        if (File.Exists(tmpName) && new FileInfo(tmpName).Length > 0)
-        {
-            // 续传同样要求资源身份一致：清单缺失/不符时删除 .tmp 完整重下，
-            // 否则旧前缀可能与新响应拼接（长度仍正确但内容损坏）。
-            var (canResume, reason) = await CanResumeFromAsync(
-                tmpName, url, fileSize, probeHeaders?.ETag?.Tag, probeContentHeaders?.LastModified?.ToString("R"), token);
-            if (canResume)
-            {
-                Logger.LogDebug("断点续传: 从现有临时文件 {0} 字节处继续（资源身份一致）", new FileInfo(tmpName).Length);
-                // 续传时带 If-Range（ETag/Last-Modified）：让服务器校验本地前缀仍属于当前对象
-                resumeIfRange = await ReadManifestIfRangeAsync(tmpName, token);
-            }
-            else
-            {
-                Logger.LogDebug("断点续传: 现有临时文件资源身份不可信（{0}），删除后完整重下", reason ?? "未知原因");
-                File.Delete(tmpName);
-                DeleteResumeManifest(tmpName);
-            }
-        }
-        // 临时文件比远端更大：既非"完整匹配"也非"可续传的前缀"（续传只会追加，
-        // 不可能让已有内容变短）。它只可能是远端资源变化（同长度语义错位）或上次
-        // 中断写入的越界尾部。若继续从现有长度处发 Range: bytes=N-，服务器要么 416、
-        // 要么返回偏移错位的片段，拼出损坏文件。这里删除让单线程下载完整重下。
-        if (fileSize > 0 && File.Exists(tmpName) && new FileInfo(tmpName).Length > fileSize)
-        {
-            Logger.LogDebug("断点续传: 临时文件({0} 字节)大于远端文件({1} 字节)，内容不可信，删除后完整重下",
-                new FileInfo(tmpName).Length, fileSize);
-            File.Delete(tmpName);
-            DeleteResumeManifest(tmpName);
-        }
+        // 预检决策（是否已完整 / 可否续传 / 陈旧文件处置）收口在 PrepareSingleThreadTargetAsync；
+        // 目标长度可能被权威总长修正、续传点可能携带 If-Range，均以返回的决策为准。
+        var precheck = await PrepareSingleThreadTargetAsync(
+            url, path, fileSize, probeHeaders?.ETag?.Tag, probeContentHeaders?.LastModified?.ToString("R"), token);
+        if (precheck.AlreadyComplete) return;
+        string tmpName = precheck.TmpName;
+        fileSize = precheck.FileSize;
+        string? resumeIfRange = precheck.ResumeIfRange;
         int maxRetry = Config.Current.MaxRetryCount;
         // 下载首字节前就写入续传清单：真正中断（进程被杀/Ctrl+C）留下的 .tmp 必须带清单，
         // 下次运行才能确认其资源身份而续传。若等下载完成才写，中断的 .tmp 无清单，
@@ -535,6 +463,116 @@ internal static class BBDownDownloadUtil
         }
     }
 
+    /// <summary>单线程下载的「目标/临时文件预检」决策结果（纯本地文件状态 + 资源身份校验）。</summary>
+    /// <param name="TmpName">本次下载使用的临时文件路径（<c>path + ".tmp"</c>）。</param>
+    /// <param name="FileSize">预检后应使用的远端总长（权威总长复核可能修正它；0 表示未知）。</param>
+    /// <param name="ResumeIfRange">可续传时携带的 If-Range 值（ETag/Last-Modified）；null 表示从头下载。</param>
+    /// <param name="AlreadyComplete">true 表示产物已就位，调用方应直接返回。</param>
+    private readonly record struct SingleThreadPrecheck(string TmpName, long FileSize, string? ResumeIfRange, bool AlreadyComplete);
+
+
+    /// <summary>
+    /// 目标文件已存在且长度与探测大小一致时，用 GET 权威总长复核"探测大小是否可信"
+    ///（HEAD 可能被 CDN 返回缓存/占位长度——与 <see cref="RangeDownloadToTmpAsync"/> 的
+    /// Content-Range 交叉校验同源的问题），并就地处置不可信的既有文件。
+    /// 返回 <c>Trustworthy = true</c> 表示可以跳过下载：复核失败/未知总长一律退回纯长度跳过，
+    /// 避免误删有效文件。<c>false</c> 表示探测大小不可信，返回的 <c>KnownSize</c> 为权威总长，
+    /// 既有文件与其续传清单已被删除，调用方必须改用权威总长继续下载——占位 HEAD 会一路带进
+    /// expectedTotalSize，若服务器又无视 Range（GET 回 200 全量，无 Content-Range 可交叉校验），
+    /// 长度校验会空转重试直至永久失败。
+    /// </summary>
+    private static async Task<(bool Trustworthy, long KnownSize)> VerifyExistingTargetAsync(
+        string url, string path, long fileSize, CancellationToken token)
+    {
+        long? authoritativeSize = await GetAuthoritativeSizeAsync(url, token);
+        if (authoritativeSize is not { } known || known <= 0 || known == fileSize)
+            return (true, fileSize);
+        Logger.LogDebug("探测大小({0})与权威大小({1})不符，既有文件不可信，删除后完整重下", fileSize, known);
+        File.Delete(path);
+        DeleteResumeManifest(path);
+        return (false, known);
+    }
+
+    /// <summary>
+    /// 单线程下载前的目标/临时文件预检：判定「产物已就位可直接跳过 / 从现有临时文件续传 /
+    /// 完整重下」，并删除身份不可信或长度错位的陈旧文件（资源身份经 <see cref="CanResumeFromAsync"/> 校验）。
+    /// 探测大小可能被 CDN 的 HEAD 占位长度欺骗，此时按权威总长修正——修正值随决策返回，
+    /// 调用方必须用返回的 <see cref="SingleThreadPrecheck.FileSize"/> 而非原探测值继续下载。
+    /// </summary>
+    private static async Task<SingleThreadPrecheck> PrepareSingleThreadTargetAsync(string url, string path,
+        long fileSize, string? etag, string? lastModified, CancellationToken token)
+    {
+        // 临时文件保留目标扩展名（path + ".tmp"）：视频 xxx.mp4 与音频 xxx.m4a 路径只差
+        // 扩展名，此前用 GetFileNameWithoutExtension 会让两者共用同一 .tmp——视频中断
+        // 留下的 1MB 视频数据会被下次音频下载当成音频前缀续传（长度正确但内容损坏）。
+        // 保留扩展名即隔离音视频的临时文件，且与多线程分片（.vclip/.aclip）的隔离一致。
+        string tmpName = path + ".tmp";
+        // 必须要求 fileSize > 0：服务器未返回 Content-Length 时 fileSize 为 0，
+        // 此时若 path 恰好是上次失败留下的空文件，会被误判成"已下载完成"
+        if (fileSize > 0 && File.Exists(path) && new FileInfo(path).Length == fileSize)
+        {
+            var (trustworthy, known) = await VerifyExistingTargetAsync(url, path, fileSize, token);
+            if (trustworthy)
+            {
+                Logger.LogDebug("文件已下载过, 跳过下载");
+                return new SingleThreadPrecheck(tmpName, fileSize, null, true);
+            }
+            fileSize = known;
+        }
+        if (fileSize > 0 && File.Exists(tmpName) && new FileInfo(tmpName).Length == fileSize)
+        {
+            // 长度相等不等于内容可信：同一输出路径可能被 1080P→720P / AVC→HEVC 的
+            // 另一个资源复用（长度恰好相同）。只有续传清单确认资源身份一致时才直接采用，
+            // 否则删除完整重下——杜绝"长度正确但内容损坏"的假成功。
+            var (canResume, resumeReason) = await CanResumeFromAsync(
+                tmpName, url, fileSize, etag, lastModified, token);
+            if (canResume)
+            {
+                Logger.LogDebug("断点续传: 检测到已完整下载的临时文件且资源身份一致, 直接移动");
+                File.Move(tmpName, path, true);
+                DeleteResumeManifest(tmpName);
+                return new SingleThreadPrecheck(tmpName, fileSize, null, true);
+            }
+            Logger.LogDebug("断点续传: 临时文件长度与远端一致但资源身份不可信（{0}），删除后完整重下", resumeReason ?? "未知原因");
+            File.Delete(tmpName);
+            DeleteResumeManifest(tmpName);
+        }
+        // 部分下载的临时文件直接续传：RangeDownloadToTmpAsync 会从现有长度处
+        // 发起 Range: bytes=N- 续传。此前这里删除不完整临时文件导致大文件/弱网
+        // 每次中断都从头重下，实际无法断点续传。
+        string? resumeIfRange = null;
+        if (File.Exists(tmpName) && new FileInfo(tmpName).Length > 0)
+        {
+            // 续传同样要求资源身份一致：清单缺失/不符时删除 .tmp 完整重下，
+            // 否则旧前缀可能与新响应拼接（长度仍正确但内容损坏）。
+            var (canResume, reason) = await CanResumeFromAsync(
+                tmpName, url, fileSize, etag, lastModified, token);
+            if (canResume)
+            {
+                Logger.LogDebug("断点续传: 从现有临时文件 {0} 字节处继续（资源身份一致）", new FileInfo(tmpName).Length);
+                // 续传时带 If-Range（ETag/Last-Modified）：让服务器校验本地前缀仍属于当前对象
+                resumeIfRange = await ReadManifestIfRangeAsync(tmpName, token);
+            }
+            else
+            {
+                Logger.LogDebug("断点续传: 现有临时文件资源身份不可信（{0}），删除后完整重下", reason ?? "未知原因");
+                File.Delete(tmpName);
+                DeleteResumeManifest(tmpName);
+            }
+        }
+        // 临时文件比远端更大：既非"完整匹配"也非"可续传的前缀"（续传只会追加，
+        // 不可能让已有内容变短）。它只可能是远端资源变化（同长度语义错位）或上次
+        // 中断写入的越界尾部。若继续从现有长度处发 Range: bytes=N-，服务器要么 416、
+        // 要么返回偏移错位的片段，拼出损坏文件。这里删除让单线程下载完整重下。
+        if (fileSize > 0 && File.Exists(tmpName) && new FileInfo(tmpName).Length > fileSize)
+        {
+            Logger.LogDebug("断点续传: 临时文件({0} 字节)大于远端文件({1} 字节)，内容不可信，删除后完整重下",
+                new FileInfo(tmpName).Length, fileSize);
+            File.Delete(tmpName);
+            DeleteResumeManifest(tmpName);
+        }
+        return new SingleThreadPrecheck(tmpName, fileSize, resumeIfRange, false);
+    }
     /// <summary>
     /// aria2c 断点续传目标校验（纯文件决策，探测结果由调用方注入）。返回 true 表示
     /// 文件已完整下载，调用方应跳过 aria2c。对存在的 partial/.aria2 控制文件先做
@@ -657,8 +695,9 @@ internal static class BBDownDownloadUtil
             // 删除只发生在权威总长**已知**且与探测不符时；复核失败/未知总长退回纯长度跳过。
             if (!config.UseAria2c && fileSize > 0 && File.Exists(path) && new FileInfo(path).Length == fileSize)
             {
-                long? authoritativeSize = await GetAuthoritativeSizeAsync(url, token);
-                if (authoritativeSize is not { } known || known <= 0 || known == fileSize)
+                // 复核"探测大小是否可信"与两个 Core 路径共用同一实现（VerifyExistingTargetAsync）
+                var (trustworthy, known) = await VerifyExistingTargetAsync(url, path, fileSize, token);
+                if (trustworthy)
                 {
                     Logger.LogDebug("文件已下载过, 跳过下载");
                     DeleteResumeManifest(path);
@@ -669,9 +708,6 @@ internal static class BBDownDownloadUtil
                     DeleteStaleMergeTmp(path);
                     return;
                 }
-                Logger.LogDebug("探测大小({0})与权威大小({1})不符，既有文件不可信，删除后完整重下", fileSize, known);
-                File.Delete(path);
-                DeleteResumeManifest(path);
                 // 用权威总长下传 Core：占位 HEAD 若一路带进 expectedTotalSize，对无视 Range
                 //（GET 回 200 全量）的服务器会以 NotSupportedException 失败，而非按正确大小下载。
                 fileSize = known;
@@ -748,12 +784,10 @@ internal static class BBDownDownloadUtil
         //已下载过, 跳过下载
         if (File.Exists(path) && new FileInfo(path).Length == fileSize)
         {
-            // 长度匹配还须确认探测大小权威（HEAD 可能被 CDN 返回缓存/占位长度）：
-            // 等长陈旧文件会被误报为"已完整下载"。用 GET 读权威总长复核，一致才跳过；
-            // 删除只发生在权威总长**已知**且与探测不符时（复核失败/未知总长退回纯长度跳过，
-            // 避免误删有效文件；也防止 fileSize 被置 0 导致切分崩溃）。
-            long? authoritativeSize = await GetAuthoritativeSizeAsync(url, token);
-            if (authoritativeSize is not { } known || known <= 0 || known == fileSize)
+            // 与单线程路径共用同一"探测大小权威性"复核；此处额外注意 fileSize 不得被置 0，
+            // 否则下方切分崩溃（复核失败/未知总长一律退回纯长度跳过）。
+            var (trustworthy, known) = await VerifyExistingTargetAsync(url, path, fileSize, token);
+            if (trustworthy)
             {
                 Logger.LogDebug("文件已下载过, 跳过下载");
                 // 目标文件已完整：清理上一次中断遗留的该路径分片。否则调用方（Display）
@@ -761,9 +795,6 @@ internal static class BBDownDownloadUtil
                 CleanStaleClipsFor(path);
                 return ([], fileSize);
             }
-            Logger.LogDebug("探测大小({0})与权威大小({1})不符，既有文件不可信，删除后完整重下", fileSize, known);
-            File.Delete(path);
-            DeleteResumeManifest(path);
             fileSize = known;
         }
         // 探测大小可能被 CDN 的 HEAD 缓存/占位长度欺骗（见 MismatchedHeadSizeServer）：
@@ -827,51 +858,12 @@ internal static class BBDownDownloadUtil
             {
                 await Parallel.ForEachAsync(allClips, parallelOptions, async (clip, _) =>
                 {
-                    int retry = 0;
-                    string tmp = Path.Combine(Path.GetDirectoryName(path)!, clip.index.ToString("00000") + "_" + Path.GetFileNameWithoutExtension(path) + (IsVideoClipPath(path) ? ".vclip" : ".aclip"));
-                    while (retry < maxRetry)
-                    {
-                        try
-                        {
-                            await RangeDownloadToTmpAsync(new RangeDownloadRequest(
-                                clip.index, url, tmp, clip.from, clip.to == -1 ? null : clip.to,
-                                (index, downloaded, _) =>
-                                {
-                                    // 同一分片的回调只在它自己的任务里串行发生，
-                                    // 因此这里只需保证跨分片累加的原子性
-                                    var current = progressAggregator.Report(index, downloaded);
-                                    progress.Report(fileSize > 0 ? (double)current / fileSize : 0, current);
-                                },
-                                FailOnRangeNotSupported: true, ExpectedTotalSize: fileSize), _);
-                            break;
-                        }
-                        catch (RemoteSizeMismatchException ex)
-                        {
-                            // 所有分片共享同一错误探测大小，本地重试必然再次失败：不做空转。
-                            // 记录权威总长后立即结束本分片，交由下方按权威总长重新切分下载。
-                            Interlocked.CompareExchange(ref mismatchTotal, ex.ActualTotal, 0);
-                            return;
-                        }
-                        catch (NotSupportedException)
-                        {
-                            // 服务器不支持 Range（确定性不可重试）：与单线程路径一致直接抛出，不做无意义退避重试。
-                            // 规范化为 InvalidOperationException 而非原样抛 NotSupportedException（RF-14）：
-                            // 页面级/批级两级 catch 过滤器白名单只含 InvalidOperationException， NotSupportedException
-                            // 会穿透两级过滤器中止整批下载（丢 webhook/failedPages），与"单 P 失败隔离"设计矛盾。
-                            throw new InvalidOperationException("服务器可能并不支持多线程下载, 请使用 --multi-thread false 关闭多线程");
-                        }
-                        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-                        {
-                            throw; // non-retryable
-                        }
-                        catch (Exception ex) when (ExceptionPolicies.IsTransportFailure(ex))
-                        {
-                            int backoffMs = (retry + 1) * Config.Current.RetryDelayMs;
-                            Logger.LogDebug("分段下载失败(第{0}次重试, {1}ms后): {2}", retry + 1, backoffMs, ex.Message);
-                            await Task.Delay(backoffMs, _);
-                            if (++retry == maxRetry) throw new IOException($"分段 {clip.index} 下载失败，请检查网络或关闭多线程重试", ex);
-                        }
-                    }
+                    // 分片级重试与异常归一化收口在 DownloadClipWithRetryAsync；尺寸错位以权威总长返回，
+                    // 由下方统一决定是否按权威总长重切分。
+                    long? clipTotal = await DownloadClipWithRetryAsync(
+                        url, path, clip, fileSize, maxRetry, progressAggregator, progress, token);
+                    if (clipTotal is { } actualTotal)
+                        Interlocked.CompareExchange(ref mismatchTotal, actualTotal, 0);
                 });
             }
             catch (Exception ex)
@@ -910,6 +902,62 @@ internal static class BBDownDownloadUtil
             .Select(c => Path.Combine(dir, c.index.ToString("00000") + "_" + stem + clipExt))
             .OrderBy(p => p)
             .ToList(), fileSize);
+    }
+
+    /// <summary>
+    /// 单个分片的带重试下载（重试退避、异常归一化都在这里）。返回 null 表示分片已下载完成；
+    /// 返回非 null 表示远端权威总长（206 Content-Range 与探测大小不符）——所有分片共享同一个错误
+    /// 探测大小，本分片就地放弃，由调用方按权威总长整条轨道重新切分下载。
+    /// </summary>
+    private static async Task<long?> DownloadClipWithRetryAsync(string url, string path, Clip clip, long fileSize,
+        int maxRetry, ProgressAggregator progressAggregator, ProgressBar progress, CancellationToken token)
+    {
+        int retry = 0;
+        string tmp = Path.Combine(Path.GetDirectoryName(path)!, clip.index.ToString("00000") + "_" + Path.GetFileNameWithoutExtension(path) + (IsVideoClipPath(path) ? ".vclip" : ".aclip"));
+        while (retry < maxRetry)
+        {
+            try
+            {
+                await RangeDownloadToTmpAsync(new RangeDownloadRequest(
+                    clip.index, url, tmp, clip.from, clip.to == -1 ? null : clip.to,
+                    (index, downloaded, _) =>
+                    {
+                        // 同一分片的回调只在它自己的任务里串行发生，
+                        // 因此这里只需保证跨分片累加的原子性
+                        var current = progressAggregator.Report(index, downloaded);
+                        progress.Report(fileSize > 0 ? (double)current / fileSize : 0, current);
+                    },
+                    FailOnRangeNotSupported: true, ExpectedTotalSize: fileSize), token);
+                return null;
+            }
+            catch (RemoteSizeMismatchException ex)
+            {
+                // 所有分片共享同一错误探测大小，本地重试必然再次失败：不做空转。
+                // 记录权威总长后立即结束本分片，交由下方按权威总长重新切分下载。
+                return ex.ActualTotal;
+            }
+            catch (NotSupportedException)
+            {
+                // 服务器不支持 Range（确定性不可重试）：与单线程路径一致直接抛出，不做无意义退避重试。
+                // 规范化为 InvalidOperationException 而非原样抛 NotSupportedException（RF-14）：
+                // 页面级/批级两级 catch 过滤器白名单只含 InvalidOperationException， NotSupportedException
+                // 会穿透两级过滤器中止整批下载（丢 webhook/failedPages），与"单 P 失败隔离"设计矛盾。
+                throw new InvalidOperationException("服务器可能并不支持多线程下载, 请使用 --multi-thread false 关闭多线程");
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                throw; // non-retryable
+            }
+            catch (Exception ex) when (ExceptionPolicies.IsTransportFailure(ex))
+            {
+                int backoffMs = (retry + 1) * Config.Current.RetryDelayMs;
+                Logger.LogDebug("分段下载失败(第{0}次重试, {1}ms后): {2}", retry + 1, backoffMs, ex.Message);
+                await Task.Delay(backoffMs, token);
+                if (++retry == maxRetry) throw new IOException($"分段 {clip.index} 下载失败，请检查网络或关闭多线程重试", ex);
+            }
+        }
+        // maxRetry <= 0 时上面的循环一次都不执行：与原实现的 lambda 正常结束语义一致
+        return null;
     }
 
     /// <summary>
