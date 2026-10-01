@@ -117,6 +117,39 @@ public class DrmAutoDecryptTests
     public void EnsureDrmToolsAvailable_NonDrmContent_Passes()
         => Assert.True(Program.EnsureDrmToolsAvailable(new ParsedResult { IsDrm = false }, new MyOption()));
 
+    /// <summary>
+    /// 发布包把 mp4decrypt 放在可执行文件同目录：必须能被自动发现（否则内置了也不会被用上）。
+    /// 解析顺序是 PATH 优先、程序目录其次——本用例临时把 PATH 指向空目录以屏蔽系统安装版，
+    /// 从而确定性地验证"程序目录发现"这一条（发布包与 CI 依赖它）。
+    /// </summary>
+    [Fact]
+    public void ResolveMp4DecryptPath_FindsToolNextToExecutable()
+    {
+        var name = OperatingSystem.IsWindows() ? "mp4decrypt.exe" : "mp4decrypt";
+        var path = Path.Combine(AppContext.BaseDirectory, name);
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        var emptyDir = Path.Combine(Path.GetTempPath(), $"empty-path-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(emptyDir);
+        var created = false;
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", emptyDir);
+            if (!File.Exists(path))
+            {
+                File.WriteAllBytes(path, [0]);
+                created = true;
+            }
+
+            Assert.Equal(path, Program.ResolveMp4DecryptPath(new MyOption()));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            if (created) File.Delete(path);
+            Directory.Delete(emptyDir, true);
+        }
+    }
+
     [Fact]
     public void EnsureDrmToolsAvailable_AutoDecryptDisabled_Passes()
         => Assert.True(Program.EnsureDrmToolsAvailable(

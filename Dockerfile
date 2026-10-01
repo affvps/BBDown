@@ -15,6 +15,21 @@ RUN dotnet restore BBDown/BBDown.csproj
 # PublishAot 由 Directory.Build.props 全局开启，这里无需再传。
 RUN dotnet publish BBDown/BBDown.csproj -c Release -r linux-x64 --self-contained -o /app/publish --no-restore
 
+# 内置 mp4decrypt（Bento4，GPLv2）：DRM 解密所需的外部工具，随镜像分发（用户无需自行安装）。
+# 版本与归档 SHA256 固定：下载源被篡改/静默换包会让构建失败。Bento4 官方只提供 x86_64 Linux
+# 二进制；本镜像正是 linux-x64，故无需交叉构建。许可证随二进制一同放入镜像。
+ARG BENTO4_VERSION=1-6-0-641
+ARG BENTO4_SHA256=d48dc6b164941212e5614237b4d9aeff81d4d111ee8b1508892764078a0870e8
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl unzip ca-certificates \
+ && curl -sSL -o /tmp/bento4-sdk.zip "https://www.bok.net/Bento4/binaries/Bento4-SDK-${BENTO4_VERSION}.x86_64-unknown-linux.zip" \
+ && echo "${BENTO4_SHA256}  /tmp/bento4-sdk.zip" | sha256sum -c - \
+ && unzip -q /tmp/bento4-sdk.zip -d /tmp/bento4 \
+ && root=$(find /tmp/bento4 -mindepth 1 -maxdepth 1 -type d | head -n1) \
+ && install -m 0755 "$root/bin/mp4decrypt" /usr/local/bin/mp4decrypt \
+ && cp "$root/docs/LICENSE.txt" /opt/mp4decrypt-LICENSE.txt \
+ && rm -rf /tmp/bento4 /tmp/bento4-sdk.zip /var/lib/apt/lists/*
+
 # 运行阶段：runtime-deps 镜像仅含运行原生二进制的系统依赖（glibc 等），
 # 体积远小于 aspnet 镜像。BBDown 以原生可执行文件直接启动，不再 dotnet BBDown.dll。
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0
@@ -27,6 +42,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/publish .
+
+# 内置的 mp4decrypt（Bento4，GPLv2）与随附许可证文本
+COPY --from=builder /usr/local/bin/mp4decrypt /usr/local/bin/mp4decrypt
+COPY --from=builder /opt/mp4decrypt-LICENSE.txt /app/mp4decrypt-LICENSE.txt
 
 # Native AOT 产物是单个可执行文件（名 BBDown）
 RUN chmod +x /app/BBDown
