@@ -21,6 +21,8 @@ namespace BBDown;
 /// </summary>
 public partial class BBDownApiServer
 {
+    /// <summary>关停时等待在途任务收尾的上限（超时后枚举残留 JobId 供运维定位）。</summary>
+    private static readonly TimeSpan ServeShutdownDrainTimeout = TimeSpan.FromSeconds(30);
     private WebApplication? app;
 
     /// <summary>
@@ -143,7 +145,7 @@ public partial class BBDownApiServer
             Logger.LogWarn($"正在等待 {inflight.Length} 个在途任务取消并收尾...");
             try
             {
-                if (!Task.WaitAll(inflight, TimeSpan.FromSeconds(30)))
+                if (!Task.WaitAll(inflight, ServeShutdownDrainTimeout))
                 {
                     // 升 Error 并枚举具体 JobId：此前仅 Warn 无明细，孤儿 ffmpeg/aria2c 无法事后定位
                     string[] stuckJobIds;

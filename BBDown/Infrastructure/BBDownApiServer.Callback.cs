@@ -12,6 +12,8 @@ namespace BBDown;
 /// </summary>
 public partial class BBDownApiServer
 {
+    /// <summary>完成回调客户端超时（回调是 best-effort，不能拖住任务收尾）。</summary>
+    private static readonly TimeSpan CallbackClientTimeout = TimeSpan.FromMinutes(2);
     /// <summary>
     /// 服务端固定的任务完成回调地址（serve 启动时经 --notify-webhook 配置）。
     /// 只接受管理员在启动参数里显式配置的地址；客户端请求体中的回调字段一律忽略，
@@ -234,7 +236,7 @@ public partial class BBDownApiServer
                     }
                 },
             };
-            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(2) };
+            using var client = new HttpClient(handler) { Timeout = CallbackClientTimeout };
             // ConnectCallback 已绑定目标 IP；SNI 由 HttpClient 依据请求 URI 的原 host 设置，
             // 因此请求 URI 保留原 webhook 而不是替换成 IP
             using var content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json");

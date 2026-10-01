@@ -6,6 +6,8 @@ namespace BBDown.Core.Util;
 
 public static partial class HTTPUtil
 {
+    /// <summary>HTTP 客户端池的默认请求超时（各池统一 2 分钟）。</summary>
+    private static readonly TimeSpan DefaultClientTimeout = TimeSpan.FromMinutes(2);
 
     /// <summary>
     /// 构造按策略固化的共享客户端。SSL 校验策略在**构造时**根据 <paramref name="skipSslCheck"/>
@@ -115,16 +117,16 @@ public static partial class HTTPUtil
     // AppHttpClient 按当前异步流配置路由到校验池/不安全池；不安全池仅在 --insecure
     // 流程首次访问时才被创建，不会为从未使用的策略白白建连接池。
     private static readonly Lazy<HttpClient> _appHttpClient =
-        new(() => CreateClient(allowRedirect: true, TimeSpan.FromMinutes(2), skipSslCheck: false), LazyThreadSafetyMode.ExecutionAndPublication);
+        new(() => CreateClient(allowRedirect: true, DefaultClientTimeout, skipSslCheck: false), LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<HttpClient> _insecureAppHttpClient =
-        new(() => CreateClient(allowRedirect: true, TimeSpan.FromMinutes(2), skipSslCheck: true), LazyThreadSafetyMode.ExecutionAndPublication);
+        new(() => CreateClient(allowRedirect: true, DefaultClientTimeout, skipSslCheck: true), LazyThreadSafetyMode.ExecutionAndPublication);
 
     // 媒体下载专用池：AllowAutoRedirect=false（B3-F3，下载请求携带登录 Cookie，
     // 不跟随任何重定向以免凭据随 3xx 引向非官方主机）。其余与 AppHttpClient 同构。
     private static readonly Lazy<HttpClient> _mediaHttpClient =
-        new(() => CreateClient(allowRedirect: false, TimeSpan.FromMinutes(2), skipSslCheck: false), LazyThreadSafetyMode.ExecutionAndPublication);
+        new(() => CreateClient(allowRedirect: false, DefaultClientTimeout, skipSslCheck: false), LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<HttpClient> _insecureMediaHttpClient =
-        new(() => CreateClient(allowRedirect: false, TimeSpan.FromMinutes(2), skipSslCheck: true), LazyThreadSafetyMode.ExecutionAndPublication);
+        new(() => CreateClient(allowRedirect: false, DefaultClientTimeout, skipSslCheck: true), LazyThreadSafetyMode.ExecutionAndPublication);
 
     public static HttpClient AppHttpClient =>
         Config.Current.SkipSslCheck ? _insecureAppHttpClient.Value : _appHttpClient.Value;
@@ -137,7 +139,7 @@ public static partial class HTTPUtil
 
     // 始终校验 + 禁自动跳转的专用池：与 _appHttpClient 同超时、同校验策略，仅重定向策略不同。
     private static readonly Lazy<HttpClient> _verifiedNoRedirectClient =
-        new(() => CreateClient(allowRedirect: false, TimeSpan.FromMinutes(2), skipSslCheck: false), LazyThreadSafetyMode.ExecutionAndPublication);
+        new(() => CreateClient(allowRedirect: false, DefaultClientTimeout, skipSslCheck: false), LazyThreadSafetyMode.ExecutionAndPublication);
 
     /// <summary>
     /// 始终校验证书且禁自动跟随重定向的共享客户端：供携带签名载荷的非幂等请求使用
@@ -221,9 +223,9 @@ public static partial class HTTPUtil
     // RF-50 把 GetWebSourceCoreAsync 的 sendCookie 路径切到本客户端后，带 Cookie 请求的
     // 头阶段上限被隐性砍半，与 ApiTimeoutMs 不符。
     private static readonly Lazy<HttpClient> _noRedirectClient =
-        new(() => CreateClient(allowRedirect: false, TimeSpan.FromMinutes(2), skipSslCheck: false), LazyThreadSafetyMode.ExecutionAndPublication);
+        new(() => CreateClient(allowRedirect: false, DefaultClientTimeout, skipSslCheck: false), LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<HttpClient> _insecureNoRedirectClient =
-        new(() => CreateClient(allowRedirect: false, TimeSpan.FromMinutes(2), skipSslCheck: true), LazyThreadSafetyMode.ExecutionAndPublication);
+        new(() => CreateClient(allowRedirect: false, DefaultClientTimeout, skipSslCheck: true), LazyThreadSafetyMode.ExecutionAndPublication);
 
     /// <summary>
     /// 禁自动跳转客户端的公开访问点：应用层登录轮询（TV）需要它做 3xx 显式拦截

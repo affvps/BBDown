@@ -11,6 +11,13 @@ namespace BBDown;
 /// </summary>
 public static class LiveStreamUtil
 {
+    /// <summary>直播头阶段（预检/取流地址）超时。</summary>
+    private static readonly TimeSpan HeaderStageTimeout = TimeSpan.FromMinutes(2);
+    /// <summary>录制产物完整性下限：输入总字节的 80%。</summary>
+    private const double MinCompleteStreamRatio = 0.8;
+    /// <summary>重连退避基数与上限（退避 = 基数 × 2^n，封顶）。</summary>
+    private const int ReconnectBackoffBaseMs = 3000;
+    private const int ReconnectBackoffCapMs = 30_000;
     /// <summary>直播 API 主机。internal 可注入：测试用本地假服务器覆盖，验证完整录制循环。</summary>
     internal static string LiveApiHost { get; set; } = "https://api.live.bilibili.com";
 
@@ -231,7 +238,7 @@ public static class LiveStreamUtil
         async Task BackoffAsync(Exception? cause = null)
         {
             consecutiveFailures++;
-            int backoffMs = Math.Min(3000 * (1 << Math.Min(consecutiveFailures - 1, 4)), 30_000);
+            int backoffMs = Math.Min(ReconnectBackoffBaseMs * (1 << Math.Min(consecutiveFailures - 1, 4)), ReconnectBackoffCapMs);
             Logger.LogWarn(cause is null
                 ? $"直播流无数据，{backoffMs / 1000} 秒后重试（第 {consecutiveFailures} 次）..."
                 : $"直播流中断（{cause.Message}），{backoffMs / 1000} 秒后重连（第 {consecutiveFailures} 次）...");
@@ -558,7 +565,7 @@ public static class LiveStreamUtil
             // 当分段数大于1时，输出大小若低于输入总大小的 80% 且差异超过 64KB，判定为截断坏产物。
             if (segmentFiles.Count > 1)
             {
-                long minExpected = (long)(totalInputBytes * 0.8);
+                long minExpected = (long)(totalInputBytes * MinCompleteStreamRatio);
                 if (outLen < minExpected && (totalInputBytes - outLen) > 64 * 1024)
                 {
                     Logger.LogWarn($"直播分段合成产物大小异常(输出: {outLen} 字节, 预期总输入: {totalInputBytes} 字节)，判定为合成截断失败");
@@ -600,7 +607,7 @@ public static class LiveStreamUtil
         // SendAsync 会永久挂起。headerCts 只覆盖"发请求→收响应头"，取到响应头后立即释放
         // （Dispose 幂等），不影响下方主体流读取（读循环用 token）。
         using var headerCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-        headerCts.CancelAfter(TimeSpan.FromMinutes(2));
+        headerCts.CancelAfter(HeaderStageTimeout);
         using var response = (await HTTPUtil.StreamingHttpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, headerCts.Token)).EnsureSuccessStatusCode();
         headerCts.Dispose(); // 响应头已到达：释放仅覆盖头部阶段的超时
         await using var stream = await response.Content.ReadAsStreamAsync(token);
