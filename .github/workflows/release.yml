@@ -169,6 +169,9 @@ jobs:
       - name: Bundle mp4decrypt (Bento4, linux-x64)
         run: |
           set -e
+          # artifact-linux-x64/ 由 ubuntu:18.04 容器内的 root 写出（属主是 root）：本步骤要往其中
+          # 写入 mp4decrypt，先取回属主，否则 cp 会因 Permission denied 失败
+          sudo chown -R "$(id -u):$(id -g)" artifact-linux-x64
           ver="${{ env.BENTO4_VERSION }}"
           curl -sSL -o /tmp/bento4-sdk.zip "https://www.bok.net/Bento4/binaries/Bento4-SDK-${ver}.x86_64-unknown-linux.zip"
           echo "${{ env.BENTO4_SHA256_LINUX }}  /tmp/bento4-sdk.zip" | sha256sum -c -
