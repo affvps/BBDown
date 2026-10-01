@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）已完成并验收；剩余批次按 §6 顺序推进，**下一批为批 6**（serve 拆解，1683 行 / 护栏 51 例）。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）已完成并验收；剩余批次按 §6 顺序推进，**下一批为批 3**（参数对象与结构收敛：H2/H3/I13/I5）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -50,6 +50,7 @@
 | **I15 补充**（2026-10-01） | `.Replace("[] ", "")` ×4 | **实测 3 处**（`Display.cs:48`/`:71`、`DownloadTrackPreparation.cs:109`） | 范围 -1；带宽估算公式实测 **6 处**，与描述一致 |
 | **I3 补充**（2026-10-01） | appkey/盐"散落" | **实测：2 份 `GetSign` + 2 份 `GetTimeStamp` + 5 处字面量**（盐 ×3：`Parser.cs:775` 两把、`BBDownUtil.cs:160` 一把；appkey ×2：`Parser.cs:58`/`:138`）| 收敛为 `BiliApiKeys` 单实现；`ParserFixtureTests.cs:169` 的 `appkey=4409e2ce8ffd12b8` 断言即现成安全网 |
 | **I2 补充**（2026-10-01） | `ExtractTracksAsync` ≈430~532 行 | ✅ **实测 532 行**（`Parser.cs:152-683`），占该文件 68% | 与描述一致；拆解后主方法 **39 行**，新增 15 个私有方法 + 3 个私有类型（见 §6 批 4） |
+| **H1 补充**（2026-10-01） | "God 类 1683 行 / 52 方法" | 实测 **1683 行 / 72 个成员块**（字段+方法+类型），类确为 `partial`；文件尾部另堆着 **6 个顶层类型**（含 2 个 AOT 源生成上下文） | **改为文件级切分**（7 文件，成员逐字搬运）：不新建 `ServeSecurityMiddleware` 等 4 个独立类型——这些成员共享同一份实例状态（任务列表 / 锁 / 闸门），外置状态属行为风险改动，超出"零风险按成员切分"范围 |
 | **ApiMode 偏差**（2026-10-01） | "`PickDataRoot`/`PickTrackBaseUrl` 纯函数 + `ApiMode` 枚举" | 三 bool（tv/intl/app）的组合语义**无法用单一枚举等价表达**：`tvApi && appApi` 同时为真时，两处 `!tvApi` 门控（杜比/Hi-Res 跳过）与"归一化优先级（Intl > App > Tv）"不等价；且 `Workflow.cs:159` 的 `apiType` 用的是**另一套**优先级（TV > APP > INTL > WEB） | **不引入 `ApiMode`**：改为私有 `PlayRequest` 收敛长参数，避免在可达组合上改变行为；两处优先级口径不一致记为本批 Info 观察 |
 
 **测量方法**（可复现）：`wc -l` 逐文件；方法规模用相邻方法定义行号差；调用点用 `grep -rn` 排除 `obj/`；"是否落地"用重构产物符号存在性核验（见 `REVIEW_PLAN.md` 状态总览说明）。
@@ -141,6 +142,8 @@
 
 ### 批 6 — serve 拆解（`refactor/serve-decomposition`，R3）
 
+> ✅ **已完成**（PR #64，2026-10-01）：按文件级切分为 7 文件（成员逐字搬运）；未新建独立类型，理由见 §1 的 H1 补充行与 §6 批 6 记录。
+
 - **H1**：`BBDownApiServer.cs` **1683 行 / 52 方法** → 按文件切分为 `ServeSecurityMiddleware`（鉴权 / 限速 / 固定时间比较）、`TaskRouteMapper`（端点路由）、`TaskFileStore`（任务持久化 / 溢出裁剪）、`CallbackGuard`（webhook）。**类已 `partial`，可零风险按成员切分**
 - 纪律：`[JsonSerializable]` 源生成上下文随类型迁移；CI 的 Native AOT smoke 必过
 
@@ -191,8 +194,9 @@ dotnet format BBDown.sln --verify-no-changes
 ✅ 批 1a（I7 异常策略：64 处收口，真值表钉住）— PR #60
   → ✅ 批 1b（命名/常量/重复收敛）— PR #61
   → ✅ 批 4（存量最大：532 行，护栏最强）— PR #63（夹具回放逐字节一致）
-  → 批 6（文件最大：1683 行，护栏 51 例）      ← 下一批
-  → 批 3 → 批 5 → 批 2 → 批 7
+  → ✅ 批 6（文件最大：1683 行，护栏 51 例）— PR #64（7 文件切分，无代码行丢失/重复）
+  → 批 3（参数对象与结构收敛）              ← 下一批
+  → 批 5 → 批 2 → 批 7
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
@@ -201,8 +205,8 @@ dotnet format BBDown.sln --verify-no-changes
 | 1a | `refactor/exception-policies` | #60 | ✅ 已完成（2026-10-01 验收：9 条策略 / 生产 64 处站点 + 真值表 9 引用） |
 | 1b | `refactor/consistency-cleanup` | #61 | ✅ 已完成（2026-10-01；基线 775 → 收批 784 全绿） |
 | 4 | `refactor/parser-extract-tracks` | #63 | ✅ 已完成（2026-10-01；18 夹具回放逐字节一致） |
-| 6 | `refactor/serve-decomposition` | — | ⏳ 待开工（**下一批**） |
-| 3 | `refactor/parameter-objects` | — | ⏳ 待开工 |
+| 6 | `refactor/serve-decomposition` | #64 | ✅ 已完成（2026-10-01；成员逐字搬运，无代码行丢失/重复） |
+| 3 | `refactor/parameter-objects` | — | ⏳ 待开工（**下一批**） |
 | 5 | `refactor/download-pipeline` | — | ⏳ 待开工 |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
 | 7 | `refactor/remaining-structure` | — | ⏳ 待开工 |
@@ -232,6 +236,18 @@ dotnet format BBDown.sln --verify-no-changes
 | 偏差 | ① **不引入 `ApiMode` 枚举**（三 bool 组合语义不可归一，见 §1）；② **I16 未并入**（跨子系统）；③ 顺带清理 FLV 分支冗余局部变量（`url` 恒为空串 → `baseUrl = ""`；`quality`/`videoCodecid`/`size`/`length` 改为声明即赋值） | — |
 | 验证 | ① 拆解前转储 18 夹具 / 15 场景的回放结果（轨道全字段 + 分段 + 清晰度 + DRM + 请求序列，query 中 `wts`/`w_rid`/`sign`/`ts` 归一为 `<v>`），两次运行 **SHA-256 一致**（`75FE2843…`，确认转储可复现）；② 拆解后同一转储 **SHA-256 完全相同**（逐字节）；③ 9 条日志文案、`throw` 1 处、`catch` 8 处计数逐字不变；④ 单测 **784/784**（拆解期间含临时转储用例为 785，删除后 784）；⑤ build 0 警告 0 错误；⑥ format exit 0 | — |
 | 规模 | `Parser.cs` 784 → 885 行（新增 XML 文档与所有权助手），主方法净减 **493 行** | — |
+
+**批 6（H1）· PR #64**：
+
+| 项 | 落地内容 | 安全网 |
+|---|---|---|
+| 文件切分 | `BBDownApiServer.cs` **1683 行 → 7 文件**：主文件 163（构造 / `SetupServer` 编排 / 监听校验 / `RunAsync`）、`Security` 456（中间件 + 鉴权/限速/回环与 Host/净化）、`Routes` 183（四组端点映射）、`Tasks` 321（注册表 + 闸门 + 入队与执行）、`TaskFileStore` 159（持久化）、`Callback` 283（webhook + SSRF）、`ServeApiModels` 235（DTO + 2 个 AOT 源生成上下文） | 编译期 + serve 51 例 + AOT smoke |
+| 编排 | `SetupServer()`（原 245 行）拆为编排 + 5 个具名方法：`UseServeSecurityMiddleware` / `MapTaskQueryRoutes` / `MapAddTaskRoute` / `MapCancelRoute` / `MapFinishedRemovalRoutes`（端点 lambda 逐字保留） | 同上 |
+| 成员搬运 | **逐字搬运**（不重排、不重命名、不重格式化）：有效行多重集比对，原 1060 行 vs 新 1201 行，**34 处差异全部是新脚手架**（每文件 using/namespace/partial 包装、5 个方法声明与其调用点）——**零代码行丢失/重复** | 多重集比对脚本 |
+| DTO 与 AOT | 6 个顶层类型随文件迁移，`[JsonSerializable]` 源生成上下文与它们同文件（AOT 纪律"上下文随类型迁移"） | AOT smoke（CI） |
+| 偏差 | 不新建 4 个独立类型（见 §1 H1 补充行）；端点处理器仍是内联 lambda——抽成可单测的具名处理器需外置状态，留作后续评估 | — |
+| 验证 | ① build 0 警告 0 错误；② 单测 **784/784**；③ `dotnet format --verify-no-changes` exit 0；④ 7 个文件字节卫生（无 BOM / 纯 LF / 末尾换行）；⑤ CI 9 项全绿（含 Native AOT smoke 与 Docker smoke） | — |
+
 
 ---
 
