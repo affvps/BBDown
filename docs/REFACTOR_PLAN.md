@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）已完成并验收。批 5 按依赖拆为 5a/5b/5c，5c 再拆为 **5c-1（下载侧，已完成）** 与 **5c-2（serve 侧安全敏感路径）**，**下一批为批 5c-2**：实测余 4 簇——IsLoopback 判定（4 份实现）、SSRF 字面 IP ×2、DNS + 逐地址校验（实测 2 处）、任务收尾四元组 ×4。批 2b 收尾（H8 余 2 项 + H10）与批 7 在其后。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）、批 5c 增量二（H5 serve 侧四簇，PR #74）已完成并验收——**批 5（I1/H4/H5）全部收口**。**下一批为批 2b 收尾**（H8 余 2 项：`ReadLinesThrottled` 改名、`QualityName` 档位映射注释；H10：`SubscriptionStore` 单入口），随后批 7（H6/I6/I9/I12）。剩余 H 组 3 项（H6/H8/H10）、I 组 5 项（I6/I9/I10/I12/I16，其中 I10 已定案不做）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -152,9 +152,10 @@
 
 - **I1** ✅ **已完成（5a）**：`DownloadPageAsync` 182 → 141 行 → `BuildPageExecutionContext` + `ReportNoTrackFailure`（登记所述三个重复块已被更早批次消化，见 §1）
 - **H4** ✅ **已完成（5b）**：`DownloadFileCoreAsync` 163 → 91 行（预检四段决策树 → `PrepareSingleThreadTargetAsync` + `SingleThreadPrecheck` 决策记录）、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层（分片重试 → `DownloadClipWithRetryAsync`）；“目标等长 → 权威总长复核”的 **3 处副本 → `VerifyExistingTargetAsync`**
-- **H5** 🔶 **进行中**：登记为 6 簇、实测 7 簇，扣掉已由 5b 消化的 “权威大小复核 ×3”后余 6 簇 →
-  - **5c-1 ✅ 已完成（PR #72，下载侧）**：clip 路径推导 ×4 → `ClipPathFor`；头块 ×3 → `ApplyMediaRequestHeaders`
-  - **5c-2 ⏳ 待开工（serve 侧，安全敏感）**：IsLoopback 判定（实测 **4 份实现**）、SSRF 字面 IP ×2（`Callback.cs:43`/`:171`）、DNS + 逐地址校验（实测 **2 处**：`Callback.cs:83`/`:192`，登记 ×3 已校正）、任务收尾四元组 ×4（边界待实测）
+- **H5** ✅ **已完成**（登记为 6 簇、实测 7 簇）：
+  - **5c-1（PR #72，下载侧）**：clip 路径推导 ×4 → `ClipPathFor`；头块 ×3 → `ApplyMediaRequestHeaders`
+  - **5c-2（PR #74，serve 侧）**：IsLoopback 判定 **4 份实现 → `IsLoopbackHost` 唯一实现**；SSRF 字面 IP ×2 + IPv4-mapped 归一化 ×5 → `TryParseLiteralIp`/`NormalizeMappedIpv4`（并复用 `IsUnsafeLiteralIpAddress`）；DNS + 逐地址校验 ×2 → `ResolveCallbackAddressesAsync` + `CallbackHostVerdict`；任务收尾四元组 ×4 → `FinishTask`
+  - “权威大小复核 ×3” 由 5b 的 `VerifyExistingTargetAsync` 消化
 
 ### 批 6 — serve 拆解（`refactor/serve-decomposition`，R3）
 
@@ -217,8 +218,9 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 5b（H4 深层嵌套：预检决策 + DownloadClipWithRetry + 目标复核收敛）— PR #70
   → ✅ 批 2a（H9 魔法数具名）— PR #68
   → ✅ 批 5c 增量一（H5 下载侧：clip 路径推导 + 头块）— PR #72
-  → 批 5c-2（H5 serve 侧：IsLoopback / SSRF 字面 IP / DNS 逐地址校验 / 任务收尾）  ← 下一批
-  → 批 5c-2 → 批 2b（H8/H10）→ 批 7
+  → ✅ 批 5c-2（H5 serve 侧：IsLoopback / SSRF 字面 IP / DNS 逐地址校验 / 任务收尾）— PR #74
+  → 批 2b 收尾（H8 余 2 项 + H10 单入口）  ← 下一批
+  → 批 2b → 批 7（H6 / I6 / I9 / I12）
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
@@ -233,9 +235,9 @@ dotnet format BBDown.sln --verify-no-changes
 | 5a | `refactor/download-pipeline` | #67 | ✅ 已完成（2026-10-01；主方法 182 → 141 行） |
 | 5b | `refactor/download-pipeline-nesting` | #70 | ✅ 已完成（2026-10-01；`DownloadFileCoreAsync` 163 → 91 行、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层、目标复核 3 处副本 → `VerifyExistingTargetAsync`；logger 30 → 28 / catch 22 = 22） |
 | 5c-1 | `refactor/h5-cluster-dedup` | #72 | ✅ 已完成（2026-10-01；clip 路径推导 ×4 → `ClipPathFor`、头块 ×3 → `ApplyMediaRequestHeaders`；logger 28 = 28 / catch 22 = 22） |
-| 5c-2 | `refactor/serve-dedup`（拟） | — | ⏳ 待开工（**下一批**：H5 serve 侧 4 簇） |
+| 5c-2 | `refactor/serve-dedup` | #74 | ✅ 已完成（2026-10-01；loopback 判定 4 → 1、字面 IP ×2 + 归一化 ×5、DNS 逐地址校验 ×2 → verdict、任务收尾四元组 ×4 → `FinishTask`；**H5 7 簇全部收口**） |
 | 2a | `refactor/naming-and-constants` | #68 | ✅ 已完成（2026-10-01；8 个具名常量 / 约 15 处内联值） |
-| 2b | `refactor/naming-h8`（增量） | #69 | 🔶 进行中（H8 **3/5 项**已落地：`_savePathLock`→`_taskStateLock`、`MyOptionBindingResult`→`RequestBodyBindingResult`、`nowId`→`inputTrackId`；余 `ReadLinesThrottled` 改名与 `QualityName` 档位映射注释 + H10） |
+| 2b | `refactor/naming-h8`（增量） | #69 | 🔶 进行中（**下一批**；H8 **3/5 项**已落地：`_savePathLock`→`_taskStateLock`、`MyOptionBindingResult`→`RequestBodyBindingResult`、`nowId`→`inputTrackId`；余 `ReadLinesThrottled` 改名与 `QualityName` 档位映射注释 + H10） |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
 | 7 | `refactor/remaining-structure` | — | ⏳ 待开工 |
 
@@ -323,6 +325,17 @@ dotnet format BBDown.sln --verify-no-changes
 | 头块 ×3 | 新增 `ApplyMediaRequestHeaders(request, url)`：Referer/User-Agent/Cookie 三头 + "TV 接口（`platform=android_tv_yst`/`platform=android`）不加网页 Referer"守卫；五个字面量各 **3 → 1** | `ProbesOnce_NotPerLayer`（HEAD=1 / GET=0 / Range=1 请求计数）+ 全量单测 |
 | 机械等价对账 | `catch` **22 = 22**、`Logger` **28 = 28**（均零差异）；显著代码行 877 → 869 增删逐条对应（移除 4 处路径推导 + 3 处头块，新增 2 个 helper + 7 行调用点，`{/}` +1/+1）；字面量差异**全部**是 3 → 1 的重复收敛 | — |
 | 验证 | ✅ build 0 警告 0 错误；单测 **789/789**（无新增用例——两簇均逐字搬运）；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿 | — |
+
+**批 5c 增量二（H5 serve 侧）· PR #74**（合并提交 `d044a05`）：
+
+| 簇（实测数） | 落地内容 | 等价性 |
+|---|---|---|
+| IsLoopback 判定（**4 份实现**） | `BBDownApiServer.IsLoopbackHost` 成为**全库唯一实现**（文档写明它是 Host 白名单 / Origin 防护 / 监听判定的共同入口）；`Security.IsLoopbackOrigin`、`Security.IsLoopbackListenAddress`、`ServeCommand.IsLoopbackListenUrl` 改为委托 | 三处原本逐字相同（`localhost → TryParse → IsLoopback`），`"localhost"` 字面量 3+1 → 1；ServeCommand 保留"空值视为回环"的 CLI 语义，且与服务器启动守卫共用判定（消除 CLI/服务端 `--serve-token` 判断错位面） |
+| SSRF 字面 IP（2 处）+ IPv4-mapped 归一化（5 处） | 新增 `TryParseLiteralIp`（判定 + 归一化，非字面 IP 返回 null）与 `NormalizeMappedIpv4`；`IsSafeCallbackUrlAsync` 的 8 行内联敏感段检查改为复用既有 `IsUnsafeLiteralIpAddress` | 内联块与 `IsUnsafeLiteralIpAddress` 逐分支核对为同一判定（回环 / 链路本地 / 169.254 / 全零），此前靠注释声明"两侧一致"，现为结构性同源 |
+| DNS 解析 + 逐地址校验（实测 **2 处**） | 新增 `ResolveCallbackAddressesAsync` + `CallbackHostVerdict{Allowed,DnsFailed,NoAddresses,Blocked}`：校验侧 `verdict == Allowed`；连接侧 `switch` 映射三种 Warn 后跳过 | 三种结局与 Warn 文案**逐字保留**；返回数组已归一化，`target = addresses[0]` 与旧三元表达式等值；两侧共用同一份解析，重绑定窗口不被重新打开 |
+| 任务收尾四元组（4 处） | 新增 `FinishTask(task)`：`lock (_taskLock) { CancelCts.Dispose(); runningTasks.Remove(task); finishedTasks.Add(task); } + PersistFinishedTasks()`，四条退出路径（排队取消 / 解析取消 / 解析失败 / 正常终态）共用 | 五条语句各 **4 → 1**；"必须在锁内 Dispose"的既有理由随注释进入方法文档；任何路径漏掉收尾都会让任务永久滞留 `runningTasks`，收敛后不可能漏步 |
+| 机械等价对账 | 四文件 Logger 调用 **7/3/4/7 全部不变**；catch 仅 Callback.cs **4 → 3**（两个 `SocketException` catch 合并进 helper，两侧处置由 verdict 映射保留）；显著代码行 183/242/81/199 → 178/231/75/185，增删逐条一一对应 | — |
+| 验证 | ✅ build 0 警告 0 错误；单测 **789/789**（`ServeApiSecurityTests` 40 处判定引用 + `ServeCommandTests` + `ServeApiHttpTests` 任务生命周期；无新增用例）；`dotnet format --verify-no-changes` exit 0（首轮报 `ServeCommand.cs` 缺换行，已修）；CI 9 项全绿 | — |
 
 ---
 
