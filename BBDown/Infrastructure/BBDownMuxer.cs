@@ -71,7 +71,36 @@ static partial class BBDownMuxer
             : str.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", " ").Replace("\n", " ");
     }
 
-    private static async Task<int> MuxByMp4box(string url, string videoPath, string audioPath, List<AudioMaterial>? audioMaterial, string outPath, string desc, string title, string author, string episodeId, string pic, string lang, List<Subtitle>? subs, bool audioOnly, bool videoOnly, List<ViewPoint>? points, CancellationToken cancellationToken)
+    /// <summary>
+    /// 混流请求（H2：原 <c>MuxAV</c> 20 参 / <c>MuxByMp4box</c> 16 参的参数对象）。
+    /// 字段与原形参一一对应（<c>useMp4box</c> 是策略选择、<c>CancellationToken</c> 是控制流，均不入请求）；
+    /// <c>Url</c> 由 <see cref="Bvid"/> 派生——原实现里它是 MuxAV 内的局部变量。
+    /// </summary>
+    internal sealed record MuxRequest(
+        string Bvid,
+        string VideoPath,
+        string AudioPath,
+        List<AudioMaterial> AudioMaterial,
+        string OutPath,
+        string Desc = "",
+        string Title = "",
+        string Author = "",
+        string EpisodeId = "",
+        string Pic = "",
+        string Lang = "",
+        List<Subtitle>? Subs = null,
+        bool AudioOnly = false,
+        bool VideoOnly = false,
+        List<ViewPoint>? Points = null,
+        long PubTime = 0,
+        bool SimplyMux = false,
+        bool IsHevc = false)
+    {
+        /// <summary>视频页 URL（mp4box 的 <c>-itags source</c> 值）。</summary>
+        public string Url => $"https://www.bilibili.com/video/{Bvid}/";
+    }
+
+    private static async Task<int> MuxByMp4box(MuxRequest request, CancellationToken cancellationToken)
     {
         // 杜比视界自动切 mp4box 时 FindBinaries 只探了 ffmpeg（初始 UseMP4box=false），
         // MP4BOX 从未探测：这里运行时守卫给出清晰报错，替代原生 Win32Exception。
@@ -79,39 +108,40 @@ static partial class BBDownMuxer
         // mp4box 的 -itags/-add 值要求双引号包裹、值内 " 和 \ 需转义（mp4box 自身语法）。
         // 转义只在 mp4box 分支做：ffmpeg 分支走 argv 逐项直传，提前转义会把字面
         // \"、\\ 写进 mp4 元数据。
-        desc = EscapeString(desc);
-        title = EscapeString(title);
-        episodeId = EscapeString(episodeId);
-        author = EscapeString(author);
-        lang = EscapeString(lang);
+        // 转义后的本地副本（原实现就地改写入参；值一旦转义就不再引用请求字段）
+        string desc = EscapeString(request.Desc);
+        string title = EscapeString(request.Title);
+        string episodeId = EscapeString(request.EpisodeId);
+        string author = EscapeString(request.Author);
+        string lang = EscapeString(request.Lang);
         // 与 ffmpeg 分支的 MuxAV 一致：多P/嵌套路径模板下输出目录可能尚不存在，
         // mp4box 打不开不存在的父目录下的输出文件，返回非零导致"合并失败"。
         // 杜比视界 + ffmpeg<5.0 会自动切到 mp4box，无弹幕的多P下载稳定踩中此缺陷。
-        var outDir = Path.GetDirectoryName(outPath);
+        var outDir = Path.GetDirectoryName(request.OutPath);
         if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir))
             Directory.CreateDirectory(outDir);
 
         var args = new List<string> { "-inter", "500", "-noprog" };
         int nowId = 0;
-        if (!string.IsNullOrEmpty(videoPath))
+        if (!string.IsNullOrEmpty(request.VideoPath))
         {
             // trackID 由调用方场景决定：纯音频输出（audioOnly 且无音频文件）时取轨道 2
-            string trackId = audioOnly && audioPath == "" ? "2" : "1";
+            string trackId = request.AudioOnly && request.AudioPath == "" ? "2" : "1";
             args.Add("-add");
-            args.Add($"{videoPath}#trackID={trackId}:name=");
+            args.Add($"{request.VideoPath}#trackID={trackId}:name=");
             nowId++;
         }
-        if (!string.IsNullOrEmpty(audioPath))
+        if (!string.IsNullOrEmpty(request.AudioPath))
         {
             // lang 已在 MuxByMp4box 顶部 EscapeString（mp4box 的 -add 值语法要求），值直接拼入
             args.Add("-add");
-            args.Add($"{audioPath}:lang={(lang == "" ? "und" : lang)}");
+            args.Add($"{request.AudioPath}:lang={(lang == "" ? "und" : lang)}");
             nowId++;
         }
         // 配音/背景音轨与 ffmpeg 分支对齐：必须进入 -add 链。否则杜比视界自动切 mp4box
         // （ffmpeg<5.0）时这些已下载的轨道被静默丢弃，且随后被 CleanupDownloadedTracks
         // 删除——数据永久丢失且无任何警告。
-        foreach (var material in audioMaterial ?? [])
+        foreach (var material in request.AudioMaterial ?? [])
         {
             args.Add("-add");
             args.Add($"{material.path}:lang=und");
@@ -127,15 +157,15 @@ static partial class BBDownMuxer
         string? metaFile = null;
         try
         {
-            if (points != null && points.Any())
+            if (request.Points != null && request.Points.Any())
             {
-                var meta = BBDownUtil.GetMp4boxMetaString(points);
-                var baseDir = Path.GetDirectoryName(string.IsNullOrEmpty(videoPath) ? audioPath : videoPath);
+                var meta = BBDownUtil.GetMp4boxMetaString(request.Points);
+                var baseDir = Path.GetDirectoryName(string.IsNullOrEmpty(request.VideoPath) ? request.AudioPath : request.VideoPath);
                 if (string.IsNullOrEmpty(baseDir))
                     baseDir = ".";
                 // 固定名 "chapters" 会让并发混流互相覆盖（后写者的章节被先写者读到）；
                 // 用输出文件派生唯一名，并在结束后清理。
-                metaFile = Path.Combine(baseDir, $"chapters-{Path.GetFileNameWithoutExtension(outPath)}");
+                metaFile = Path.Combine(baseDir, $"chapters-{Path.GetFileNameWithoutExtension(request.OutPath)}");
                 await File.WriteAllTextAsync(metaFile, meta, cancellationToken);
                 args.Add("-chap");
                 args.Add(metaFile);
@@ -143,16 +173,16 @@ static partial class BBDownMuxer
 
             // 元数据全部拼进单个 "-itags tool=..." 参数（mp4box 的 itags 语法要求）
             var metaArg = new StringBuilder("tool=");
-            if (!string.IsNullOrEmpty(pic))
+            if (!string.IsNullOrEmpty(request.Pic))
                 // cover 值与其他 itags 值同规则走 EscapeString：Windows 路径天然含 \，
                 // 不转义会被 mp4box 当转义序列消费，杜比视界自动切 mp4box 时封面静默丢失
-                metaArg.Append($":cover=\"{EscapeString(pic)}\"");
+                metaArg.Append($":cover=\"{EscapeString(request.Pic)}\"");
             if (!string.IsNullOrEmpty(episodeId))
                 metaArg.Append($":album=\"{title}\":title=\"{episodeId}\"");
             else
                 metaArg.Append($":title=\"{title}\"");
             metaArg.Append($":sdesc=\"{desc}\"");
-            metaArg.Append($":comment=\"{url}\"");
+            metaArg.Append($":comment=\"{request.Url}\"");
             metaArg.Append($":artist=\"{author}\"");
             if (metaArg.Length > "tool=".Length)
             {
@@ -160,18 +190,18 @@ static partial class BBDownMuxer
                 args.Add(metaArg.ToString());
             }
 
-            if (subs != null)
+            if (request.Subs != null)
             {
-                for (int i = 0; i < subs.Count; i++)
+                for (int i = 0; i < request.Subs.Count; i++)
                 {
-                    if (File.Exists(subs[i].path) && await BBDownUtil.HasTextContentAsync(subs[i].path!, cancellationToken))
+                    if (File.Exists(request.Subs[i].path) && await BBDownUtil.HasTextContentAsync(request.Subs[i].path!, cancellationToken))
                     {
                         nowId++;
-                        var (subLangCode, subLangName) = SubUtil.GetSubtitleCode(subs[i].lan);
+                        var (subLangCode, subLangName) = SubUtil.GetSubtitleCode(request.Subs[i].lan);
                         // name/lang 值都作为独立 argv：SubUtil 的名称表含空格（如 "Aymar aru"），
                         // 手工拼引号容易拆参，交给 ArgumentList 后天然保持单 token。
                         args.Add("-add");
-                        args.Add($"{subs[i].path}#trackID=1:name={subLangName}:hdlr=sbtl:lang={subLangCode}");
+                        args.Add($"{request.Subs[i].path}#trackID=1:name={subLangName}:hdlr=sbtl:lang={subLangCode}");
                         args.Add("-udta");
                         args.Add($"{nowId}:type=name:str=\"{subLangName}\"");
                     }
@@ -181,7 +211,7 @@ static partial class BBDownMuxer
             if (Config.Current.DebugLog) args.Add("-v");
             args.Add("-new");
             args.Add("--");
-            args.Add(outPath);
+            args.Add(request.OutPath);
 
             Logger.LogDebug("mp4box命令: {0}", string.Join(" ", args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a)));
             return await RunExeAsync(MP4BOX, args, Core.Config.Current.MuxerTimeoutMinutes, cancellationToken);
@@ -199,24 +229,25 @@ static partial class BBDownMuxer
         }
     }
 
-    public static async Task<int> MuxAV(bool useMp4box, string bvid, string videoPath, string audioPath, List<AudioMaterial> audioMaterial, string outPath, string desc = "", string title = "", string author = "", string episodeId = "", string pic = "", string lang = "", List<Subtitle>? subs = null, bool audioOnly = false, bool videoOnly = false, List<ViewPoint>? points = null, long pubTime = 0, bool simplyMux = false, bool isHevc = false, CancellationToken cancellationToken = default)
+
+    public static async Task<int> MuxAV(bool useMp4box, MuxRequest request, CancellationToken cancellationToken = default)
     {
-        if (audioOnly && audioPath != "")
-            videoPath = "";
-        if (videoOnly)
-            audioPath = "";
+        // 仅音频 / 仅视频时清空对应输入轨（原实现就地改写入参；改为局部归一化，
+        // 并把归一化后的路径随请求传给 mp4box 分支）
+        string videoPath = request.AudioOnly && request.AudioPath != "" ? "" : request.VideoPath;
+        string audioPath = request.VideoOnly ? "" : request.AudioPath;
         // 此处不再转义 title/desc 等：ffmpeg 分支走 argv 逐项直传，值按字面写入元数据，
         // 转义会把源数据里的 " 和 \ 以字面 \"、\\ 写进 mp4 元数据（双重转义）。
         // 只有 mp4box 分支（值嵌进其 -itags/-add 自身语法）需要转义，在 MuxByMp4box 内做。
-        var url = $"https://www.bilibili.com/video/{bvid}/";
+        var url = request.Url;
 
         if (useMp4box)
         {
-            return await MuxByMp4box(url, videoPath, audioPath, audioMaterial, outPath, desc, title, author, episodeId, pic, lang, subs, audioOnly, videoOnly, points, cancellationToken);
+            return await MuxByMp4box(request with { VideoPath = videoPath, AudioPath = audioPath }, cancellationToken);
         }
 
         string? metaFile = null;
-        var outDir = Path.GetDirectoryName(outPath);
+        var outDir = Path.GetDirectoryName(request.OutPath);
         if (!string.IsNullOrEmpty(outDir) && !Directory.Exists(outDir))
             Directory.CreateDirectory(outDir);
         //----分析并生成参数
@@ -238,7 +269,7 @@ static partial class BBDownMuxer
             }
         }
 
-        if (audioMaterial.Any())
+        if (request.AudioMaterial.Any())
         {
             // 素材元数据下标起点依赖主音轨是否存在：有主音轨时输出音频流 0 是主音轨、
             // 素材从 1 起；主音轨缺失时输出音频流 0 就是首个素材，必须从 0 起，
@@ -254,7 +285,7 @@ static partial class BBDownMuxer
                 outputArgs.Add("-metadata:s:a:0");
                 outputArgs.Add("title=原音频");
             }
-            foreach (var audio in audioMaterial)
+            foreach (var audio in request.AudioMaterial)
             {
                 inputCount++;
                 audioCount++;
@@ -274,27 +305,27 @@ static partial class BBDownMuxer
             }
         }
 
-        if (!string.IsNullOrEmpty(pic))
+        if (!string.IsNullOrEmpty(request.Pic))
         {
             inputCount++;
             args.Add("-i");
-            args.Add(pic);
+            args.Add(request.Pic);
         }
 
-        if (subs != null)
+        if (request.Subs != null)
         {
             // 字幕流下标独立于原列表下标：跳过空/缺失字幕文件时若沿用原列表下标 i，
             // 实际输出的字幕流序号会跳号（如仅第 2 条有效却写 s:1），-metadata:s:s:N
             // 与真实字幕流错位。这里用只在"实际加入字幕输入"时自增的连续下标。
             int subtitleStreamIndex = 0;
-            for (int i = 0; i < subs.Count; i++)
+            for (int i = 0; i < request.Subs.Count; i++)
             {
-                if (File.Exists(subs[i].path) && await BBDownUtil.HasTextContentAsync(subs[i].path!, cancellationToken))
+                if (File.Exists(request.Subs[i].path) && await BBDownUtil.HasTextContentAsync(request.Subs[i].path!, cancellationToken))
                 {
                     inputCount++;
                     args.Add("-i");
-                    args.Add(subs[i].path);
-                    var (subLangCode, subLangName) = SubUtil.GetSubtitleCode(subs[i].lan);
+                    args.Add(request.Subs[i].path);
+                    var (subLangCode, subLangName) = SubUtil.GetSubtitleCode(request.Subs[i].lan);
                     // 输出选项统一收集到 outputArgs：旧版 ffmpeg 对
                     // "-i sub.srt -metadata:s:s:0" 报 cannot be applied to input url
                     outputArgs.Add($"-metadata:s:s:{subtitleStreamIndex}");
@@ -306,22 +337,22 @@ static partial class BBDownMuxer
             }
         }
 
-        if (!string.IsNullOrEmpty(pic))
+        if (!string.IsNullOrEmpty(request.Pic))
         {
             // disposition 的 stream specifier 同样须粘连：-disposition:v:0 attached_pic
             // 输出选项统一收集到 outputArgs，紧跟 -i 会被 ffmpeg 当输入选项处理
-            outputArgs.Add($"-disposition:v:{(audioOnly ? "0" : "1")}");
+            outputArgs.Add($"-disposition:v:{(request.AudioOnly ? "0" : "1")}");
             outputArgs.Add("attached_pic");
         }
 
-        if (points != null && points.Any())
+        if (request.Points != null && request.Points.Any())
         {
-            var meta = BBDownUtil.GetFFmpegMetaString(points);
+            var meta = BBDownUtil.GetFFmpegMetaString(request.Points);
             var baseDir = Path.GetDirectoryName(string.IsNullOrEmpty(videoPath) ? audioPath : videoPath);
             if (string.IsNullOrEmpty(baseDir))
                 baseDir = ".";
             // 与 mp4box 分支一致：避免并发混流用固定名互相覆盖章节文件，用后即删
-            metaFile = Path.Combine(baseDir, $"chapters-{Path.GetFileNameWithoutExtension(outPath)}");
+            metaFile = Path.Combine(baseDir, $"chapters-{Path.GetFileNameWithoutExtension(request.OutPath)}");
             await File.WriteAllTextAsync(metaFile, meta, cancellationToken);
             args.Add("-i");
             args.Add(metaFile);
@@ -345,50 +376,50 @@ static partial class BBDownMuxer
         args.Add("-loglevel");
         args.Add(Config.Current.DebugLog ? "verbose" : "warning");
         args.Add("-y");
-        if (!simplyMux)
+        if (!request.SimplyMux)
         {
             args.Add("-metadata");
-            args.Add($"title={(episodeId == "" ? title : episodeId)}");
+            args.Add($"title={(request.EpisodeId == "" ? request.Title : request.EpisodeId)}");
             args.Add("-metadata");
-            args.Add($"comment={url}");
-            if (lang != "")
+            args.Add($"comment={request.Url}");
+            if (request.Lang != "")
             {
                 // stream specifier 粘连：-metadata:s:a:0 language=...
                 args.Add("-metadata:s:a:0");
-                args.Add($"language={lang}");
+                args.Add($"language={request.Lang}");
             }
-            if (!string.IsNullOrWhiteSpace(desc))
+            if (!string.IsNullOrWhiteSpace(request.Desc))
             {
                 args.Add("-metadata");
-                args.Add($"description={desc}");
+                args.Add($"description={request.Desc}");
             }
-            if (!string.IsNullOrEmpty(author))
+            if (!string.IsNullOrEmpty(request.Author))
             {
                 args.Add("-metadata");
-                args.Add($"artist={author}");
+                args.Add($"artist={request.Author}");
             }
-            if (episodeId != "")
+            if (request.EpisodeId != "")
             {
                 args.Add("-metadata");
-                args.Add($"album={title}");
+                args.Add($"album={request.Title}");
             }
-            if (pubTime != 0)
+            if (request.PubTime != 0)
             {
                 args.Add("-metadata");
                 // RFC 3339 时间戳喂给机器可读协议：自定义格式的 ":" 是 culture 时间分隔符
                 // 占位符，fi-FI 等区域设置下会产出 "19.30.00" 之类非 ISO-8601 串，
                 // ffmpeg av_parse_time 解析失败后发布时间元数据静默丢失。
-                args.Add($"creation_time={DateTimeOffset.FromUnixTimeSeconds(pubTime).ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ", CultureInfo.InvariantCulture)}");
+                args.Add($"creation_time={DateTimeOffset.FromUnixTimeSeconds(request.PubTime).ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ", CultureInfo.InvariantCulture)}");
             }
         }
         args.Add("-c:v");
         args.Add("copy");
         args.Add("-c:a");
         args.Add("copy");
-        if (audioOnly && audioPath == "") { args.Add("-vn"); }
-        if (subs != null) { args.Add("-c:s"); args.Add("mov_text"); }
+        if (request.AudioOnly && audioPath == "") { args.Add("-vn"); }
+        if (request.Subs != null) { args.Add("-c:s"); args.Add("mov_text"); }
         // fix macOS hev1, see https://discussions.apple.com/thread/253081863?sortBy=rank
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && isHevc) { args.Add("-tag:v:0"); args.Add("hvc1"); }
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) && request.IsHevc) { args.Add("-tag:v:0"); args.Add("hvc1"); }
         args.Add("-movflags");
         args.Add("faststart");
         args.Add("-strict");
@@ -398,7 +429,7 @@ static partial class BBDownMuxer
         args.Add("-f");
         args.Add("mp4");
         args.Add("--");
-        args.Add(outPath);
+        args.Add(request.OutPath);
 
         Logger.LogDebug("ffmpeg命令: {0}", string.Join(" ", args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a)));
         try
@@ -417,6 +448,14 @@ static partial class BBDownMuxer
             }
         }
     }
+
+    /// <summary>
+    /// 旧签名兼容重载（H2 决策）：逐字转发到参数对象版本，保留既有调用点
+    /// （<c>Download.cs</c> 与 <c>MuxerArgsTests</c> 等）与潜在外部消费方。
+    /// 新代码请直接用 <see cref="MuxAV(bool, MuxRequest, CancellationToken)"/>。
+    /// </summary>
+    public static Task<int> MuxAV(bool useMp4box, string bvid, string videoPath, string audioPath, List<AudioMaterial> audioMaterial, string outPath, string desc = "", string title = "", string author = "", string episodeId = "", string pic = "", string lang = "", List<Subtitle>? subs = null, bool audioOnly = false, bool videoOnly = false, List<ViewPoint>? points = null, long pubTime = 0, bool simplyMux = false, bool isHevc = false, CancellationToken cancellationToken = default)
+        => MuxAV(useMp4box, new MuxRequest(bvid, videoPath, audioPath, audioMaterial, outPath, desc, title, author, episodeId, pic, lang, subs, audioOnly, videoOnly, points, pubTime, simplyMux, isHevc), cancellationToken);
 
     public static async Task MergeFLV(string[] files, string outPath, CancellationToken cancellationToken = default)
     {
