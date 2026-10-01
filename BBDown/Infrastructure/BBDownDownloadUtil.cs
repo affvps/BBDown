@@ -16,6 +16,8 @@ namespace BBDown;
 
 internal static class BBDownDownloadUtil
 {
+    /// <summary>下载读取缓冲区大小（256KB；原为内联的 1048576 / 4）。</summary>
+    private const int BlockSizeBytes = 1024 * 1024 / 4;
     /// <summary>
     /// 多线程下载的跨分片进度聚合（RF-75）：回调传入的是「该分片已下载的累计字节数」而非增量，
     /// 因此必须用「新值 - 上次值」推进总量；分片重试时该值回退到较小值，总量也必须随之回退，
@@ -186,7 +188,7 @@ internal static class BBDownDownloadUtil
         var totalBytes = downloadedBytes + (declaredLength ?? long.MaxValue - downloadedBytes);
         long writeStartPosition = fileStream.Position;
 
-        const int blockSize = 1048576 / 4;
+        const int blockSize = BlockSizeBytes;
         // 256KB 超过 85000 字节的大对象堆阈值，直接 new 会让每个分片、每次重试
         // 都在 LOH 上留下一块并触发 Gen2 回收（Gen2 会暂停全部线程）。
         // Rent 返回的数组可能大于请求值，因此读写都必须显式限定长度。

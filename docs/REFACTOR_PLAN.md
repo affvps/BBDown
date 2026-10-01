@@ -52,6 +52,7 @@
 | **I2 补充**（2026-10-01） | `ExtractTracksAsync` ≈430~532 行 | ✅ **实测 532 行**（`Parser.cs:152-683`），占该文件 68% | 与描述一致；拆解后主方法 **39 行**，新增 15 个私有方法 + 3 个私有类型（见 §6 批 4） |
 | **H3 补充**（2026-10-01） | "`RangeDownloadToTmpAsync`（10 参），**4 处调用**" | ✅ 10 参确认；调用点实测 **2 处**（`BBDownDownloadUtil.cs:481`/`:816`），其余命中均为注释 | 范围 -2；无兼容重载需求 |
 | **H2 补充**（2026-10-01） | "`MuxAV` 20 参 / `MuxByMp4box` 15 参，仓内 13 处调用点" | ✅ `MuxAV` **20 参**确认；`MuxByMp4box` 实测 **16 参**；`MuxAV` 调用点 **13 处**中 12 处在测试（经兼容重载，零改动），1 处生产（`Download.cs`）已迁到参数对象 | 参数对象 + 兼容重载按计划落地，见 §6 批 3a |
+| **H9 补充**（2026-10-01） | "剩余 6 处未具名魔法数" | 实测 **约 15 处 / 5 文件**：HTTPUtil 池超时 7 处 + 回调客户端 1 处 + serve 关停排空 1 处 + 直播头阶段 1 处 + 读取缓冲 1 处 + 退避基数/上限 2 处 + 完整性阈值 1 处 | 范围扩大但同质：按文件各加具名常量（`DefaultClientTimeout` / `CallbackClientTimeout` / `ServeShutdownDrainTimeout` / `HeaderStageTimeout` / `BlockSizeBytes` / `ReconnectBackoffBaseMs`·`CapMs` / `MinCompleteStreamRatio`） |
 | **I1 补充**（2026-10-01） | "\`DownloadPageAsync\` ~520 行；弹幕块 ~55 行重复 / CoverOnly 分支 / 已有产物跳过" | 实测 **182 行**（批 3b 后）；登记所述三块**已在早前批次拆入** \`DownloadPageExecutor\`（\`DownloadPageExecution.cs:84-111\`：弹幕 → CoverOnly → 跳过已有产物）与 \`DownloadPageAssets\`，主方法内已无这些块 | **本批只拆剩余两块**：执行上下文装配（34 行）→ \`BuildPageExecutionContext\`、解析失败诊断（24 行）→ \`ReportNoTrackFailure\`；主方法 **182 → 141 行** |
 | **I5 补充**（2026-10-01） | "`SetUpWork` 10 元组" | 实测 **9 元组**；透传链 **4 层**：`SetUpWork` → `DownloadPagesAsync`（**11 参**）→ `DownloadPageAsync`（**15 参**）→ 各阶段 | 三层一并收敛：`DownloadContext`（9 字段）+`DownloadPagesAsync` 4 参+`DownloadPageAsync(PageDownloadRequest)` |
 | **I13 补充**（2026-10-01） | "`Page` 5 个阶梯构造器（8/9/10/12 参）；`EntityTests` 仅 3 例" | ✅ 5 个构造器 = 4 个阶梯 + 1 个拷贝构造；调用点实测 **11 处**（8 生产 + 3 测试），其中 **2 处**用拷贝构造（保留）；`EntityTests` 3 → **6 例** | 删 4 阶梯 + 无参构造；11 处全改初始化器（`required` 由编译器强制） |
@@ -119,6 +120,8 @@
 **验收**：build 0 警告 0 错误 → 全量单测（基线 772）→ format → CI 9 项；重命名靠编译期暴露遗漏。
 
 ### 批 2 — 命名 / 魔法数 / 持久化（`refactor/naming-and-constants`，R1~R2）
+
+> **拆为 2a（H9）/ 2b（H8 + H10）**：2a 已完成（PR #68）；2b 待开工。
 
 - **H8**：`ReadLinesThrottled`（名实不符）、`_savePathLock`、`MyOptionBindingResult<T>`、`QualityName` 档位映射顺序、`nowId` 逐项改名或补注释说明
 - **H9**：剩余 **6 处**内联魔法数具名（`FromSeconds(30)`、`FromMinutes(2)` ×2、`1048576/4`、`3000·2^n` 退避、`0.8` 完整性阈值）；已具名的同族常量（`MaxQueuedPerConcurrent` / `MaxConcurrentQueryHandlers` / `MinCompleteFlvHeaderBytes`）不动
@@ -208,7 +211,8 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 3b（I5 DownloadContext / I13 Page 初始化器）— PR #66
   → ✅ 批 5a（I1 拆解：上下文装配 + 失败诊断）— PR #67
   → 批 5b（H4 深层嵌套：预检决策 + DownloadClipWithRetry）  ← 下一批
-  → 批 5c（H5 重复簇 6 个辅助）→ 批 2 → 批 7
+  → ✅ 批 2a（H9 魔法数具名）— PR #68
+  → 批 5b → 批 5c → 批 2b（H8/H10）→ 批 7
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
@@ -223,6 +227,8 @@ dotnet format BBDown.sln --verify-no-changes
 | 5a | `refactor/download-pipeline` | #67 | ✅ 已完成（2026-10-01；主方法 182 → 141 行） |
 | 5b | `refactor/download-pipeline`（续） | — | ⏳ 待开工（**下一批**：H4） |
 | 5c | `refactor/download-pipeline`（续） | — | ⏳ 待开工（H5） |
+| 2a | `refactor/naming-and-constants` | #68 | ✅ 已完成（2026-10-01；8 个具名常量 / 约 15 处内联值） |
+| 2b | `refactor/naming-and-constants`（续） | — | ⏳ 待开工（H8 命名 + H10 `ReadHistoryLocked`） |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
 | 7 | `refactor/remaining-structure` | — | ⏳ 待开工 |
 
