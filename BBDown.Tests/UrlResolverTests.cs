@@ -155,6 +155,40 @@ public class UrlResolverTests
         Assert.Equal(expected, await UrlResolver.ResolveAsync(url));
     }
 
+    /// <summary>
+    /// av/bv 的 http 分支产出纯数字，公开入口会在 <c>FixAvidAsync</c> 里为 av 号做一次
+    /// 跳转检查（网络请求），因此这两个分支只能直测拆分出的 <see cref="UrlResolver.ResolveHttpUrlAsync"/>。
+    /// BV 期望值取自 <see cref="BilibiliBvConverterTests"/> 独立钉住的映射（BV17x411w7KC↔av170001），
+    /// 不调用转换器现算——否则用例与实现同源、失去证据价值。
+    /// </summary>
+    [Theory]
+    [InlineData("https://www.bilibili.com/video/av170001", "170001")]
+    [InlineData("https://www.bilibili.com/video/Av170001", "170001")]
+    [InlineData("https://www.bilibili.com/video/BV17x411w7KC", "170001")]
+    [InlineData("https://www.bilibili.com/video/bv17x411w7KC", "170001")]
+    public async Task ResolveHttpUrlAsync_VideoUrl_ReturnsAid(string url, string expected)
+    {
+        Assert.Equal(expected, await UrlResolver.ResolveHttpUrlAsync(url));
+    }
+
+    /// <summary>裸 ID 分支直测（不受 FixAvidAsync 网络检查影响）。</summary>
+    [Theory]
+    [InlineData("av170001", "170001")]
+    [InlineData("AV99999", "99999")]
+    [InlineData("BV17x411w7KC", "170001")]
+    [InlineData("ep123", "ep:123")]
+    [InlineData("mid:123", "mid:123")]
+    public async Task ResolveBareIdAsync_BareTargets_ReturnExpected(string input, string expected)
+    {
+        Assert.Equal(expected, await UrlResolver.ResolveBareIdAsync(input));
+    }
+
+    [Fact]
+    public async Task ResolveBareIdAsync_UnknownInput_ThrowsArgumentException()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => UrlResolver.ResolveBareIdAsync("invalid_input"));
+    }
+
     // ── 泛抓取域名白名单（SSRF/凭据外发防护） ──
 
     [Theory]
