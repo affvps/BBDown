@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）、批 5c 增量二（H5 serve 侧四簇，PR #74）已完成并验收——**批 5（I1/H4/H5）全部收口**。**下一批为批 2b 收尾**（H8 余 2 项：`ReadLinesThrottled` 改名、`QualityName` 档位映射注释；H10：`SubscriptionStore` 单入口），随后批 7（H6/I6/I9/I12）。剩余 H 组 3 项（H6/H8/H10）、I 组 5 项（I6/I9/I10/I12/I16，其中 I10 已定案不做）。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）、批 5c 增量二（H5 serve 侧四簇，PR #74）已完成并验收——**批 5（I1/H4/H5）全部收口**。**批 2b-1（H8 余 2 项，PR #76）已完成并验收——H8 全部 5 项收口**。**下一批为批 2b-2**（H10：`SubscriptionStore` 历史读取单入口），随后批 7（H6/I6/I9/I12）。剩余 H 组 2 项（H6/H10）、I 组 5 项（I6/I9/I10/I12/I16，其中 I10 已定案不做）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -219,8 +219,9 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 2a（H9 魔法数具名）— PR #68
   → ✅ 批 5c 增量一（H5 下载侧：clip 路径推导 + 头块）— PR #72
   → ✅ 批 5c-2（H5 serve 侧：IsLoopback / SSRF 字面 IP / DNS 逐地址校验 / 任务收尾）— PR #74
-  → 批 2b 收尾（H8 余 2 项 + H10 单入口）  ← 下一批
-  → 批 2b → 批 7（H6 / I6 / I9 / I12）
+  → ✅ 批 2b-1（H8 余 2 项：ReadLinesThrottled 改名 + QualityName 顺序文档）— PR #76
+  → 批 2b-2（H10：SubscriptionStore 历史读取单入口）  ← 下一批
+  → 批 2b-2 → 批 7（H6 / I6 / I9 / I12）
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
@@ -237,7 +238,8 @@ dotnet format BBDown.sln --verify-no-changes
 | 5c-1 | `refactor/h5-cluster-dedup` | #72 | ✅ 已完成（2026-10-01；clip 路径推导 ×4 → `ClipPathFor`、头块 ×3 → `ApplyMediaRequestHeaders`；logger 28 = 28 / catch 22 = 22） |
 | 5c-2 | `refactor/serve-dedup` | #74 | ✅ 已完成（2026-10-01；loopback 判定 4 → 1、字面 IP ×2 + 归一化 ×5、DNS 逐地址校验 ×2 → verdict、任务收尾四元组 ×4 → `FinishTask`；**H5 7 簇全部收口**） |
 | 2a | `refactor/naming-and-constants` | #68 | ✅ 已完成（2026-10-01；8 个具名常量 / 约 15 处内联值） |
-| 2b | `refactor/naming-h8`（增量） | #69 | 🔶 进行中（**下一批**；H8 **3/5 项**已落地：`_savePathLock`→`_taskStateLock`、`MyOptionBindingResult`→`RequestBodyBindingResult`、`nowId`→`inputTrackId`；余 `ReadLinesThrottled` 改名与 `QualityName` 档位映射注释 + H10） |
+| 2b-1 | `refactor/naming-h10` | #69 / #76 | ✅ 已完成（2026-10-01；**H8 5/5 项收口**——3 项随 #69（`_savePathLock`→`_taskStateLock`、`MyOptionBindingResult`→`RequestBodyBindingResult`、`nowId`→`inputTrackId`），余 2 项随 #76（`ReadLinesThrottled`→`ReadLinesDedupedAndCapped`、`QualityName` 补分支顺序文档）） |
+| 2b-2 | `refactor/subscription-history`（拟） | — | ⏳ 待开工（**下一批**：H10 `SubscriptionStore` 历史读取单入口） |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
 | 7 | `refactor/remaining-structure` | — | ⏳ 待开工 |
 
@@ -336,6 +338,15 @@ dotnet format BBDown.sln --verify-no-changes
 | 任务收尾四元组（4 处） | 新增 `FinishTask(task)`：`lock (_taskLock) { CancelCts.Dispose(); runningTasks.Remove(task); finishedTasks.Add(task); } + PersistFinishedTasks()`，四条退出路径（排队取消 / 解析取消 / 解析失败 / 正常终态）共用 | 五条语句各 **4 → 1**；"必须在锁内 Dispose"的既有理由随注释进入方法文档；任何路径漏掉收尾都会让任务永久滞留 `runningTasks`，收敛后不可能漏步 |
 | 机械等价对账 | 四文件 Logger 调用 **7/3/4/7 全部不变**；catch 仅 Callback.cs **4 → 3**（两个 `SocketException` catch 合并进 helper，两侧处置由 verdict 映射保留）；显著代码行 183/242/81/199 → 178/231/75/185，增删逐条一一对应 | — |
 | 验证 | ✅ build 0 警告 0 错误；单测 **789/789**（`ServeApiSecurityTests` 40 处判定引用 + `ServeCommandTests` + `ServeApiHttpTests` 任务生命周期；无新增用例）；`dotnet format --verify-no-changes` exit 0（首轮报 `ServeCommand.cs` 缺换行，已修）；CI 9 项全绿 | — |
+
+**批 2b-1（H8 余 2 项）· PR #76**（合并提交 `9e9d7e7`）：
+
+| 项 | 落地内容 | 为什么这么改 |
+|---|---|---|
+| `ReadLinesThrottled` → **`ReadLinesDedupedAndCapped`** | 四处引用同步（2 调用点 + 方法定义 + `<see cref>`）；方法文档写明两重节流：① 合并**连续重复**行（只与上一行比较，非相邻重复仍转发）② 总行数超过 `MaxLogLinesPerProcess` 后只转发一条截断提示 | 原名易被读成"按时间限速"，而实现与时间无关；新名直接说明"去重 + 封顶"。XML 引用由编译器校验（0 警告即无遗漏） |
+| `QualityName` 补**分支顺序**文档 | 点明 switch 表达式自上而下匹配、阈值臂必须**降序**且整体排在精确值臂之前，并给出反例（`>= 20000` 挪到 `>= 30000` 之前会让杜比被标成 4K）与新增档位的插入约定 | 该 switch 的风险不在命名而在**顺序即语义**，读者容易按"从特殊到一般"重排而引入静默错误 |
+| 机械等价对账 | `ExternalProcessRunner.cs` 显著代码行 **190 = 190**、`LiveStreamUtil.cs` **466 = 466**（纯注释）；两文件 `Logger`/`catch` 零差异；字面量差异仅来自改名的 `<see cref>` 与新注释 | — |
+| 验证 | ✅ build 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿 | — |
 
 ---
 
