@@ -64,64 +64,10 @@ public static class Entity
             }
         }
         public List<ViewPoint> points = new();
-
-        [SetsRequiredMembers]
-        public Page(int index, string aid, string cid, string epid, string title, int dur, string res, long pubTime)
+        // I13：原 8/9/10/12 参"阶梯构造器"已删除——同一语义改用无参构造 + 对象初始化器表达，
+        // required 字段由编译器强制（漏填即编译失败），aid/cid/epid 的净化仍只在属性 setter 收口。
+        public Page()
         {
-            this.aid = aid;
-            this.index = index;
-            this.cid = cid;
-            this.epid = epid;
-            this.title = title;
-            this.dur = dur;
-            this.res = res;
-            this.pubTime = pubTime;
-        }
-
-        [SetsRequiredMembers]
-        public Page(int index, string aid, string cid, string epid, string title, int dur, string res, long pubTime, string cover)
-        {
-            this.aid = aid;
-            this.index = index;
-            this.cid = cid;
-            this.epid = epid;
-            this.title = title;
-            this.dur = dur;
-            this.res = res;
-            this.pubTime = pubTime;
-            this.cover = cover;
-        }
-
-        [SetsRequiredMembers]
-        public Page(int index, string aid, string cid, string epid, string title, int dur, string res, long pubTime, string cover, string desc)
-        {
-            this.aid = aid;
-            this.index = index;
-            this.cid = cid;
-            this.epid = epid;
-            this.title = title;
-            this.dur = dur;
-            this.res = res;
-            this.pubTime = pubTime;
-            this.cover = cover;
-            this.desc = desc;
-        }
-
-        [SetsRequiredMembers]
-        public Page(int index, string aid, string cid, string epid, string title, int dur, string res, long pubTime, string cover, string desc, string ownerName, string ownerMid)
-        {
-            this.aid = aid;
-            this.index = index;
-            this.cid = cid;
-            this.epid = epid;
-            this.title = title;
-            this.dur = dur;
-            this.res = res;
-            this.pubTime = pubTime;
-            this.cover = cover;
-            this.desc = desc;
-            this.ownerName = ownerName;
-            this.ownerMid = ownerMid;
         }
 
         [SetsRequiredMembers]

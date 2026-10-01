@@ -254,8 +254,8 @@ public partial class BBDownApiServer
         try
         {
             task.SetStatus(DownloadTaskStatus.Running);
-            var (encodingPriority, dfnPriority, firstEncoding, downloadDanmaku, downloadDanmakuFormats, input, lang, aidOri, delay) = Program.SetUpWork(option);
-            var (fetchedAid, vInfo, apiType, session) = await Program.GetVideoInfoAsync(option, aidOri, input, linkedCts.Token);
+            var context = Program.SetUpWork(option);
+            var (fetchedAid, vInfo, apiType, session) = await Program.GetVideoInfoAsync(option, context.AidOri, context.Input, linkedCts.Token);
             // GetVideoInfoAsync 在子异步流程中加载的凭据与提取的 wbi 不会自动回流父流程
             // （AsyncLocal 语义），这里在父流程内显式应用，确保后续 DownloadPagesAsync →
             // Parser.WbiSign 用上新密钥与本地凭据。
@@ -263,8 +263,7 @@ public partial class BBDownApiServer
             task.Title = vInfo.Title;
             task.Pic = vInfo.Pic;
             task.VideoPubTime = vInfo.PubTime;
-            await Program.DownloadPagesAsync(option, vInfo, encodingPriority, dfnPriority, firstEncoding, downloadDanmaku, downloadDanmakuFormats,
-                        input, lang, fetchedAid, delay, apiType, task, linkedCts.Token);
+            await Program.DownloadPagesAsync(option, vInfo, context with { AidOri = fetchedAid }, apiType, task, linkedCts.Token);
             task.SetStatus(DownloadTaskStatus.Succeeded);
         }
         catch (OperationCanceledException)

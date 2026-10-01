@@ -114,18 +114,21 @@ public class FavListFetcher : IFetcher
                 {
                     var ugcElem = m.TryGetPropertySafe("ugc");
                     var upperElem = m.TryGetPropertySafe("upper");
-                    Page p = new(index++,
-                        m.GetValueAsStringSafe("id"),
-                        ugcElem?.GetValueAsStringSafe("first_cid") ?? "",
-                        "", //epid
-                        m.GetValueAsStringSafe("title"),
-                        m.GetInt32Safe("duration"),
-                        "",
-                        m.GetInt64Safe("pubtime"),
-                        m.GetValueAsStringSafe("cover"),
-                        m.GetValueAsStringSafe("intro"),
-                        upperElem?.GetValueAsStringSafe("name") ?? "",
-                        upperElem?.GetValueAsStringSafe("mid") ?? "");
+                    Page p = new()
+                    {
+                        index = index++,
+                        aid = m.GetValueAsStringSafe("id"),
+                        cid = ugcElem?.GetValueAsStringSafe("first_cid") ?? "",
+                        epid = "",
+                        title = m.GetValueAsStringSafe("title"), //epid
+                        dur = m.GetInt32Safe("duration"),
+                        res = "",
+                        pubTime = m.GetInt64Safe("pubtime"),
+                        cover = m.GetValueAsStringSafe("cover"),
+                        desc = m.GetValueAsStringSafe("intro"),
+                        ownerName = upperElem?.GetValueAsStringSafe("name") ?? "",
+                        ownerMid = upperElem?.GetValueAsStringSafe("mid") ?? "",
+                    };
                     if (!seenPages.Add(p)) { index--; continue; }
                     pagesInfo.Add(p);
                 }

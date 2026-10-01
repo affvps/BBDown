@@ -106,13 +106,17 @@ public partial class IntlBangumiInfoFetcher : IFetcher
             if (page.TryGetProperty("long_title", out var lt) && lt.ValueKind != JsonValueKind.Null)
                 _title += " " + lt.ToString();
             _title = _title.Trim();
-            Page p = new(i++,
-                page.GetValueAsStringSafe("aid"),
-                page.GetValueAsStringSafe("cid"),
-                pageId,
-                _title,
-                0, res,
-                page.GetInt64Safe("pub_time"));
+            Page p = new()
+            {
+                index = i++,
+                aid = page.GetValueAsStringSafe("aid"),
+                cid = page.GetValueAsStringSafe("cid"),
+                epid = pageId,
+                title = _title,
+                dur = 0,
+                res = res,
+                pubTime = page.GetInt64Safe("pub_time"),
+            };
             if (p.epid == id) index = p.index.ToString();
             pagesInfo.Add(p);
         }

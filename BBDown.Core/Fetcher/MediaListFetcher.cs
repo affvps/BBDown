@@ -93,18 +93,21 @@ public class MediaListFetcher : IFetcher
                 var ownerMid = upperElem?.GetValueAsStringSafe("mid") ?? "";
                 foreach (var page in m.EnumerateArraySafe("pages"))
                 {
-                    Page p = new(index++,
-                        m.GetValueAsStringSafe("id"),
-                        page.GetValueAsStringSafe("id"),
-                        "", //epid
-                        pageCount == 1 ? m.GetValueAsStringSafe("title") : $"{m.GetValueAsStringSafe("title")}_P{page.GetValueAsStringSafe("page")}_{page.GetValueAsStringSafe("title")}", //单P使用外层标题 多P则拼接内层子标题
-                        page.GetInt32Safe("duration"),
-                        page.TryGetProperty("dimension", out var dim) && dim.TryGetProperty("width", out var w) && dim.TryGetProperty("height", out var h) ? $"{w}x{h}" : "",
-                        m.GetInt64Safe("pubtime"),
-                        m.GetValueAsStringSafe("cover"),
-                        desc,
-                        ownerName,
-                        ownerMid);
+                    Page p = new()
+                    {
+                        index = index++,
+                        aid = m.GetValueAsStringSafe("id"),
+                        cid = page.GetValueAsStringSafe("id"),
+                        epid = "",
+                        title = pageCount == 1 ? m.GetValueAsStringSafe("title") : $"{m.GetValueAsStringSafe("title")}_P{page.GetValueAsStringSafe("page")}_{page.GetValueAsStringSafe("title")}", //epid
+                        dur = page.GetInt32Safe("duration"), //单P使用外层标题 多P则拼接内层子标题
+                        res = page.TryGetProperty("dimension", out var dim) && dim.TryGetProperty("width", out var w) && dim.TryGetProperty("height", out var h) ? $"{w}x{h}" : "",
+                        pubTime = m.GetInt64Safe("pubtime"),
+                        cover = m.GetValueAsStringSafe("cover"),
+                        desc = desc,
+                        ownerName = ownerName,
+                        ownerMid = ownerMid,
+                    };
                     if (seenPages.Add(p)) pagesInfo.Add(p);
                     else index--;
                 }

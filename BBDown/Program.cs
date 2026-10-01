@@ -263,15 +263,13 @@ partial class Program
     internal static async Task DoWorkAsync(MyOption myOption, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var (encodingPriority, dfnPriority, firstEncoding, downloadDanmaku, downloadDanmakuFormats,
-            input, lang, aidOri, delay) = SetUpWork(myOption);
-        var (fetchedAid, vInfo, apiType, session) = await GetVideoInfoAsync(myOption, aidOri, input, cancellationToken);
+        var context = SetUpWork(myOption);
+        var (fetchedAid, vInfo, apiType, session) = await GetVideoInfoAsync(myOption, context.AidOri, context.Input, cancellationToken);
         // GetVideoInfoAsync 在子异步流程中加载的凭据与提取的 wbi 不会自动回流父流程
         // （AsyncLocal 语义），这里在父流程内显式应用，确保后续 DownloadPagesAsync →
         // Parser.WbiSign 用上新密钥与本地凭据。GetVideoInfoAsync 内部已对自身流程应用。
         if (session is not null) Core.Config.Apply(session);
-        await DownloadPagesAsync(myOption, vInfo, encodingPriority, dfnPriority, firstEncoding, downloadDanmaku, downloadDanmakuFormats,
-            input, lang, fetchedAid, delay, apiType, cancellationToken: cancellationToken);
+        await DownloadPagesAsync(myOption, vInfo, context with { AidOri = fetchedAid }, apiType, cancellationToken: cancellationToken);
     }
 
 }
