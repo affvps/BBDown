@@ -44,7 +44,13 @@ public static class LiveStreamUtil
         public LiveStreamWriteException(string message, Exception inner) : base(message, inner) { }
     }
 
-    /// <summary>把 B 站 qn 数值映射为可读画质名（g_qn_desc 常用档位）。</summary>
+    /// <summary>
+    /// 把 B 站 qn 数值映射为可读画质名（g_qn_desc 常用档位）。
+    /// ⚠️ **分支顺序即语义**：switch 表达式自上而下匹配，带 `>=` 的阈值臂必须按**降序**排列
+    /// 且整体排在精确值臂之前——把 `>= 20000` 挪到 `>= 30000` 之前会让杜比（30000+）被标成 4K；
+    /// 反之把 `400 => "蓝光"` 提到阈值臂之前不影响结果（400 < 15000，无交集），但会掩盖
+    /// "阈值优先"的意图。新增档位时插在对应的降序位置。
+    /// </summary>
     public static string QualityName(int qn) => qn switch
     {
         >= 30000 => "杜比",
