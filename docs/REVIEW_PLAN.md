@@ -20,14 +20,16 @@
 | E 韧性 Core | 6 | 6 | 0 |
 | F 测试 Infra | 12 | 12 | 0 |
 | G 测试结构 | 10 | 10 | 0 |
-| H 可读性 Infra | 13 | 8 | **5**（H4~H6、H8、H10；H1/H2/H3/H7/H9/H11/H12/H13 已完成） |
-| I 可读性 App/Core | 22 | 16 | **6**（I6、I7、I9、I10、I12、I16；I1~I5/I8/I11/I13~I15/I17~I22 已完成） |
+| H 可读性 Infra | 13 | 9 | **4**（H5、H6、H8、H10；H1~H4/H7/H9/H11/H12/H13 已完成） |
+| I 可读性 App/Core | 22 | 17 | **5**（I6、I9、I10、I12、I16；I1~I5/I7/I8/I11/I13~I15/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **77** | **13** |
+| **合计** | **90** | **79** | **11** |
 
 > **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 + 批 6 + 批 3a 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮）、H1 随批 6 落地（第 21 轮）、H2/H3 随批 3a 落地（第 22 轮），I 组已完成 8 → 13、H 组 4 → 7；剩余项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余按该计划 §6 批次序推进，下一批为批 3b：I5/I13）。
 
 > 回填前的历史快照为 `90 / 44 / 46`（2026-08）；本次补记的 21 项完成度分布为 F +6、G +6、B +1（B3）、H +3（H7/H11/H12/H13 中除 H11 外新补）、I +5（I8 与 I17~I20）。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 5b 后）**：H4 随批 5b 落地（PR #70，第 26 轮），H 组 8 → 9 / 剩余 5 → 4；同时回填 **I7**——第 19 轮已记录"批 1a（PR #60）验收 ✅"，但状态总览漏记，本轮一并修正（I 组 16 → 17 / 剩余 6 → 5）。合计由 **77/13 → 79/11**。剩余 11 项 = H5/H6/H8/H10（批 5c/2b/7）+ I6/I9/I10/I12/I16（批 7，其中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**）+ J1/J2（跟踪项）。
 
 ---
 
@@ -106,8 +108,8 @@
 | H1 | High | BBDownApiServer.cs 全文件 | God 类拆 ServeSecurityMiddleware / TaskRouteMapper / TaskFileStore / CallbackGuard；SetUpServer ~200 行 lambda 内联无法单测。⚠️ **第 12 轮勘误**：四个拆分文件在 git 全历史中从未存在（零提交记录），功能实际仍集中在本文件（现 1543 行）——本条记录失实，文件结构上 god 类未拆分；功能层面（中间件/持久化/回调防护）已实现并经审查通过。**✅ 2026-10-01 批 6 已按文件级切分落地**（PR #64：7 个 partial 文件 + DTO/源生成上下文迁出，见第 21 轮） |
 | H2 | High | BBDownMuxer.cs:64,174 | MuxAV 20 参 / MuxByMp4box 15 参改 MuxRequest 参数对象 |
 | H3 | High | BBDownDownloadUtil.cs:28 | RangeDownloadToTmpAsync 10 参 → RangeDownloadRequest + 拆两段 |
-| H4 | High | BBDownDownloadUtil.cs:227,611 | Core 170/200 行嵌套 6-7 层：预检决策方法 + DownloadClipWithRetryAsync；6 个"检查 .tmp/.aria2"块收敛 |
-| H5 | High | 多处 | 重复簇抽 6 个辅助方法（任务收尾四元组 ×4、IsLoopback 判定、SSRF 字面 IP ×2、DNS+逐地址校验 ×3、头块 ×3、权威大小复核 ×3、clip 路径推导 ×4） |
+| H4 | High | BBDownDownloadUtil.cs:227,611 | Core 170/200 行嵌套 6-7 层：预检决策方法 + DownloadClipWithRetryAsync；6 个"检查 .tmp/.aria2"块收敛。**✅ 2026-10-01 批 5b 已落地**（PR #70：`DownloadFileCoreAsync` 163 → 91 行、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层；"目标等长 → 权威总长复核" 3 处副本 → `VerifyExistingTargetAsync`；logger 30 → 28 / catch 22 = 22，见第 26 轮） |
+| H5 | High | 多处 | 重复簇抽 6 个辅助方法（任务收尾四元组 ×4、IsLoopback 判定、SSRF 字面 IP ×2、DNS+逐地址校验 ×3、头块 ×3、权威大小复核 ×3、clip 路径推导 ×4）。⚠️ **口径修正（第 26 轮）**："权威大小复核 ×3"已由批 5b 的 `VerifyExistingTargetAsync`（PR #70）消化，5c 开批前须实测重列 |
 | H6 | Medium | LiveStreamUtil.cs:75,222,286 | 异常消息文本契约改 LiveRoomClosedException 专用异常 |
 | H7 | Medium | 多处 | ✅ 死代码逐条删除（BBDownUtil.GetFiles、UrlResolver.MdRegex、GetAvIdAsync 无 token 重载、空 WriteLine ×2、NormalizeLockKey 上方孤立 doc 归位到 AcquireDownloadLock；CommandLineSplitter 保留——其位与为非短路是有意语义已加注释） |
 | H8 | Medium | 多处 | 误导性命名：ReadLinesThrottled、_savePathLock、MyOptionBindingResult<T>、QualityName 档位映射顺序、nowId |
@@ -125,7 +127,7 @@
 | I3 | High | BBDownUtil.cs:167 vs Parser.cs:680 | GetSign MD5 盐 ×2、appkey ×2、GetTimeStamp(bool bflag) ×2 集中 BiliApiKeys 常量 + 单份实现 |
 | I5 | Medium | Workflow.cs:15-16 起 | SetUpWork 10 元组 → DownloadContext record；4 层透传参数收敛 |
 | I6 | Medium | BBDownLoginUtil.cs:69-316 | LoginWEB/LoginTV 复制收敛 2 helper + QrPollCode 常量组（86038/86101/86090/86039） |
-| I7 | Medium | 6+ 处 | 异常过滤器 or-链逐字重复抽 IsRetryableDownloadException(Exception) |
+| I7 | Medium | 6+ 处 | 异常过滤器 or-链逐字重复抽 IsRetryableDownloadException(Exception)。**✅ 2026-10-01 批 1a 已落地**（PR #60：改为 `ExceptionPolicies` 9 条具名策略 + 生产 64 处站点，第 19 轮已验收；本行属状态总览漏记，第 26 轮回填。统计口径疑点 94/102 处见第 19 轮 Info ④，仍挂账） |
 | I8 | Medium | 4 个命令 | Task.Run(...).GetAwaiter().GetResult() async-over-sync 改 AsyncCommand + ExitCodeFor |
 | I9 | Medium | SubCommand.cs:49-81 + WatchLaterCommand.cs:13-45 | 两个 Settings 类复制 8 个下载选项 + 两份 BuildOption 抽公共基类 |
 | I10 | Medium | BBDownUtil.cs 全文件 | god 工具类按职责拆分（更新检查/文件/签名/TV 指纹/章节/WBI/SESSDATA） |
@@ -602,3 +604,23 @@
 | 改名 | ✅ `_savePathLock` → `_taskStateLock`（并补"保护 SavePaths/Status/IsSuccessful/Aid"注释）；`MyOptionBindingResult<T>` → `RequestBodyBindingResult<T>`；`nowId` → `inputTrackId` |
 | 验证 | ✅ build 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0（改名由编译器全程护航） |
 | 余项 | ⏳ H8：`ReadLinesThrottled` 改名、`QualityName` 档位映射注释；H10：`SubscriptionStore.ReadHistoryLocked()` 单入口 |
+
+---
+
+## 第 26 轮：REFACTOR_PLAN 批 5b 落地（H4 下载工具类深层嵌套，2026-10-01）
+
+> 批 5 拆为 **5a（I1）/ 5b（H4）/ 5c（H5）**。本轮完成 5b：`BBDownDownloadUtil` 两处深层嵌套拆解 + 检查块收敛（PR #70，合并提交 `7d648cd`）。**无新发现登记**；一处口径修正（H5 的"权威大小复核 ×3"已被本轮消化）与一处状态回填（I7 已在批 1a 落地但总览漏记）。用户可见行为零变化，故不改 CHANGELOG / README / wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| H4-a 预检决策 | ✅ `DownloadFileCoreAsync` **163 → 91 行**：目标/临时文件预检的四段决策树（目标已完整 → 权威总长复核／临时文件完整且身份一致 → 直接移动／部分临时文件续传 + If-Range／临时文件越界删除）收口为 `PrepareSingleThreadTargetAsync`，决策以 `SingleThreadPrecheck(TmpName, FileSize, ResumeIfRange, AlreadyComplete)` 返回——**权威总长修正随决策返回**，调用方不再持有可变的探测值 |
+| H4-b 分片重试 | ✅ `MultiThreadDownloadCoreAsync` **196 → 152 行、嵌套 7 → 4 层**：分片级重试/退避/五路 catch 归一化 → `DownloadClipWithRetryAsync`（50 行），以返回值代替闭包变量——`null` = 分片完成，非 null = 权威总长（尺寸错位 → 调用方按权威总长整轨重切分） |
+| H4-c 检查块收敛 | ✅ 「目标已存在且长度匹配 → GET 权威总长复核 → 不符则删除重下」的 **3 处副本**（单线程 Core / 多线程 Core / 多线程 Merge 外层）→ `VerifyExistingTargetAsync`（返回 `(Trustworthy, KnownSize)`）；各调用点保留自身差异（清分片 / 清 `.merging` / 返回 `AlreadyComplete`） |
+| 机械等价对账 | ✅ 与 `master` 版逐项比对多重集：`catch` 子句 **22 = 22（零差异）**；`Logger` 调用 **30 → 28**（唯一差异即收敛掉的那条重复，其余 28 条逐字未变）；显著代码行 855 → 877 的增删逐条一一对应（`return;`×3 → 决策返回×2 + `return ex.ActualTotal`×1；`break;`×1 → `return null;`×1；复核 5 行 ×3 → ×1；`{/}` +3/+3 = 3 个新方法体；`RangeDownloadRequest(..., _)` → `(..., token)`、`Task.Delay(backoffMs, _)` → `(backoffMs, token)` 同值替换），无丢失逻辑 |
+| 语义等价差异 | ✅ 资源身份字符串改为调用点算一次后传参（原为两处各算一次），`"R"` 字面量 5 → 4（纯表达式，值相同）；三个新方法均 `private`（不新增可测 API 面） |
+| 安全网 | ✅ 27 例 `DownloadPipelineTests`（HTTP 假服务器：逐字节一致 / HEAD 与真实长度不符的尺寸修复 / 陈旧文件删除重下 / 请求计数 HEAD=1 GET=0 Range=1 / 分片清理）+ `CanResumeFrom_*` 4 例；无新增用例——三项均逐字搬运（沿用 5a 先例） |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 口径修正 | ⚠️ H5 登记为 6 簇，其中"**权威大小复核 ×3**"已由本轮 H4-c 消化 → 5c 开批前须实测重列（已在第 6 轮 H5 行标注） |
+| 状态回填 | ⚠️ **I7**（异常过滤器收口）第 19 轮已记录"批 1a 验收 ✅"（PR #60：`ExceptionPolicies` 9 条策略 + 生产 64 处站点），但状态总览仍列其为剩余项——本轮回填（I 组 16/6 → 17/5，合计 77/13 → 79/11）；1a 的"94/102 处"口径疑点仍按第 19 轮 Info ④ 挂账 |
+| Info 级观察（不登记 RF） | ① `VerifyExistingTargetAsync` 的"复核失败/未知总长一律退回纯长度跳过"是刻意保守（宁可重下不可误删），三处调用点**跳过后的副作用各不相同**（清分片 / 清合并临时文件 / 直接返回决策），故只收敛复核本身而不合并调用点；② 主方法剩余 91/152 行中约 40 行是重试/catch 样板，进一步拆解需引入"重试策略"抽象，收益低于风险，暂不排期（同 5a 观察②） |
