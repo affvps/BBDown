@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）、批 5c 增量二（H5 serve 侧四簇，PR #74）已完成并验收——**批 5（I1/H4/H5）全部收口**。**批 2b-1（H8 余 2 项，PR #76）与批 2b-2（H10 历史读取单入口，PR #78）已完成并验收**——批 2（H8/H9/H10）全部收口。**下一批为批 7**（H6 `LiveRoomClosedException`、I6 登录去重、I9 Settings 基类、I12 `UrlResolver` 拆分）。剩余 H 组 1 项（H6）、I 组 5 项（I6/I9/I10/I12/I16，其中 I10 已定案不做）。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）、批 5c 增量二（H5 serve 侧四簇，PR #74）已完成并验收——**批 5（I1/H4/H5）全部收口**。**批 2b-1（H8 余 2 项，PR #76）与批 2b-2（H10 历史读取单入口，PR #78）已完成并验收**——批 2（H8/H9/H10）全部收口。**批 7（H6 `LiveRoomClosedException` / I6 登录去重 / I9 Settings 基类 / I12 `UrlResolver` 拆分）已完成并验收（PR #80）——H 组清零，I 组仅剩 I16（I10 已定案不做），本计划的批次序至此执行完毕**（I16 未排期，见 §6 末）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -53,9 +53,12 @@
 | **H3 补充**（2026-10-01） | "`RangeDownloadToTmpAsync`（10 参），**4 处调用**" | ✅ 10 参确认；调用点实测 **2 处**（`BBDownDownloadUtil.cs:481`/`:816`），其余命中均为注释 | 范围 -2；无兼容重载需求 |
 | **H2 补充**（2026-10-01） | "`MuxAV` 20 参 / `MuxByMp4box` 15 参，仓内 13 处调用点" | ✅ `MuxAV` **20 参**确认；`MuxByMp4box` 实测 **16 参**；`MuxAV` 调用点 **13 处**中 12 处在测试（经兼容重载，零改动），1 处生产（`Download.cs`）已迁到参数对象 | 参数对象 + 兼容重载按计划落地，见 §6 批 3a |
 | **H9 补充**（2026-10-01） | "剩余 6 处未具名魔法数" | 实测 **约 15 处 / 5 文件**：HTTPUtil 池超时 7 处 + 回调客户端 1 处 + serve 关停排空 1 处 + 直播头阶段 1 处 + 读取缓冲 1 处 + 退避基数/上限 2 处 + 完整性阈值 1 处 | 范围扩大但同质：按文件各加具名常量（`DefaultClientTimeout` / `CallbackClientTimeout` / `ServeShutdownDrainTimeout` / `HeaderStageTimeout` / `BlockSizeBytes` / `ReconnectBackoffBaseMs`·`CapMs` / `MinCompleteStreamRatio`） |
-| **I1 补充**（2026-10-01） | "\`DownloadPageAsync\` ~520 行；弹幕块 ~55 行重复 / CoverOnly 分支 / 已有产物跳过" | 实测 **182 行**（批 3b 后）；登记所述三块**已在早前批次拆入** \`DownloadPageExecutor\`（\`DownloadPageExecution.cs:84-111\`：弹幕 → CoverOnly → 跳过已有产物）与 \`DownloadPageAssets\`，主方法内已无这些块 | **本批只拆剩余两块**：执行上下文装配（34 行）→ \`BuildPageExecutionContext\`、解析失败诊断（24 行）→ \`ReportNoTrackFailure\`；主方法 **182 → 141 行** |
+| **I1 补充**（2026-10-01） | "`DownloadPageAsync` ~520 行；弹幕块 ~55 行重复 / CoverOnly 分支 / 已有产物跳过" | 实测 **182 行**（批 3b 后）；登记所述三块**已在早前批次拆入** \`DownloadPageExecutor\`（\`DownloadPageExecution.cs:84-111\`：弹幕 → CoverOnly → 跳过已有产物）与 \`DownloadPageAssets\`，主方法内已无这些块 | **本批只拆剩余两块**：执行上下文装配（34 行）→ \`BuildPageExecutionContext\`、解析失败诊断（24 行）→ \`ReportNoTrackFailure\`；主方法 **182 → 141 行** |
 | **I5 补充**（2026-10-01） | "`SetUpWork` 10 元组" | 实测 **9 元组**；透传链 **4 层**：`SetUpWork` → `DownloadPagesAsync`（**11 参**）→ `DownloadPageAsync`（**15 参**）→ 各阶段 | 三层一并收敛：`DownloadContext`（9 字段）+`DownloadPagesAsync` 4 参+`DownloadPageAsync(PageDownloadRequest)` |
 | **I13 补充**（2026-10-01） | "`Page` 5 个阶梯构造器（8/9/10/12 参）；`EntityTests` 仅 3 例" | ✅ 5 个构造器 = 4 个阶梯 + 1 个拷贝构造；调用点实测 **11 处**（8 生产 + 3 测试），其中 **2 处**用拷贝构造（保留）；`EntityTests` 3 → **6 例** | 删 4 阶梯 + 无参构造；11 处全改初始化器（`required` 由编译器强制） |
+| **I6 补充**（2026-10-01） | "`LoginWEB`/`LoginTV` 复制 → 2 helper + `QrPollCode` 常量组" | ✅ 实测两处逐字复制四段：QR 四步（生成/落盘/降级/打印）×2、owner-only 凭据写入 ×2、轮询码 4 个字面量（WEB int / TV string）×2 | 收敛后 Logger 29 → 25、catch 8 → 7（减少量全是被收敛的重复），**日志文案集合 23 = 23 零差异** |
+| **I9 补充**（2026-10-01） | "两个 Settings 类（9/11 个选项）复制 8 个下载选项 + 两份 `BuildOption` → 公共基类" | ⚠️ 实测 Spectre 分支注册 `AddBranch<SubSettings>` → `AddCommand<TCommand>` 把命令约束为 `ICommandLimiter<SubSettings>`（对 Settings **协变**）：`sub check` 的 Settings 必须是 `SubSettings` 的派生类型；"选项放进 `SubSettings`"会让 `sub add/list/remove` 多出 8 个无效选项（CLI 面变化），"显式泛型注册 `AddCommand<TCommand, TSettings>`"在该版本 Spectre 不存在（实测编译报"需要 1 个类型参数"） | **改口径**：基类取中间层 `DownloadOptionSettings : SubSettings`（`abstract`，不进 `SettingsTypeCatalog`/`CliOptionIndex` 清单，另在 `Program.Main` 补 AOT root）；`sub add/list/remove` 仍直接派生 `SubSettings`，CLI 面不变；唯一用户可见差异是 `watchlater --help` 的 `--limit` 位置（首→末） |
+| **I12 补充**（2026-10-01） | "`ResolveAsync` 200 行 13 分支" | ✅ 实测 **208 行**（`:15-223`）：http 分支 13 个判定出口 + 裸 ID 分支 7 个出口；`[GeneratedRegex]` 8 个、正则调用 24 处 | 按"先补 http 分支夹具"执行：**12 例本地夹具先行落地**（拆分前 54/54 绿），拆分后再补 10 例直测覆盖 av/bv 分支 |
 | **H1 补充**（2026-10-01） | "God 类 1683 行 / 52 方法" | 实测 **1683 行 / 72 个成员块**（字段+方法+类型），类确为 `partial`；文件尾部另堆着 **6 个顶层类型**（含 2 个 AOT 源生成上下文） | **改为文件级切分**（7 文件，成员逐字搬运）：不新建 `ServeSecurityMiddleware` 等 4 个独立类型——这些成员共享同一份实例状态（任务列表 / 锁 / 闸门），外置状态属行为风险改动，超出"零风险按成员切分"范围 |
 | **ApiMode 偏差**（2026-10-01） | "`PickDataRoot`/`PickTrackBaseUrl` 纯函数 + `ApiMode` 枚举" | 三 bool（tv/intl/app）的组合语义**无法用单一枚举等价表达**：`tvApi && appApi` 同时为真时，两处 `!tvApi` 门控（杜比/Hi-Res 跳过）与"归一化优先级（Intl > App > Tv）"不等价；且 `Workflow.cs:159` 的 `apiType` 用的是**另一套**优先级（TV > APP > INTL > WEB） | **不引入 `ApiMode`**：改为私有 `PlayRequest` 收敛长参数，避免在可达组合上改变行为；两处优先级口径不一致记为本批 Info 观察 |
 
@@ -166,10 +169,12 @@
 
 ### 批 7 — 剩余中项收尾（`refactor/remaining-structure`，R2）
 
-- **H6**：`LiveStreamUtil` 异常消息文本契约 → `LiveRoomClosedException` 专用异常（`LiveStreamUtilTests` 24 例兜底）
-- **I6**：`LoginWEB`（:72，133 行）/ `LoginTV`（:205，128 行）复制 → 2 helper + `QrPollCode` 常量组
-- **I9**：`WatchLaterSettings`（9 个 `[CommandOption]`）与 `SubCheckSettings`（11 个）复制 → 公共基类；`SubCommand.cs:358` / `WatchLaterCommand.cs:164` 两份 `BuildOption` 收口
-- **I12**：`UrlResolver.ResolveAsync` ≈210 行 13 分支 → `ResolveHttpUrl` / `ResolveBareId`（**若要动，先补 http 分支夹具**）
+> ✅ **已完成**（PR #80，合并提交 `eb0fbb9`）；I9 的层级口径修正（Spectre 分支约束）见 §1。
+
+- **H6** ✅：`LiveStreamUtil` 的"下播"判定由消息文本（`InvalidOperationException` + `Contains("当前未在直播")`，抛出点/在播判定/录制循环三处各自匹配）改为 `LiveRoomClosedException` 专用异常（继承 `InvalidOperationException`，既有瞬态过滤器仍捕获，仅过滤器内改走"正常结束"）；+2 用例并**变异验证**（换回 `InvalidOperationException` 则两例失败）
+- **I6** ✅：`LoginWEB`/`LoginTV` 复制 → `RenderQrCodeAsync`（生成→落盘→失败降级→打印）+ `WriteOwnerOnlyFileAsync`（owner-only 权限写凭据，含 Unix 两步窗口）+ `QrPollCode` 常量组（86038/86101/86090/86039；WEB int / TV string，注明不可互换）
+- **I9** ✅：8 个选项与两份 `BuildOption` 收敛为 `DownloadOptionSettings`（抽象、`: SubSettings`）+ 唯一 `ToMyOption(url, workDir)`；+5 用例（声明处唯一 / 选项名与描述硬编码快照 / `sub add/list/remove` 不得继承 / 真实 `CommandApp` 分支绑定 / 两命令映射一致），**三次变异验证**分别触发 2/1/1 例失败
+- **I12** ✅：`ResolveAsync` 208 行 → 入口只做分派 + `ResolveHttpUrlAsync` + `ResolveBareIdAsync`（两个新方法 `internal`）；累加变量 `avid` → `target`；**先补 12 例 http 分支夹具**（拆分前先跑绿），拆分后补 10 例直测（av/bv 分支经 `FixAvidAsync` 会触网，只能直测内部方法）
 
 ---
 
@@ -221,9 +226,11 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 5c-2（H5 serve 侧：IsLoopback / SSRF 字面 IP / DNS 逐地址校验 / 任务收尾）— PR #74
   → ✅ 批 2b-1（H8 余 2 项：ReadLinesThrottled 改名 + QualityName 顺序文档）— PR #76
   → ✅ 批 2b-2（H10：SubscriptionStore 历史读取单入口）— PR #78
-  → 批 7（H6 / I6 / I9 / I12）  ← 下一批
+  → ✅ 批 7（H6 下播异常 / I6 登录去重 / I9 选项基类 / I12 UrlResolver 拆分）— PR #80
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
+
+**批 7 之后**：本计划的 7 批全部执行完毕。I 组仅剩 **I16**（`BBDownConfigParser` 手工扫参收敛）——未纳入任何批次，建议单独评估：别名表已由 `CliOptionIndex` 收口，剩余扫参循环属可读性收益，可与 J1/J2 跟踪项一并决定"另开小批"或"维持现状"。
 
 | 批次 | 分支 | PR | 状态 |
 |:---:|---|---|---|
@@ -240,8 +247,8 @@ dotnet format BBDown.sln --verify-no-changes
 | 2a | `refactor/naming-and-constants` | #68 | ✅ 已完成（2026-10-01；8 个具名常量 / 约 15 处内联值） |
 | 2b-1 | `refactor/naming-h10` | #69 / #76 | ✅ 已完成（2026-10-01；**H8 5/5 项收口**——3 项随 #69（`_savePathLock`→`_taskStateLock`、`MyOptionBindingResult`→`RequestBodyBindingResult`、`nowId`→`inputTrackId`），余 2 项随 #76（`ReadLinesThrottled`→`ReadLinesDedupedAndCapped`、`QualityName` 补分支顺序文档）） |
 | 2b-2 | `refactor/subscription-history` | #78 | ✅ 已完成（2026-10-01；`ReadHistoryLockedAsync` 单入口统一损坏语义，顺带修复写路径 IO 失败裸奔 + 校验范围分歧；+3 变异验证用例，测试 789 → 792） |
-| 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
-| 7 | `refactor/remaining-structure` | — | ⏳ 待开工（**下一批**：H6/I6/I9/I12） |
+| 2 | `refactor/naming-and-constants` | #68 / #69 / #76 / #78 | ✅ 已完成（2026-10-01；按 2a/2b-1/2b-2 拆分落地，见上四行） |
+| 7 | `refactor/remaining-structure` | #80 | ✅ 已完成（2026-10-01；H6 专用异常 + I6 登录去重 + I9 选项基类 + I12 UrlResolver 拆分；测试 792 → 821，CI 9 项全绿） |
 
 #### 已完成批次记录
 
@@ -360,11 +367,24 @@ dotnet format BBDown.sln --verify-no-changes
 | 验证 | ✅ build 0 警告 0 错误；单测 **792/792**；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿 |
 | Info 观察 | `LoadCoreAsync`（订阅**清单**文件）仍容忍字面量 `null`（当"没有订阅"）——与历史文件刻意不同：历史当空 = "全部内容被当新增重下"，清单当空只是"没有订阅"；若要对齐需另开评估 |
 
+**批 7（H6/I6/I9/I12）· PR #80**（合并提交 `eb0fbb9`）：
+
+| 项 | 落地内容 | 安全网 / 证据 |
+|---|---|---|
+| H6 | `LiveRoomClosedException`（`: InvalidOperationException`）：抛出点 + `IsRoomLiveAsync` + 录制循环三处的消息文本匹配改为类型判定 | +2 用例（精确类型 / 不重试立即 `NoData`），**变异验证**：换回 `InvalidOperationException` 两例失败 |
+| I6 | `RenderQrCodeAsync` + `WriteOwnerOnlyFileAsync` + `QrPollCode`（WEB int / TV string） | Logger 29 → 25、catch 8 → 7（减少量全为重复收敛）；**日志文案集合 23 = 23 零差异**；无新增用例（纯搬运，与批 5a/5b 同口径） |
+| I9 | `DownloadOptionSettings : SubSettings`（`abstract`，8 选项 + `ToMyOption`）；两句 `BuildOption` 删除 | +5 用例（含真实 `CommandApp` 分支绑定），**三次变异验证**（派生类复制副本 / 改基类描述 / 选项放进 `SubSettings` → 2/1/1 例失败）；`--help` 实测：`--help`/`sub --help`/`sub check --help` 逐字节不变，`sub add/list --help` 只列自身选项 |
+| I12 | 入口分派 + `ResolveHttpUrlAsync` + `ResolveBareIdAsync`（`internal`）；`avid` → `target` | 12 例 http 分支夹具**先行**（拆分前 54/54 绿）+ 拆分后 10 例直测；字面量 120 → 123（+3 全为 XML 文档引用）、catch/Logger/throw/正则计数零差异、显著行差异逐条对应 |
+| 机械等价对账 | `[CommandOption]` 全仓 111 → 103；各文件 Logger/catch 除上述两处收敛外零差异 | — |
+| 用户可见差异 | **仅一处**：`watchlater --help` 的 `--limit` 由首位到末位（Spectre 先列基类属性），已记 CHANGELOG | — |
+| 验证 | ✅ build 0 警告 0 错误；单测 **792 → 821**（+29）；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿（含 Native AOT smoke 与 Docker smoke） | — |
+| Info 观察 | ① I16（配置解析层扫参收敛）是本计划执行完毕后 I 组唯一剩余项，未排期；② `DownloadOptionSettings` 之所以是 `SubSettings` 的派生类型纯属 Spectre 分支约束（§1 I9 补充），若将来 `sub` 分支结构调整（例如取消分支改为独立命令），可重新评估把它移出该继承链；③ I12 的 av/bv 分支只能直测 `ResolveHttpUrlAsync`（公开入口会经 `FixAvidAsync` 发一次真实请求），若将来给 `FixAvidAsync` 加可注入缝，可把这两例并回公开入口用例 | — |
+
 ---
 
 ## 7. 与其它计划的关系
 
-- **`REVIEW_PLAN.md`**：本计划消费其状态总览中 H/I 的剩余项；每批完成后回填该表（H 13→4/9、I 22→8/14，收口后应为 H 13/0、I 22/0）。
+- **`REVIEW_PLAN.md`**：本计划消费其状态总览中 H/I 的剩余项；每批完成后回填该表（起点 H 4/9、I 8/14）。**批 7 收口后为 H 13/0、I 20/2**——I 组剩余 I10（§5 定案不做）与 I16（未排期），J1/J2 为跟踪项。
 - **`OPTIMIZATION_PLAN.md`**：存在重叠项，评估时合并口径——`P0-1 ≈ I1/I2/I10`（已部分消纳）、`P1-1 ≈ H5`、`P1-2 ≈ I2`、`P1-3 ≈ J1`。本计划执行时若与 P 项重合，以本计划的批次与验收为准，并在 OPTIMIZATION_PLAN 对应条目补注。
 - **`MAINTENANCE_PLAN.md`**：已结项（第 8 轮验收）；其产出的 `ParserFixtureTests` + `FakeBilibiliApiServer` 正是批 4 的安全网。
 - **`REVIEW_FINDINGS.md`**：本计划执行中产生的新发现按 RF 编号登记；已定案的"不做项"（§5）登记为 ⭕ 维持现状。

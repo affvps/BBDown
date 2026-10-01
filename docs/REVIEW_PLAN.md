@@ -20,10 +20,10 @@
 | E 韧性 Core | 6 | 6 | 0 |
 | F 测试 Infra | 12 | 12 | 0 |
 | G 测试结构 | 10 | 10 | 0 |
-| H 可读性 Infra | 13 | 12 | **1**（H6；H1~H5/H7~H13 已完成） |
-| I 可读性 App/Core | 22 | 17 | **5**（I6、I9、I10、I12、I16；I1~I5/I7/I8/I11/I13~I15/I17~I22 已完成） |
+| H 可读性 Infra | 13 | 13 | 0（H6 随批 7 收口，**H 组清零**） |
+| I 可读性 App/Core | 22 | 20 | **2**（I10 定案不做、I16 未排期；I1~I9/I11~I15/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **82** | **8** |
+| **合计** | **90** | **86** | **4**（I10/I16 + J1/J2） |
 
 > **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 + 批 6 + 批 3a 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮）、H1 随批 6 落地（第 21 轮）、H2/H3 随批 3a 落地（第 22 轮），I 组已完成 8 → 13、H 组 4 → 7；剩余项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余按该计划 §6 批次序推进，下一批为批 3b：I5/I13）。
 
@@ -36,6 +36,8 @@
 > **回填（2026-10-01，REFACTOR_PLAN 批 2b-1 后）**：H8 随 2b-1（PR #76）收口（第 29 轮），H 组 10 → 11 / 剩余 3 → 2；合计 **80/10 → 81/9**。剩余 9 项 = H6/H10（批 2b-2 与批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。
 
 > **回填（2026-10-01，REFACTOR_PLAN 批 2b-2 后）**：H10 随 2b-2（PR #78）收口（第 30 轮），H 组 11 → 12 / 剩余 2 → 1；合计 **81/9 → 82/8**。剩余 8 项 = **H6**（批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。**批 2（H8/H9/H10）至此全部收口**，H 组仅剩 H6。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 7 后）**：H6/I6/I9/I12 随批 7（PR #80，合并提交 `eb0fbb9`）收口（第 31 轮），H 组 12 → 13 / 剩余 1 → **0**，I 组 17 → 20 / 剩余 5 → 2；合计 **82/8 → 86/4**。剩余 4 项 = **I10**（`REFACTOR_PLAN` §5 定案不做）+ **I16**（配置解析层扫参收敛，未排期）+ J1/J2（跟踪项）。**至此 `REFACTOR_PLAN` 的 7 批全部执行完毕，H/I 组不再有已排期的结构性改动。**
 
 ---
 
@@ -116,7 +118,7 @@
 | H3 | High | BBDownDownloadUtil.cs:28 | RangeDownloadToTmpAsync 10 参 → RangeDownloadRequest + 拆两段 |
 | H4 | High | BBDownDownloadUtil.cs:227,611 | Core 170/200 行嵌套 6-7 层：预检决策方法 + DownloadClipWithRetryAsync；6 个"检查 .tmp/.aria2"块收敛。**✅ 2026-10-01 批 5b 已落地**（PR #70：`DownloadFileCoreAsync` 163 → 91 行、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层；"目标等长 → 权威总长复核" 3 处副本 → `VerifyExistingTargetAsync`；logger 30 → 28 / catch 22 = 22，见第 26 轮） |
 | H5 | High | 多处 | 重复簇抽 6 个辅助方法（任务收尾四元组 ×4、IsLoopback 判定、SSRF 字面 IP ×2、DNS+逐地址校验 ×3、头块 ×3、权威大小复核 ×3、clip 路径推导 ×4）。⚠️ **口径修正（第 26 轮）**："权威大小复核 ×3"已由批 5b 的 `VerifyExistingTargetAsync`（PR #70）消化。**🔶 5c-1 已落地（第 27 轮，PR #72）**：clip 路径推导 ×4 → `ClipPathFor`、头块 ×3 → `ApplyMediaRequestHeaders`；**✅ 5c-2 已落地（第 28 轮，PR #74）**：IsLoopback 判定 4 份实现 → `IsLoopbackHost` 唯一实现、SSRF 字面 IP ×2 + 归一化 ×5 → `TryParseLiteralIp`/`NormalizeMappedIpv4`（复用 `IsUnsafeLiteralIpAddress`）、DNS 逐地址校验 ×2 → `ResolveCallbackAddressesAsync` + `CallbackHostVerdict`、任务收尾四元组 ×4 → `FinishTask`——**H5 7 簇全部收口** |
-| H6 | Medium | LiveStreamUtil.cs:75,222,286 | 异常消息文本契约改 LiveRoomClosedException 专用异常 |
+| H6 | Medium | LiveStreamUtil.cs:75,222,286 | **✅ 2026-10-01 批 7 已落地**（PR #80：`LiveRoomClosedException` 专用异常取代三处消息文本匹配；+2 变异验证用例，见第 31 轮） |
 | H7 | Medium | 多处 | ✅ 死代码逐条删除（BBDownUtil.GetFiles、UrlResolver.MdRegex、GetAvIdAsync 无 token 重载、空 WriteLine ×2、NormalizeLockKey 上方孤立 doc 归位到 AcquireDownloadLock；CommandLineSplitter 保留——其位与为非短路是有意语义已加注释） |
 | H8 | Medium | 多处 | 误导性命名：ReadLinesThrottled、_savePathLock、MyOptionBindingResult<T>、QualityName 档位映射顺序、nowId。**✅ 2026-10-01 全部 5 项收口**（3 项随 PR #69；余 2 项随批 2b-1/PR #76：`ReadLinesThrottled` → `ReadLinesDedupedAndCapped`、`QualityName` 补分支顺序文档，见第 29 轮） |
 | H9 | Medium | 多处 | 魔法数字集中常量（关停 30s/回调 2min/1048576/复核 15s/分片并发 8/退避 3000*2^n/完整性 0.8/FLV 常量 13 个） |
@@ -132,13 +134,13 @@
 | I2 | High | Parser.cs:106-540 | ExtractTracksAsync ~430 行：PickDataRoot/PickTrackBaseUrl 纯函数 + ApiMode 枚举；数据节点定位 3 份漂移变体收敛 |
 | I3 | High | BBDownUtil.cs:167 vs Parser.cs:680 | GetSign MD5 盐 ×2、appkey ×2、GetTimeStamp(bool bflag) ×2 集中 BiliApiKeys 常量 + 单份实现 |
 | I5 | Medium | Workflow.cs:15-16 起 | SetUpWork 10 元组 → DownloadContext record；4 层透传参数收敛 |
-| I6 | Medium | BBDownLoginUtil.cs:69-316 | LoginWEB/LoginTV 复制收敛 2 helper + QrPollCode 常量组（86038/86101/86090/86039） |
+| I6 | Medium | BBDownLoginUtil.cs:69-316 | **✅ 2026-10-01 批 7 已落地**（PR #80：`RenderQrCodeAsync`/`WriteOwnerOnlyFileAsync` + `QrPollCode`；Logger 29 → 25、catch 8 → 7，日志文案集合零差异） |
 | I7 | Medium | 6+ 处 | 异常过滤器 or-链逐字重复抽 IsRetryableDownloadException(Exception)。**✅ 2026-10-01 批 1a 已落地**（PR #60：改为 `ExceptionPolicies` 9 条具名策略 + 生产 64 处站点，第 19 轮已验收；本行属状态总览漏记，第 26 轮回填。统计口径疑点 94/102 处见第 19 轮 Info ④，仍挂账） |
 | I8 | Medium | 4 个命令 | Task.Run(...).GetAwaiter().GetResult() async-over-sync 改 AsyncCommand + ExitCodeFor |
-| I9 | Medium | SubCommand.cs:49-81 + WatchLaterCommand.cs:13-45 | 两个 Settings 类复制 8 个下载选项 + 两份 BuildOption 抽公共基类 |
+| I9 | Medium | SubCommand.cs:49-81 + WatchLaterCommand.cs:13-45 | **✅ 2026-10-01 批 7 已落地**（PR #80：`DownloadOptionSettings` 抽象基类 + `ToMyOption`；实测 Spectre 分支约束后取 `SubSettings` 中间层，唯一用户可见差异为 `watchlater --help` 的 `--limit` 位置） |
 | I10 | Medium | BBDownUtil.cs 全文件 | god 工具类按职责拆分（更新检查/文件/签名/TV 指纹/章节/WBI/SESSDATA） |
 | I11 | Medium | Config.cs:61-84 | 门面双命名体系统一 PascalCase |
-| I12 | Medium | UrlResolver.cs:15-180 | ResolveAsync 200 行 13 分支拆 ResolveHttpUrl/ResolveBareId + 改名 target |
+| I12 | Medium | UrlResolver.cs:15-180 | **✅ 2026-10-01 批 7 已落地**（PR #80：实测 208 行 → 入口分派 + `ResolveHttpUrlAsync`/`ResolveBareIdAsync`，`avid` → `target`；12 例分支夹具先行） |
 | I13 | Medium | Entity.cs:37-93 | Page 阶梯构造器（8/9/10/12 参）改无参构造 + 初始化器 + 属性 |
 | I14 | Medium | AppHelper.cs:448 vs Entity.cs:203 | 同名 AudioMaterial 冲突：DTO 改名 AppRoleAudioDto |
 | I15 | Medium | Display.cs | XML 文档挂错方法归位；.Replace("[] ", "") hack ×4；带宽估算公式 ×6 抽 EstimatedBytes；bool video 参数 |
@@ -701,3 +703,20 @@
 | 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **792/792**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
 | 状态计数 | H **11/2 → 12/1**（H10 ✅），合计 **81/9 → 82/8**；H 组仅剩 H6 |
 | Info 级观察（不登记 RF） | ① `LoadCoreAsync`（订阅**清单**文件）仍用 `?? []` 容忍字面量 `null`，与历史文件刻意不同——历史当空 = "全部内容被当新增重下"，清单当空只是"没有订阅"；差异已写入计划与 PR 描述，若完全对齐需另开评估；② 本轮是批 2 唯一**净增测试**的增量（789 → 792）："统一语义"类改动应以测试而非多重集对账为主要证据；③ 命名按 async 约定取 `ReadHistoryLockedAsync`（登记为 `ReadHistoryLocked()`），偏差已在计划 §3 注明 |
+
+---
+
+## 第 31 轮：REFACTOR_PLAN 批 7 落地（H6/I6/I9/I12，2026-10-01）
+
+> 批 7 是本计划（`REFACTOR_PLAN.md`）的最后一批：PR #80（合并提交 `eb0fbb9`）落地后 **H 组清零、I 组仅剩 I16**。四项均为 R2 结构调整，逐项配机械等价对账；一处实测偏差（I9 的 Spectre 分支约束）已记入该计划 §1。**无新发现登记**；唯一用户可见差异（`watchlater --help` 的 `--limit` 位置）已记 CHANGELOG。
+
+| 项 | 结果 |
+|---|---|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **792/792**；`dotnet format --verify-no-changes` exit 0 |
+| H6 | ✅ "下播"判定由异常**消息文本**（抛出点/`IsRoomLiveAsync`/录制循环三处各自 `Contains("当前未在直播")`）改为 `LiveRoomClosedException`（继承 `InvalidOperationException`，瞬态过滤器仍捕获、仅改走"正常结束"）；+2 用例（精确类型 + 不重试立即 `NoData`），**变异验证**：换回 `InvalidOperationException` 两例失败；`LiveStreamUtil.cs` Logger 14 = 14、catch 19 = 19 |
+| I6 | ✅ `LoginWEB`/`LoginTV` 四处逐字复制 → `RenderQrCodeAsync` + `WriteOwnerOnlyFileAsync` + `QrPollCode`（86038/86101/86090/86039，WEB int / TV string 并注明不可互换）；Logger 29 → 25、catch 8 → 7（减少量全为重复收敛），**日志文案集合 23 = 23 零差异**；纯搬运故不新增用例（同批 5a/5b 口径） |
+| I9 | ✅ 8 个下载选项 + 两份 `BuildOption` → `DownloadOptionSettings`（`abstract`、`: SubSettings`）+ 唯一 `ToMyOption(url, workDir)`；**实测约束**：Spectre 分支注册要求 Settings 派生自 `SubSettings`（协变 `ICommandLimiter<SubSettings>`），选项放进 `SubSettings` 会让 `sub add/list/remove` 多出无效选项、显式泛型注册重载在该版本不存在 → 取中间层；`[CommandOption]` 全仓 111 → 103；+5 用例（含真实 `CommandApp` 分支绑定与选项名/描述硬编码快照），**三次变异验证**（复制副本 / 改基类描述 / 选项上移 → 2/1/1 例失败）；`--help` 实测：`--help`/`sub --help`/`sub check --help` 逐字节不变，`sub add/list --help` 只列自身选项 |
+| I12 | ✅ `ResolveAsync` 实测 208 行 → 入口分派 + `ResolveHttpUrlAsync` + `ResolveBareIdAsync`（`internal`），累加变量 `avid` → `target`；按计划**先补 http 分支夹具**：12 例本地夹具在拆分前先跑绿（54/54），拆分后补 10 例直测（av/bv 分支经 `FixAvidAsync` 会触网，只能直测内部方法）；字面量 120 → 123（+3 全为新增 XML 文档引用）、catch 3 = 3 / Logger 2 = 2 / throw 10 = 10 / 正则调用 24 = 24、显著行差异逐条对应 |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **792 → 821**（+29）全绿；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿**（Build & Test / Format Check / NuGet Vulnerability Scan / CodeQL / 两个 Integration / Native AOT smoke / Docker smoke） |
+| 状态计数 | H **12/1 → 13/0**（H6 ✅），I **17/5 → 20/2**（I6/I9/I12 ✅），合计 **82/8 → 86/4**；剩余 = I10（定案不做）+ I16（未排期）+ J1/J2（跟踪项） |
+| Info 级观察（不登记 RF） | ① 批 7 之后 **I16**（`BBDownConfigParser` 手工扫参收敛）是本计划体系内唯一的未排期项：别名表已由 `CliOptionIndex` 收口，剩余扫参循环属可读性收益，建议与 J1/J2 一并决定"另开小批"或"维持现状"；② `DownloadOptionSettings` 派生自 `SubSettings` 纯属 Spectre 约束（无行为含义），若 `sub` 分支结构调整可重新评估移出该继承链；③ I12 的 av/bv 分支只能直测内部方法——若给 `FixAvidAsync` 加可注入缝，可把这两例并回公开入口用例 |
