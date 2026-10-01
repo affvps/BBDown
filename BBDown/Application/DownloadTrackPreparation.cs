@@ -106,7 +106,8 @@ internal partial class Program
         foreach (var video in parsedResult.VideoTracks)
         {
             var kbps = video.dur > 0 ? video.size / 1024 / video.dur * 8 : 0;
-            Logger.LogColor($"{displayIndex++}. [{video.dfn}] [{video.res}] [{video.codecs}] [{video.fps}] [~{kbps:00} kbps] [{BBDownUtil.FormatFileSize(video.size)}]".Replace("[] ", ""), false);
+            Logger.LogColor(BuildTrackLine($"{displayIndex++}. ", video.dfn, video.res, video.codecs, video.fps,
+                $"~{kbps:00} kbps", BBDownUtil.FormatFileSize(video.size)), false);
             if (options.OnlyShowInfo) clips.ForEach(Console.WriteLine);
         }
 

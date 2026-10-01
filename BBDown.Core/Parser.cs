@@ -1,5 +1,7 @@
 using System.Text;
 using BBDown.Core.Util;
+// 签名/时间戳的唯一实现（I3）；盐按端点选择，见 BiliApiKeys
+using static BBDown.Core.Util.BiliApiKeys;
 using System.Text.RegularExpressions;
 using System.Text.Json;
 using static BBDown.Core.Entity.Entity;
@@ -55,11 +57,11 @@ public static partial class Parser
         {
             StringBuilder apiBuilder = new();
             if (Config.Current.Token != "") apiBuilder.Append($"access_key={Config.Current.Token}&");
-            apiBuilder.Append($"appkey=4409e2ce8ffd12b8&build=106500&cid={cid}&device=android");
+            apiBuilder.Append($"appkey={TvAppKey}&build=106500&cid={cid}&device=android");
             if (bangumi) apiBuilder.Append($"&ep_id={epId}&expire=0");
             apiBuilder.Append($"&fnval=4048&fnver=0&fourk=1&mid=0&mobi_app=android_tv_yst");
             apiBuilder.Append($"&object_id={aid}&platform=android&playurl_type=1&qn={qn}&ts={GetTimeStamp(true)}");
-            api = $"{prefix}{apiBuilder}&sign={GetSign(apiBuilder.ToString(), false)}";
+            api = $"{prefix}{apiBuilder}&sign={GetSign(apiBuilder.ToString(), TvSignSalt)}";
         }
         else
         {
@@ -135,13 +137,13 @@ public static partial class Parser
         StringBuilder paramBuilder = new();
         if (Config.Current.Token != "") paramBuilder.Append($"access_key={Config.Current.Token}&");
         paramBuilder.Append($"aid={aid}");
-        if (isBiliPlus) paramBuilder.Append($"&appkey=7d089525d3611b1c&area={(Config.Current.Area == "" ? "th" : Config.Current.Area)}");
+        if (isBiliPlus) paramBuilder.Append($"&appkey={BiliPlusAppKey}&area={(Config.Current.Area == "" ? "th" : Config.Current.Area)}");
         paramBuilder.Append($"&cid={cid}&ep_id={epId}&platform=android&prefer_code_type={code}&qn={qn}");
         if (isBiliPlus) paramBuilder.Append($"&ts={GetTimeStamp(true)}");
 
         paramBuilder.Append("&s_locale=zh_SG");
         string param = paramBuilder.ToString();
-        api += (isBiliPlus ? $"{param}&sign={GetSign(param, true)}" : param);
+        api += (isBiliPlus ? $"{param}&sign={GetSign(param, BiliPlusSignSalt)}" : param);
 
         string webJson = await HTTPUtil.GetWebSourceAsync(api, token: token);
         return webJson;
@@ -759,21 +761,6 @@ public static partial class Parser
             .Select(k => int.TryParse(k, out var v) ? v : 0)
             .Max();
         return max.ToString();
-    }
-
-    private static string GetTimeStamp(bool bflag)
-    {
-        // 经服务器时钟偏移校准（ServerClock）：本地时钟偏差超 ~60s 时效窗口会让 wts/ts
-        // 被 B 站拒绝签名（虚拟机时钟不同步/未启用 NTP 的容器等）。offset=0 时与 UTC
-        // 当前时间等价，行为零回归。
-        DateTimeOffset ts = ServerClock.Now;
-        return bflag ? ts.ToUnixTimeSeconds().ToString() : ts.ToUnixTimeMilliseconds().ToString();
-    }
-
-    private static string GetSign(string parameters, bool isBiliPlus)
-    {
-        string toEncode = parameters + (isBiliPlus ? "acd495b248ec528c2eed1e862d393126" : "59b43e04ad6965f34319062b478f83dd");
-        return Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(toEncode)));
     }
 
     [GeneratedRegex("window.__playinfo__=([\\s\\S]*?)<\\/script>")]

@@ -155,19 +155,6 @@ public static partial class BBDownUtil
         return "";
     }
 
-    public static string GetSign(string parameters)
-    {
-        string toEncode = parameters + "59b43e04ad6965f34319062b478f83dd";
-        return Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(toEncode)));
-    }
-
-    public static string GetTimeStamp(bool bflag)
-    {
-        // 经服务器时钟偏移校准（ServerClock）：本地时钟偏差会让签名时间戳超时效窗口被拒
-        DateTimeOffset ts = ServerClock.Now;
-        return (bflag ? ts.ToUnixTimeSeconds() : ts.ToUnixTimeMilliseconds()).ToString();
-    }
-
     //https://stackoverflow.com/questions/1344221/how-can-i-generate-random-alphanumeric-strings
     public static string GetRandomString(int length)
     {
@@ -201,7 +188,7 @@ public static partial class BBDownUtil
         string deviceId = GetRandomString(20);
         string buvid = GetRandomString(37);
         string fingerprint = $"{now:yyyyMMddHHmmssfff}{GetRandomString(45)}";
-        sb.Add("appkey", "4409e2ce8ffd12b8");
+        sb.Add("appkey", BiliApiKeys.TvAppKey);
         sb.Add("auth_code", "");
         sb.Add("bili_local_id", deviceId);
         sb.Add("build", "102801");
@@ -219,8 +206,8 @@ public static partial class BBDownUtil
         sb.Add("networkstate", "wifi");
         sb.Add("platform", "android");
         sb.Add("sys_ver", "29");
-        sb.Add($"ts", GetTimeStamp(true));
-        sb.Add($"sign", GetSign(ToQueryString(sb)));
+        sb.Add($"ts", BiliApiKeys.GetTimeStamp(true));
+        sb.Add($"sign", BiliApiKeys.GetSign(ToQueryString(sb), BiliApiKeys.TvSignSalt));
 
         return sb;
     }
@@ -350,7 +337,7 @@ public static partial class BBDownUtil
 
             // wbi 密钥必须在判断登录状态之前提取：nav 接口在未登录（code=-101）时
             // 依然会返回 wbi_img，而此前的提前 return 会跳过这一步，
-            // 使未登录用户的 Config.WBI 恒为空串、w_rid 恒为无效签名。
+            // 使未登录用户的 Config.Wbi 恒为空串、w_rid 恒为无效签名。
             // 提取结果随元组返回，由父流程显式 Apply（AsyncLocal 写入不会回流父调用方）。
             string? newWbi = ExtractWbiKey(json);
             if (newWbi is not null)
@@ -412,7 +399,7 @@ public static partial class BBDownUtil
         var (isLoggedIn, _, newWbi) = await CheckLoginWithDetails(cookie);
         // 同步提取出的 wbi：CheckLogin 是 CLI 顶层单流程调用，子方法返回的新密钥
         // 需由本调用方 Apply（AsyncLocal 写入不会自动回流）。
-        if (newWbi is not null) Core.Config.WBI_FLOW = newWbi;
+        if (newWbi is not null) Core.Config.WbiFlow = newWbi;
         return isLoggedIn;
     }
 

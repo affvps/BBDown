@@ -1,5 +1,12 @@
 namespace BBDown.Core;
 
+/// <summary>
+/// 配置门面：<see cref="Current"/> 读当前异步流快照，<see cref="Apply"/> 写"流 + 全局"。
+/// REVIEW_PLAN I11：原 13 个 SCREAMING_CASE/小写门面成员中 9 个
+/// （COOKIE/TOKEN/DEBUG_LOG/HOST/EPHOST/TVHOST/AREA/SKIP_SSL_CHECK/qualitys）全库零引用，
+/// 已按 H7/I17「死代码逐条删除」先例删除；存活成员统一 PascalCase。
+/// 读写配置字段请直接用 <see cref="Current"/>，不要再新增门面成员。
+/// </summary>
 public static class Config
 {
     private static AppSettings _settings = new();
@@ -50,35 +57,29 @@ public static class Config
     /// 全局（见 <see cref="Current"/>），任何签名流都能读到最近校准值。
     /// 由 HTTPUtil.CalibrateClock 在每次响应头 Date 校准后调用。
     /// </summary>
-    public static void SET_CLOCK_OFFSET(long offsetSeconds)
+    public static void SetClockOffset(long offsetSeconds)
     {
         _contextSettings.Value = Current with { ServerClockOffsetSeconds = offsetSeconds };
         lock (_lock) { _settings = _settings with { ServerClockOffsetSeconds = offsetSeconds }; }
     }
 
-    public static string COOKIE { get => Current.Cookie; set => Apply(Current with { Cookie = value }); }
-    public static string TOKEN { get => Current.Token; set => Apply(Current with { Token = value }); }
-    public static bool DEBUG_LOG { get => Current.DebugLog; set => Apply(Current with { DebugLog = value }); }
-    public static string HOST { get => Current.Host; set => Apply(Current with { Host = value }); }
-    public static string EPHOST { get => Current.EpHost; set => Apply(Current with { EpHost = value }); }
-    public static string TVHOST { get => Current.TvHost; set => Apply(Current with { TvHost = value }); }
-    public static string AREA { get => Current.Area; set => Apply(Current with { Area = value }); }
-    public static string WBI { get => Current.Wbi; set => Apply(Current with { Wbi = value }); }
-    public static bool SKIP_SSL_CHECK { get => Current.SkipSslCheck; set => Apply(Current with { SkipSslCheck = value }); }
+    /// <summary>
+    /// 全局写入 Wbi（同时作用于当前异步流与全局）。仅 CLI 顶层与测试使用；
+    /// serve 并发任务流内改用 <see cref="WbiFlow"/>，避免跨任务互相覆盖签名材料。
+    /// </summary>
+    public static string Wbi { get => Current.Wbi; set => Apply(Current with { Wbi = value }); }
 
     /// <summary>
     /// 只更新当前异步流的 Cookie（不写全局）。用于下载流程中注入 buvid3 等设备标识：
     /// serve 并发任务下，把注入结果写进全局会让后写者覆盖先写者的凭据，
     /// 造成跨账号串号。改动只对本任务流程生效，与 <see cref="ApplyToCurrentAsyncFlow"/> 同义。
     /// </summary>
-    public static string COOKIE_FLOW { get => Current.Cookie; set => ApplyToCurrentAsyncFlow(Current with { Cookie = value }); }
+    public static string CookieFlow { get => Current.Cookie; set => ApplyToCurrentAsyncFlow(Current with { Cookie = value }); }
 
     /// <summary>
     /// 只更新当前异步流的 Wbi（不写全局）。用于下载流程中提取的 wbi 密钥：
     /// 与 <see cref="ApplyToCurrentAsyncFlow"/> 同义，见其说明——serve 并发任务下
     /// 不应让一个任务的 wbi 覆盖全局后被其它任务读到。
     /// </summary>
-    public static string WBI_FLOW { get => Current.Wbi; set => ApplyToCurrentAsyncFlow(Current with { Wbi = value }); }
-
-    public static readonly Dictionary<string, string> qualitys = AppSettings.QualityMap;
+    public static string WbiFlow { get => Current.Wbi; set => ApplyToCurrentAsyncFlow(Current with { Wbi = value }); }
 }

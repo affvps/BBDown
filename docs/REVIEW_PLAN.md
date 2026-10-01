@@ -7,7 +7,7 @@
 ## 状态总览
 
 > **回填说明（2026-09-30，第 18 轮消纳后）**：本表自 2026-08 起未同步，F/G 两组实际已清零、B3 已结项、I8 已完成但未回填；本次逐项核验后重算。
-> H/I 剩余项的核验口径：逐符号检查重构产物是否存在（`ServeSecurityMiddleware`/`TaskRouteMapper`/`TaskFileStore`/`CallbackGuard`、`MuxRequest`、`RangeDownloadRequest`、`DownloadContext`、`BiliApiKeys`、`PickDataRoot`/`PickTrackBaseUrl`、`IsRetryableDownloadException`、`ReadHistoryLocked`、`EstimatedBytes` 均不存在 → 未落地）。
+> H/I 剩余项的核验口径：逐符号检查重构产物是否存在（`ServeSecurityMiddleware`/`TaskRouteMapper`/`TaskFileStore`/`CallbackGuard`、`MuxRequest`、`RangeDownloadRequest`、`DownloadContext`、`BiliApiKeys`、`PickDataRoot`/`PickTrackBaseUrl`、`IsRetryableDownloadException`、`ReadHistoryLocked` 均不存在 → 未落地；`BiliApiKeys`/`EstimatedBytes` 已于 2026-10-01 的 REFACTOR_PLAN 批 1b 落地）。
 > 另注：**I16 的范围已被 PR #53 部分消化**（“静态缓存 BuildAliasMap”由新增的 `CliOptionIndex` 承担，四处手工扫参尚未收敛）；H/I 与 [`OPTIMIZATION_PLAN.md`](OPTIMIZATION_PLAN.md) 存在重叠（P0-1 ≈ I1/I2/I10、P1-1 ≈ H5、P1-2 ≈ I2、P1-3 ≈ J1），评估时请合并口径，避免重复排期。
 > **H/I 剩余项的执行计划见 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md)**（7 批 7 PR、逐批范围/风险/安全网/验收口径与进度追踪）。
 
@@ -21,9 +21,11 @@
 | F 测试 Infra | 12 | 12 | 0 |
 | G 测试结构 | 10 | 10 | 0 |
 | H 可读性 Infra | 13 | 4 | **9**（H1~H6、H8、H9、H10；H7/H11/H12/H13 已完成） |
-| I 可读性 App/Core | 22 | 8 | **14**（I1~I3、I5~I7、I9~I16；I4/I8/I17~I22 已完成） |
+| I 可读性 App/Core | 22 | 12 | **10**（I1、I2、I5~I7、I9、I10、I12、I13、I16；I3/I4/I8/I11/I14/I15/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **65** | **25** |
+| **合计** | **90** | **69** | **21** |
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 1b 后）**：I3/I11/I14/I15 随批 1b 落地（见第 19 轮），I 组已完成 8 → 12；剩余 10 项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余 9 项按该计划 §6 批次序推进，下一批为批 4）。
 
 > 回填前的历史快照为 `90 / 44 / 46`（2026-08）；本次补记的 21 项完成度分布为 F +6、G +6、B +1（B3）、H +3（H7/H11/H12/H13 中除 H11 外新补）、I +5（I8 与 I17~I20）。
 
@@ -489,3 +491,21 @@
 | 合并 | ✅ 走 merge commit（自定义标题+正文，沿 PR #50 先例）；CI 三项必过检查（`Build & Test`/`Format Check`/`NuGet Vulnerability Scan`）全绿后合并 |
 
 | Info 级观察（不登记 RF） | ① `sub check` 轻量路径不再触发旧路径的"逐稿展开连续失败 ≥5 即中止"早失败——详情 API 系统性风控时会退化成"发现 N 个新内容 + 逐个下载失败"（退出码仍非 0、错误仍逐条打印），请求量更大、诊断粒度更粗，判定可接受。② 两 PR 均为作者自建 issue 自修复（issue 与 PR 同分钟创建），符合 CONTRIBUTING 的 issue-first 要求；`CHANGELOG.md` 的 `## [未发布]` 小节两者都要新增，合并第二个前需 rebase 一次。③ `REVIEW_FINDINGS.md` 的「状态总览」表此前只维护到 RF-88（RF-89~RF-93 只有详情段、无索引行），本轮一并补齐 89~98 的索引行，消除该文档漂移。 |
+
+---
+
+## 第 19 轮：REFACTOR_PLAN 批 1a 验收 + 批 1b 落地（2026-10-01）
+
+> 本轮按 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md) §6 的批次序执行：①验收批 1a（I7 异常过滤策略收口，PR #60）；②落地批 1b（I11/I14/I15/I3，PR #61）。**无新发现登记**——I11 实测出的"门面大半是死代码"属既有条目的范围细化，登记在 REFACTOR_PLAN §1 实测校正表。用户可见行为零变化，故不改 CHANGELOG / README / wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **775/775 全绿**（PR gate 过滤器）；`dotnet format --verify-no-changes` exit 0 |
+| 批 1a 验收 | ✅ `BBDown.Core/Util/ExceptionPolicies.cs` 9 条具名策略在位；生产代码 **64 处**站点全部改用具名谓词（Core 9 + App 55），另有真值表 9 处引用（`ExceptionPolicies.*` 实测 73 引用 = 64 + 9）；`ExceptionPolicyTests` 逐类型钉住集合；未收口的站点保留内联集合与站点自有守卫（数量口径见 Info 观察④）。第 5 轮 H1 式"声称拆分但文件不存在"的勘误**未复现**（策略类真实存在且被引用） |
+| I11 | ✅ 实测 13 个门面成员中 **9 个全库零引用**（`COOKIE`/`TOKEN`/`DEBUG_LOG`/`HOST`/`EPHOST`/`TVHOST`/`AREA`/`SKIP_SSL_CHECK`/`qualitys`）→ 按 H7/I17「死代码逐条删除」先例删除；存活 4 个改 PascalCase（`Wbi`/`WbiFlow`/`CookieFlow`/`SetClockOffset`，9 处调用点同步）；类级文档写明"读写配置直接用 `Config.Current`，不再新增门面成员" |
+| I14 | ✅ `AppHelper` 的 `internal AudioMaterial` → `AppRoleAudioDto`（与 `Entity.AudioMaterial` 同名冲突消除）；序列化字段名不变，`[JsonSerializable]` 同步 |
+| I15 | ✅ 新增 `Display.BuildTrackLine`/`Display.EstimatedBytes`（internal）：**6 处**带宽估算公式收口、**3 处** `.Replace("[] ", "")` 收口（实测为 3 处，非登记时的 ×4）；去掉 `DownloadTrackAsync` 未使用的 `bool video` 形参（`Func<>` 契约 + 5 个调用点同步）；挂错方法的 XML 文档归位到 `SelectTrackManually` |
+| I3 | ✅ 新增 `BBDown.Core/Util/BiliApiKeys.cs`：4 个常量（TV/BiliPlus appkey、两把盐）+ 全库唯一 `GetSign`/`GetTimeStamp`；删除 `Parser.GetSign`/`Parser.GetTimeStamp`/`BBDownUtil.GetSign`/`BBDownUtil.GetTimeStamp` 四份重复实现，3 处 appkey 字面量改常量。**签名算法与盐值一字未改**，`ParserFixtureTests` 的 `appkey=4409e2ce8ffd12b8` 断言仍绿 |
+| 测试 | ✅ 新增 `TrackLineFormatTests` 9 例（775 → **784**）：展示行组装与旧 `.Replace` 写法逐字符等价 ×4、字段内容不被误伤 ×1、估算算式 ×3、长整型不溢出 ×1；两个助手提 internal 供直测（沿用 `FormatSavePath`/`SortTracks`/`TryResolveWorkDir` 先例） |
+| 基线（收批） | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**；`dotnet format --verify-no-changes` exit 0；新增两文件字节卫生（无 BOM / 纯 LF / 末尾换行） |
+| Info 级观察（不登记 RF） | ① `Config.Wbi` 仍是"全局写"门面（serve 流内应走 `WbiFlow`），彻底移除需先改造 4 处调用点，留待后续评估；② `EstimatedBytes` 的 kbps 口径依赖 `Parser.cs` 的 `bandwidth / 1000`（接口给 bps），已写入 XML 文档与测试注释防漂移；③ `AppRoleAudioDto` 与 `Entity.AudioMaterial` 的同名冲突已消除，但两者的"元数据 vs 本地文件"语义差异仍只靠注释表达；④ **批 1a 的统计基数与收批实测对不上**：批 1a 记录称全库 when-过滤器 94 处 = 64 处收口 + 2 处带附加条件 + 28 种唯一集合（`ExceptionPolicies.cs` 类文档内又写"66 处重复族"，与 64/28/2 亦不自洽）；本轮按 `catch (Exception …) when (` 统一口径逐文件实测（排除 `bin`/`obj`）为 **102 处生产站点**（另 1 处命中是类文档中的示例文本），其中 **64 处**用具名谓词、**38 处**保留内联集合。差异不影响收口本身的正确性（64 处逐字等价 + 真值表钉住），但两处口径需重算统一，避免后续批次引用错误基数 |

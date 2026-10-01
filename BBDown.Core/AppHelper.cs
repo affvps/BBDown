@@ -236,7 +236,7 @@ static partial class AppHelper
                         "M4A"
                     )).Cast<object>().ToList();
 
-                    roles.Add(new AudioMaterial(
+                    roles.Add(new AppRoleAudioDto(
                         role.AudioId,
                         role.Title ?? role.AudioId,
                         role.PersonName ?? role.Edition ?? "",
@@ -483,7 +483,7 @@ static partial class AppHelper
 }
 
 
-[JsonSerializable(typeof(AudioMaterial))]
+[JsonSerializable(typeof(AppRoleAudioDto))]
 [JsonSerializable(typeof(DubbingInfo))]
 [JsonSerializable(typeof(DashClip))]
 [JsonSerializable(typeof(AudioInfoWithCodecName))]
@@ -494,7 +494,12 @@ static partial class AppHelper
 [JsonSerializable(typeof(Dictionary<string, string>))]
 internal partial class JsonContext : JsonSerializerContext { }
 
-internal class AudioMaterial
+/// <summary>
+/// gRPC 配音角色（RoleAudio）转出的 DASH 角色音频条目，只用于拼 <see cref="DashJson"/> 的
+/// role_audio_list。与 <c>Entity.AudioMaterial</c>（本地配音文件元数据，供 mp4box 打标签）
+/// 同名不同物，按 REVIEW_PLAN I14 改名为 AppRoleAudioDto；序列化字段名不变。
+/// </summary>
+internal class AppRoleAudioDto
 {
     [JsonPropertyName("audio_id")]
     public string AudioId { get; }
@@ -505,7 +510,7 @@ internal class AudioMaterial
     [JsonPropertyName("audio")]
     public List<object> Audio { get; }
 
-    public AudioMaterial(string audio_id, string title, string person_name, List<object> audio)
+    public AppRoleAudioDto(string audio_id, string title, string person_name, List<object> audio)
     {
         AudioId = audio_id;
         Title = title;
@@ -513,7 +518,7 @@ internal class AudioMaterial
         Audio = audio;
     }
 
-    public override bool Equals(object? obj) => obj is AudioMaterial other && AudioId == other.AudioId && Title == other.Title && PersonName == other.PersonName && Audio == other.Audio;
+    public override bool Equals(object? obj) => obj is AppRoleAudioDto other && AudioId == other.AudioId && Title == other.Title && PersonName == other.PersonName && Audio == other.Audio;
     public override int GetHashCode() => HashCode.Combine(Title, Audio);
 }
 
