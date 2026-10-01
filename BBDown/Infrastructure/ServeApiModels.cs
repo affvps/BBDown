@@ -75,15 +75,17 @@ public record DownloadTask(string Aid, string Url, long TaskCreateTime)
 
     // 保护 SavePaths 的读写锁：下载线程持续 Add，而 /get-tasks 的 Snapshot 深拷贝会枚举
     // SavePaths，若撞上并发 Add 抛 InvalidOperationException（List 版本变更）。
-    // 写者一律经 AddSavePath 走这把锁；_savePathLock 不能是 primary constructor 属性。
-    private readonly object _savePathLock = new();
+    // 写者一律经 AddSavePath 走这把锁；_taskStateLock 不能是 primary constructor 属性。
+    // H8：原名 _savePathLock 只提 SavePaths，实际同时保护 SavePaths / Status / IsSuccessful / Aid
+    //（RF-86 要求 Snapshot 与 SetStatus 共用同一把锁），改名后名实一致。
+    private readonly object _taskStateLock = new();
 
     /// <summary>受控写入口：与 Snapshot 的深拷贝在同一把锁下，避免枚举期间被并发修改。
     /// 去重（Info 级观察）：锁内 Skipped 分支与成功路径会对同一 savePath 各 Add 一次，
     /// 导致 API 快照中同一产物出现两条——产物列表语义是集合而非序列。</summary>
     public void AddSavePath(string path)
     {
-        lock (_savePathLock)
+        lock (_taskStateLock)
         {
             if (!SavePaths.Contains(path)) SavePaths.Add(path);
         }
@@ -92,7 +94,7 @@ public record DownloadTask(string Aid, string Url, long TaskCreateTime)
     /// <summary>线程安全地更新状态字段（下载线程写，查询端点读）。</summary>
     public void SetStatus(DownloadTaskStatus status)
     {
-        lock (_savePathLock)
+        lock (_taskStateLock)
         {
             Status = status;
             IsSuccessful = status == DownloadTaskStatus.Succeeded;
@@ -101,11 +103,11 @@ public record DownloadTask(string Aid, string Url, long TaskCreateTime)
 
     /// <summary>
     /// 线程安全地更新 Aid（解析成功/失败后由下载线程写入；查询端点读）。
-    /// 与 SetStatus 共用 _savePathLock，避免 Snapshot 枚举期间读到半更新状态。
+    /// 与 SetStatus 共用 _taskStateLock，避免 Snapshot 枚举期间读到半更新状态。
     /// </summary>
     public void SetAid(string aid)
     {
-        lock (_savePathLock) { Aid = aid; }
+        lock (_taskStateLock) { Aid = aid; }
     }
 
     /// <summary>
@@ -115,14 +117,14 @@ public record DownloadTask(string Aid, string Url, long TaskCreateTime)
     /// </summary>
     public DownloadTask Snapshot()
     {
-        // RF-86：Status/IsSuccessful 由 SetStatus 在 _savePathLock 内成对写入——读取也须在同一把
+        // RF-86：Status/IsSuccessful 由 SetStatus 在 _taskStateLock 内成对写入——读取也须在同一把
         // 锁内，否则查询端点与任务完成赛跑时可返回 status=Succeeded 而 isSuccessful=false 的不一致快照
         // （与 SetAid 注释声称的"共用锁避免半更新状态"一致）。SavePaths 同锁复制副本。
         List<string> paths;
         DownloadTaskStatus status;
         bool isSuccessful;
         string aid;
-        lock (_savePathLock)
+        lock (_taskStateLock)
         {
             paths = new List<string>(SavePaths);
             status = Status;
@@ -153,11 +155,11 @@ public record DownloadTaskCollection(List<DownloadTask> Running, List<DownloadTa
 /// <summary>/add-task 的 202 响应体：返回任务 JobId（GUID），客户端可据此查询或取消。</summary>
 public record AddTaskAccepted(string TaskId);
 
-record struct MyOptionBindingResult<T>(T? Result, Exception? Exception)
+record struct RequestBodyBindingResult<T>(T? Result, Exception? Exception)
 {
     public bool IsValid => Exception is null;
 
-    public static async ValueTask<MyOptionBindingResult<T>> BindAsync(HttpContext httpContext)
+    public static async ValueTask<RequestBodyBindingResult<T>> BindAsync(HttpContext httpContext)
     {
         try
         {
@@ -207,9 +209,9 @@ record struct MyOptionBindingResult<T>(T? Result, Exception? Exception)
     private const long MaxRequestBodyBytes = 64 * 1024;
 }
 
-/// <summary>请求体超过 <see cref="MyOptionBindingResult{T}.MaxRequestBodyBytes"/> 的专用异常：
+/// <summary>请求体超过 <see cref="RequestBodyBindingResult{T}.MaxRequestBodyBytes"/> 的专用异常：
 /// /add-task 处理器据此返回 413（与普通 JSON 语法错误的 400 区分）。
-/// 定义在顶层：绑定器（MyOptionBindingResult）与处理器（BBDownApiServer）都要引用它。</summary>
+/// 定义在顶层：绑定器（RequestBodyBindingResult）与处理器（BBDownApiServer）都要引用它。</summary>
 internal sealed class RequestBodyTooLargeException : InvalidOperationException
 {
     public RequestBodyTooLargeException() : base("请求体过大") { }

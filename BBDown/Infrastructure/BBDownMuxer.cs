@@ -122,21 +122,21 @@ static partial class BBDownMuxer
             Directory.CreateDirectory(outDir);
 
         var args = new List<string> { "-inter", "500", "-noprog" };
-        int nowId = 0;
+        int inputTrackId = 0;
         if (!string.IsNullOrEmpty(request.VideoPath))
         {
             // trackID 由调用方场景决定：纯音频输出（audioOnly 且无音频文件）时取轨道 2
             string trackId = request.AudioOnly && request.AudioPath == "" ? "2" : "1";
             args.Add("-add");
             args.Add($"{request.VideoPath}#trackID={trackId}:name=");
-            nowId++;
+            inputTrackId++;
         }
         if (!string.IsNullOrEmpty(request.AudioPath))
         {
             // lang 已在 MuxByMp4box 顶部 EscapeString（mp4box 的 -add 值语法要求），值直接拼入
             args.Add("-add");
             args.Add($"{request.AudioPath}:lang={(lang == "" ? "und" : lang)}");
-            nowId++;
+            inputTrackId++;
         }
         // 配音/背景音轨与 ffmpeg 分支对齐：必须进入 -add 链。否则杜比视界自动切 mp4box
         // （ffmpeg<5.0）时这些已下载的轨道被静默丢弃，且随后被 CleanupDownloadedTracks
@@ -145,13 +145,13 @@ static partial class BBDownMuxer
         {
             args.Add("-add");
             args.Add($"{material.path}:lang=und");
-            nowId++;
+            inputTrackId++;
             var name = !string.IsNullOrWhiteSpace(material.title) ? material.title : material.personName;
             if (!string.IsNullOrWhiteSpace(name))
             {
                 // 轨道名走 -udta（与下方字幕轨道同机制）；mp4box 的值语法要求转义。
                 args.Add("-udta");
-                args.Add($"{nowId}:type=name:str=\"{EscapeString(name)}\"");
+                args.Add($"{inputTrackId}:type=name:str=\"{EscapeString(name)}\"");
             }
         }
         string? metaFile = null;
@@ -196,14 +196,14 @@ static partial class BBDownMuxer
                 {
                     if (File.Exists(request.Subs[i].path) && await BBDownUtil.HasTextContentAsync(request.Subs[i].path!, cancellationToken))
                     {
-                        nowId++;
+                        inputTrackId++;
                         var (subLangCode, subLangName) = SubUtil.GetSubtitleCode(request.Subs[i].lan);
                         // name/lang 值都作为独立 argv：SubUtil 的名称表含空格（如 "Aymar aru"），
                         // 手工拼引号容易拆参，交给 ArgumentList 后天然保持单 token。
                         args.Add("-add");
                         args.Add($"{request.Subs[i].path}#trackID=1:name={subLangName}:hdlr=sbtl:lang={subLangCode}");
                         args.Add("-udta");
-                        args.Add($"{nowId}:type=name:str=\"{subLangName}\"");
+                        args.Add($"{inputTrackId}:type=name:str=\"{subLangName}\"");
                     }
                 }
             }
