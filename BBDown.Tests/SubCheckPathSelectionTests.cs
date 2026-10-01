@@ -75,7 +75,7 @@ public class SubCheckPathSelectionTests : IDisposable
             Desc = "d",
             Pic = "",
             PubTime = 0,
-            PagesInfo = [.. aids.Select((aid, i) => new Page(i + 1, aid, "1", "", "p", 0, "", 0))],
+            PagesInfo = [.. aids.Select((aid, i) => new Page { index = i + 1, aid = aid, cid = "1", epid = "", title = "p", dur = 0, res = "", pubTime = 0 })],
         };
 
         internal int FetchCalls { get; private set; }

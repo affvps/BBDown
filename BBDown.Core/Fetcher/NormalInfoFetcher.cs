@@ -47,19 +47,21 @@ public partial class NormalInfoFetcher : IFetcher
         var pages = data.EnumerateArraySafe("pages").ToList();
         foreach (var page in pages)
         {
-            Page p = new(page.GetInt32Safe("page"),
-                id,
-                page.GetValueAsStringSafe("cid"),
-                "", //epid
-                page.GetValueAsStringSafe("part").Trim(),
-                page.GetInt32Safe("duration"),
-                page.TryGetProperty("dimension", out var dim) && dim.TryGetProperty("width", out var w) && dim.TryGetProperty("height", out var h) ? $"{w}x{h}" : "",
-                pubTime, //分p视频没有发布时间
-                "",
-                "",
-                ownerName,
-                ownerMid
-            );
+            Page p = new()
+            {
+                index = page.GetInt32Safe("page"),
+                aid = id,
+                cid = page.GetValueAsStringSafe("cid"),
+                epid = "",
+                title = page.GetValueAsStringSafe("part").Trim(), //epid
+                dur = page.GetInt32Safe("duration"),
+                res = page.TryGetProperty("dimension", out var dim) && dim.TryGetProperty("width", out var w) && dim.TryGetProperty("height", out var h) ? $"{w}x{h}" : "",
+                pubTime = pubTime,
+                cover = "", //分p视频没有发布时间
+                desc = "",
+                ownerName = ownerName,
+                ownerMid = ownerMid,
+            };
             pagesInfo.Add(p);
         }
 
@@ -101,19 +103,21 @@ public partial class NormalInfoFetcher : IFetcher
                     var choices = question.EnumerateArraySafe("choices").ToList();
                     foreach (var page in choices)
                     {
-                        Page p = new(index++,
-                            id,
-                            page.GetValueAsStringSafe("cid"),
-                            "", //epid
-                            page.GetValueAsStringSafe("option").Trim(),
-                            0,
-                            "",
-                            pubTime, //分p视频没有发布时间
-                            "",
-                            "",
-                            ownerName,
-                            ownerMid
-                        );
+                        Page p = new()
+                        {
+                            index = index++,
+                            aid = id,
+                            cid = page.GetValueAsStringSafe("cid"),
+                            epid = "",
+                            title = page.GetValueAsStringSafe("option").Trim(), //epid
+                            dur = 0,
+                            res = "",
+                            pubTime = pubTime,
+                            cover = "", //分p视频没有发布时间
+                            desc = "",
+                            ownerName = ownerName,
+                            ownerMid = ownerMid,
+                        };
                         pagesInfo.Add(p);
                     }
                 }

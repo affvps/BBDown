@@ -41,7 +41,7 @@ public class PathFormatTests
     public void FormatSavePath_DatePlaceholders_AreInvariantAndSanitized()
     {
         long ts = 1700000000;
-        var page = new BBDown.Core.Entity.Entity.Page(1, "123", "456", "", "t", 60, "", ts);
+        var page = new BBDown.Core.Entity.Entity.Page { index = 1, aid = "123", cid = "456", epid = "", title = "t", dur = 60, res = "", pubTime = ts };
         var originalCulture = CultureInfo.CurrentCulture;
         try
         {
@@ -76,7 +76,7 @@ public class PathFormatTests
     [Fact]
     public void FormatSavePath_ResAndFps_AreSanitized()
     {
-        var page = new BBDown.Core.Entity.Entity.Page(1, "123", "456", "", "t", 60, "", 0);
+        var page = new BBDown.Core.Entity.Entity.Page { index = 1, aid = "123", cid = "456", epid = "", title = "t", dur = 60, res = "", pubTime = 0 };
         var video = new BBDown.Core.Entity.Entity.Video
         {
             id = "1",
@@ -105,7 +105,7 @@ public class PathFormatTests
     [Fact]
     public void PageIds_AreSanitizedAgainstPathTraversal()
     {
-        var p = new BBDown.Core.Entity.Entity.Page(1, "..\\..\\..\\tmp\\evil", "../../etc/x", "", "t", 60, "", 0);
+        var p = new BBDown.Core.Entity.Entity.Page { index = 1, aid = "..\\..\\..\\tmp\\evil", cid = "../../etc/x", epid = "", title = "t", dur = 60, res = "", pubTime = 0 };
 
         // 路径分隔符被替换，无法作为路径段穿越
         Assert.DoesNotContain("/", p.aid);
@@ -113,8 +113,8 @@ public class PathFormatTests
         Assert.DoesNotContain("/", p.cid);
         Assert.DoesNotContain("\\", p.cid);
         // 合法值（纯数字 / BV 号）保持恒等，不影响 RF-48 的 bvid 回退
-        var normal = new BBDown.Core.Entity.Entity.Page(1, "170001", "123456", "", "t", 60, "", 0);
+        var normal = new BBDown.Core.Entity.Entity.Page { index = 1, aid = "170001", cid = "123456", epid = "", title = "t", dur = 60, res = "", pubTime = 0 };
         Assert.Equal("170001", normal.aid);
-        Assert.Equal("BV1xx411c7mD", new BBDown.Core.Entity.Entity.Page(1, "BV1xx411c7mD", "1", "", "t", 60, "", 0).aid);
+        Assert.Equal("BV1xx411c7mD", new BBDown.Core.Entity.Entity.Page { index = 1, aid = "BV1xx411c7mD", cid = "1", epid = "", title = "t", dur = 60, res = "", pubTime = 0 }.aid);
     }
 }

@@ -11,6 +11,22 @@ using static BBDown.Core.Entity.Entity;
 
 namespace BBDown;
 
+/// <summary>
+/// <see cref="Program.SetUpWork"/> 的产物（I5：原 9 元组）：一次下载任务中与"分P无关"的配置。
+/// 由它构造 <see cref="DownloadPagesRequest"/>（后者再加上本次任务特有的 VideoInfo/ApiType/RelatedTask），
+/// 从而把原先 9 个值经 4 层透传的形态收敛为一个具名对象。
+/// </summary>
+internal sealed record DownloadContext(
+    Dictionary<string, byte> EncodingPriority,
+    Dictionary<string, int> DfnPriority,
+    string? FirstEncoding,
+    bool DownloadDanmaku,
+    BBDownDanmakuFormat[] DownloadDanmakuFormats,
+    string Input,
+    string Lang,
+    string AidOri,
+    int Delay);
+
 /// <summary>一个视频下载任务所需的页面级配置。</summary>
 internal sealed record DownloadPagesRequest(
     MyOption Options,

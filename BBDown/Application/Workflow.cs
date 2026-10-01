@@ -12,9 +12,10 @@ namespace BBDown;
 
 internal partial class Program
 {
-    public static (Dictionary<string, byte> encodingPriority, Dictionary<string, int> dfnPriority, string? firstEncoding,
-        bool downloadDanmaku, BBDownDanmakuFormat[] downloadDanmakuFormats, string input, string lang, string aidOri, int delay)
-        SetUpWork(MyOption myOption)
+    /// <summary>
+    /// 选项预处理 + 配置应用，产出本次任务的 <see cref="DownloadContext"/>（I5：原 9 元组）。
+    /// </summary>
+    public static DownloadContext SetUpWork(MyOption myOption)
     {
         //处理废弃选项
         HandleDeprecatedOptions(myOption);
@@ -81,7 +82,8 @@ internal partial class Program
             myOption.Cookie = savedCookie;
             myOption.AccessToken = savedToken ?? "";
         }
-        return (encodingPriority, dfnPriority, firstEncoding, downloadDanmaku, downloadDanmakuFormats, input, lang, aidOri, delay);
+        return new DownloadContext(encodingPriority, dfnPriority, firstEncoding, downloadDanmaku,
+            downloadDanmakuFormats, input, lang, aidOri, delay);
     }
 
     public static async Task<(string fetchedAid, VInfo vInfo, string apiType, AppSettings? session)> GetVideoInfoAsync(MyOption myOption, string aidOri, string input, CancellationToken cancellationToken = default)

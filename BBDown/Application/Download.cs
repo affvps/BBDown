@@ -19,21 +19,21 @@ internal partial class Program
     /// <summary>调试日志中 JSON 响应摘要的最大字符数（防巨响应刷屏/耗内存）。</summary>
     private const int LogJsonSummaryMaxChars = 1024;
 
-    public static Task DownloadPagesAsync(MyOption myOption, VInfo vInfo, Dictionary<string, byte> encodingPriority, Dictionary<string, int> dfnPriority,
-        string? firstEncoding, bool downloadDanmaku, BBDownDanmakuFormat[] downloadDanmakuFormats, string input, string lang, string aidOri, int delay, string apiType, DownloadTask? relatedTask = null, CancellationToken cancellationToken = default)
+    public static Task DownloadPagesAsync(MyOption myOption, VInfo vInfo, DownloadContext context, string apiType,
+        DownloadTask? relatedTask = null, CancellationToken cancellationToken = default)
     {
         var job = new DownloadPagesRequest(
             myOption,
             vInfo,
-            encodingPriority,
-            dfnPriority,
-            firstEncoding,
-            downloadDanmaku,
-            downloadDanmakuFormats,
-            input,
-            lang,
-            aidOri,
-            delay,
+            context.EncodingPriority,
+            context.DfnPriority,
+            context.FirstEncoding,
+            context.DownloadDanmaku,
+            context.DownloadDanmakuFormats,
+            context.Input,
+            context.Lang,
+            context.AidOri,
+            context.Delay,
             apiType,
             relatedTask);
 
@@ -52,24 +52,7 @@ internal partial class Program
     private static Task<bool> DownloadPageForOrchestratorAsync(
         PageDownloadRequest request, CancellationToken cancellationToken)
     {
-        var job = request.Job;
-        return DownloadPageAsync(
-            request.Page,
-            job.Options,
-            job.VideoInfo,
-            request.SelectedPagesInfo,
-            job.EncodingPriority,
-            job.DfnPriority,
-            job.FirstEncoding,
-            job.DownloadDanmaku,
-            job.DownloadDanmakuFormats,
-            job.Input,
-            request.SavePathFormat,
-            job.Lang,
-            job.AidOri,
-            job.ApiType,
-            job.RelatedTask,
-            cancellationToken);
+        return DownloadPageAsync(request, cancellationToken);
     }
 
     /// <summary>
@@ -155,23 +138,22 @@ internal partial class Program
     /// <summary>
     /// 下载单个分P。返回 false 表示该分P最终失败，供调用方避免将其记为已完成。
     /// </summary>
-    private static async Task<bool> DownloadPageAsync(Page p, MyOption myOption, VInfo vInfo, List<Page> selectedPagesInfo, Dictionary<string, byte> encodingPriority, Dictionary<string, int> dfnPriority,
-        string? firstEncoding, bool downloadDanmaku, BBDownDanmakuFormat[] downloadDanmakuFormats, string input, string savePathFormat, string lang, string aidOri, string apiType, DownloadTask? relatedTask = null, CancellationToken cancellationToken = default)
+    private static async Task<bool> DownloadPageAsync(PageDownloadRequest request, CancellationToken cancellationToken = default)
     {
-        string desc = string.IsNullOrEmpty(p.desc) ? vInfo.Desc : p.desc;
+        string desc = string.IsNullOrEmpty(request.Page.desc) ? request.Job.VideoInfo.Desc : request.Page.desc;
         // 补零宽度用"全部分P总数"而非筛选后的数量：单独下载 P1（-p 1）与稍后下载
         // 全部分P（-p all）时，<pageNumberWithZero> 应产生相同宽度的文件名，
         // 否则同一视频因筛选方式不同会得到不同路径（P01 vs P1）。
-        var pagesCount = vInfo.PagesInfo.Count;
+        var pagesCount = request.Job.VideoInfo.PagesInfo.Count;
         List<Subtitle> subtitleInfo = [];
-        string title = vInfo.Title;
-        string pic = vInfo.Pic;
-        long pubTime = vInfo.PubTime;
+        string title = request.Job.VideoInfo.Title;
+        string pic = request.Job.VideoInfo.Pic;
+        long pubTime = request.Job.VideoInfo.PubTime;
         bool selected = false; //用户是否已经手动选择过了轨道
         int retryCount = 0;
         // 页面级重试次数与间隔尊重 --retry-count / --retry-delay（Options.cs 已校验
         // 1~100 / 0~600000）：此前硬编码 3 与 3000ms，用户配置完全被无视。
-        int maxRetry = myOption.RetryCount;
+        int maxRetry = request.Job.Options.RetryCount;
         var pageExecutor = CreateDownloadPageExecutor();
         try
         {
@@ -180,12 +162,12 @@ internal partial class Program
                 try
                 {
                     Logger.LogDebug("尝试获取章节信息...");
-                    p.points = await BBDownUtil.FetchPointsAsync(p.cid, p.aid, cancellationToken);
+                    request.Page.points = await BBDownUtil.FetchPointsAsync(request.Page.cid, request.Page.aid, cancellationToken);
 
                     // 工作区路径（分P 的 aid 目录）统一基于任务流工作目录解析为绝对路径：
                     // serve 下不写进程 CWD，相对路径必须经 PathUtil.ResolveWorkPath 落到
                     // Config.Current.WorkDir，否则并发任务各自 --work-dir 的文件会互相错位。
-                    var coverPath = PathUtil.ResolveWorkPath($"{p.aid}/{p.aid}.jpg");
+                    var coverPath = PathUtil.ResolveWorkPath($"{request.Page.aid}/{request.Page.aid}.jpg");
 
                     //处理文件夹以.结尾导致的异常情况
                     if (title.EndsWith('.')) title += "_fix";
@@ -193,18 +175,18 @@ internal partial class Program
                     if (title.StartsWith('.')) title = "_" + title;
 
                     var pageAssets = await PreparePageAssetsAsync(
-                        p, myOption, title, pic, savePathFormat, pagesCount, pubTime, apiType, relatedTask, cancellationToken);
+                        request.Page, request.Job.Options, title, pic, request.SavePathFormat, pagesCount, pubTime, request.Job.ApiType, request.Job.RelatedTask, cancellationToken);
                     subtitleInfo = pageAssets.SubtitleInfo;
                     if (pageAssets.EarlyResult.HasValue) return pageAssets.EarlyResult.Value;
                     //调用解析
-                    ParsedResult parsedResult = await Parser.ExtractTracksAsync(aidOri, p.aid, p.cid, p.epid, myOption.UseTvApi, myOption.UseIntlApi, myOption.UseAppApi, firstEncoding!, myOption.DecryptDrm, token: cancellationToken);
+                    ParsedResult parsedResult = await Parser.ExtractTracksAsync(request.Job.AidOri, request.Page.aid, request.Page.cid, request.Page.epid, request.Job.Options.UseTvApi, request.Job.Options.UseIntlApi, request.Job.Options.UseAppApi, request.Job.FirstEncoding!, request.Job.Options.DecryptDrm, token: cancellationToken);
                     List<AudioMaterial> audioMaterial = [];
-                    if (!p.points.Any())
+                    if (!request.Page.points.Any())
                     {
-                        p.points = parsedResult.ExtraPoints;
+                        request.Page.points = parsedResult.ExtraPoints;
                     }
 
-                    var previewPolicy = ApplyPreviewPolicy(vInfo, p, parsedResult, myOption, title);
+                    var previewPolicy = ApplyPreviewPolicy(request.Job.VideoInfo, request.Page, parsedResult, request.Job.Options, title);
                     title = previewPolicy.Title;
                     if (!previewPolicy.ShouldContinue) return false;
 
@@ -212,46 +194,46 @@ internal partial class Program
 
                     var downloadConfig = new BBDownDownloadUtil.DownloadConfig()
                     {
-                        UseAria2c = myOption.UseAria2c,
-                        Aria2cArgs = myOption.Aria2cArgs,
-                        ForceHttp = myOption.ForceHttp,
-                        MultiThread = myOption.MultiThread,
-                        RelatedTask = relatedTask,
+                        UseAria2c = request.Job.Options.UseAria2c,
+                        Aria2cArgs = request.Job.Options.Aria2cArgs,
+                        ForceHttp = request.Job.Options.ForceHttp,
+                        MultiThread = request.Job.Options.MultiThread,
+                        RelatedTask = request.Job.RelatedTask,
                     };
 
                     var executionContext = new PageExecutionContext
                     {
-                        Page = p,
-                        Options = myOption,
-                        VideoInfo = vInfo,
-                        SelectedPagesInfo = selectedPagesInfo,
+                        Page = request.Page,
+                        Options = request.Job.Options,
+                        VideoInfo = request.Job.VideoInfo,
+                        SelectedPagesInfo = request.SelectedPagesInfo,
                         ParsedResult = parsedResult,
                         Description = desc,
                         Title = title,
                         Pic = pic,
                         CoverPath = coverPath,
-                        Lang = lang,
+                        Lang = request.Job.Lang,
                         SubtitleInfo = subtitleInfo,
                         AudioMaterial = audioMaterial,
                         DownloadConfig = downloadConfig,
                         Finalizer = CreateDownloadFinalizer(),
-                        DownloadDanmaku = downloadDanmaku,
-                        DownloadDanmakuFormats = downloadDanmakuFormats,
-                        SavePathFormat = savePathFormat,
+                        DownloadDanmaku = request.Job.DownloadDanmaku,
+                        DownloadDanmakuFormats = request.Job.DownloadDanmakuFormats,
+                        SavePathFormat = request.SavePathFormat,
                         PagesCount = pagesCount,
-                        ApiType = apiType,
+                        ApiType = request.Job.ApiType,
                         PubTime = pubTime,
-                        RelatedTask = relatedTask,
+                        RelatedTask = request.Job.RelatedTask,
                         CancellationToken = cancellationToken,
                     };
-                    var dashPreparation = PrepareDashTracks(parsedResult, myOption, p, encodingPriority, dfnPriority);
+                    var dashPreparation = PrepareDashTracks(parsedResult, request.Job.Options, request.Page, request.Job.EncodingPriority, request.Job.DfnPriority);
                     if (dashPreparation.EarlyResult.HasValue) return dashPreparation.EarlyResult.Value;
 
                     if (dashPreparation.IsDash)
                     {
                         int videoIndex = 0;
                         int audioIndex = 0;
-                        if (myOption.Interactive && !selected)
+                        if (request.Job.Options.Interactive && !selected)
                         {
                             SelectTrackManually(parsedResult, ref videoIndex, ref audioIndex);
                             selected = true;
@@ -262,7 +244,7 @@ internal partial class Program
                     else if (parsedResult.Clips.Any() && parsedResult.Dfns.Any())
                     {
                         var flvPreparation = await PrepareFlvTracksAsync(
-                            parsedResult, p, myOption, aidOri, firstEncoding, encodingPriority, dfnPriority, selected, cancellationToken);
+                            parsedResult, request.Page, request.Job.Options, request.Job.AidOri, request.Job.FirstEncoding, request.Job.EncodingPriority, request.Job.DfnPriority, selected, cancellationToken);
                         parsedResult = flvPreparation.ParsedResult;
                         executionContext.ParsedResult = parsedResult;
                         selected = flvPreparation.Selected;
@@ -274,7 +256,7 @@ internal partial class Program
                     else
                     {
                         // 无可用轨道（既非 DASH 也非 FLV）→ 解析失败，不能报告假成功。
-                        if (myOption.DecryptDrm)
+                        if (request.Job.Options.DecryptDrm)
                         {
                             Logger.LogError("此视频需要大会员登录才能获取完整DRM内容。");
                             Logger.LogError("请先运行: BBDown login  或使用 --cookie 参数");
@@ -320,7 +302,7 @@ internal partial class Program
                     }
                     // 与轨道级重试一致：退避基数 retryCount * RetryDelayMs 线性放大
                     //（默认 3000ms → 首次失败 3s、二次 6s...），符合 --retry-delay 的"基础毫秒数"语义
-                    int backoffMs = retryCount * myOption.RetryDelay;
+                    int backoffMs = retryCount * request.Job.Options.RetryDelay;
                     Logger.LogError($"[{ex.GetType().Name}] {ex.Message}");
                     Logger.LogWarn($"下载出现异常, {backoffMs / 1000.0:0.#} 秒后将进行自动重试...");
                     await Task.Delay(backoffMs, cancellationToken);
@@ -334,7 +316,7 @@ internal partial class Program
             //（空 aid 目录 + 无清单死 .tmp），保留 .vclip/.aclip 与带有效清单的
             // .tmp——它们是跨进程断点续传资产，无脑删除会让中断的文件无法续传。
             // 清理后原样向上传播取消。
-            CleanNonResumableWorkArtifacts(p.aid);
+            CleanNonResumableWorkArtifacts(request.Page.aid);
             throw;
         }
     }

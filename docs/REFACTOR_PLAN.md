@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）已完成并验收；批 3 按依赖拆为 **3a（H2/H3 参数对象）** 与 **3b（I5/I13 结构收敛）**，3a 已完成、3b 待开工；剩余批次按 §6 顺序推进，**下一批为批 3b**（参数对象与结构收敛：H2/H3/I13/I5）。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）已完成并验收；批 3 按依赖拆为 **3a（H2/H3 参数对象）** 与 **3b（I5/I13 结构收敛）**，两者均已完成；剩余批次按 §6 顺序推进，**下一批为批 5**（下载管线拆解：I1/H4/H5）。批 3 收尾后剩余（参数对象与结构收敛：H2/H3/I13/I5）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -52,6 +52,8 @@
 | **I2 补充**（2026-10-01） | `ExtractTracksAsync` ≈430~532 行 | ✅ **实测 532 行**（`Parser.cs:152-683`），占该文件 68% | 与描述一致；拆解后主方法 **39 行**，新增 15 个私有方法 + 3 个私有类型（见 §6 批 4） |
 | **H3 补充**（2026-10-01） | "`RangeDownloadToTmpAsync`（10 参），**4 处调用**" | ✅ 10 参确认；调用点实测 **2 处**（`BBDownDownloadUtil.cs:481`/`:816`），其余命中均为注释 | 范围 -2；无兼容重载需求 |
 | **H2 补充**（2026-10-01） | "`MuxAV` 20 参 / `MuxByMp4box` 15 参，仓内 13 处调用点" | ✅ `MuxAV` **20 参**确认；`MuxByMp4box` 实测 **16 参**；`MuxAV` 调用点 **13 处**中 12 处在测试（经兼容重载，零改动），1 处生产（`Download.cs`）已迁到参数对象 | 参数对象 + 兼容重载按计划落地，见 §6 批 3a |
+| **I5 补充**（2026-10-01） | "`SetUpWork` 10 元组" | 实测 **9 元组**；透传链 **4 层**：`SetUpWork` → `DownloadPagesAsync`（**11 参**）→ `DownloadPageAsync`（**15 参**）→ 各阶段 | 三层一并收敛：`DownloadContext`（9 字段）+`DownloadPagesAsync` 4 参+`DownloadPageAsync(PageDownloadRequest)` |
+| **I13 补充**（2026-10-01） | "`Page` 5 个阶梯构造器（8/9/10/12 参）；`EntityTests` 仅 3 例" | ✅ 5 个构造器 = 4 个阶梯 + 1 个拷贝构造；调用点实测 **11 处**（8 生产 + 3 测试），其中 **2 处**用拷贝构造（保留）；`EntityTests` 3 → **6 例** | 删 4 阶梯 + 无参构造；11 处全改初始化器（`required` 由编译器强制） |
 | **H1 补充**（2026-10-01） | "God 类 1683 行 / 52 方法" | 实测 **1683 行 / 72 个成员块**（字段+方法+类型），类确为 `partial`；文件尾部另堆着 **6 个顶层类型**（含 2 个 AOT 源生成上下文） | **改为文件级切分**（7 文件，成员逐字搬运）：不新建 `ServeSecurityMiddleware` 等 4 个独立类型——这些成员共享同一份实例状态（任务列表 / 锁 / 闸门），外置状态属行为风险改动，超出"零风险按成员切分"范围 |
 | **ApiMode 偏差**（2026-10-01） | "`PickDataRoot`/`PickTrackBaseUrl` 纯函数 + `ApiMode` 枚举" | 三 bool（tv/intl/app）的组合语义**无法用单一枚举等价表达**：`tvApi && appApi` 同时为真时，两处 `!tvApi` 门控（杜比/Hi-Res 跳过）与"归一化优先级（Intl > App > Tv）"不等价；且 `Workflow.cs:159` 的 `apiType` 用的是**另一套**优先级（TV > APP > INTL > WEB） | **不引入 `ApiMode`**：改为私有 `PlayRequest` 收敛长参数，避免在可达组合上改变行为；两处优先级口径不一致记为本批 Info 观察 |
 
@@ -123,7 +125,7 @@
 
 ### 批 3 — 参数对象与结构收敛（`refactor/parameter-objects`，R2）
 
-> **拆为 3a / 3b 两个 PR**（沿批 1a/1b 先例，各自可独立回滚）：3a = H2 + H3（参数对象，已随 PR #65 完成）；3b = I5 + I13（结构收敛，待开工；I13 需先补 `EntityTests` 断言）。
+> **拆为 3a / 3b 两个 PR**（沿批 1a/1b 先例，各自可独立回滚）：3a = H2 + H3（参数对象，PR #65）；3b = I5 + I13（结构收敛，PR #66）。批 3 已全部完成（I13 前置 `EntityTests` 断言）。
 
 #### 批 3a — 参数对象（已 ✅）
 
@@ -202,8 +204,9 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 4（存量最大：532 行，护栏最强）— PR #63（夹具回放逐字节一致）
   → ✅ 批 6（文件最大：1683 行，护栏 51 例）— PR #64（7 文件切分，无代码行丢失/重复）
   → ✅ 批 3a（H2/H3 参数对象）— PR #65
-  → 批 3b（I5 DownloadContext / I13 Page 初始化器）  ← 下一批
-  → 批 5 → 批 2 → 批 7
+  → ✅ 批 3b（I5 DownloadContext / I13 Page 初始化器）— PR #66
+  → 批 5（下载管线拆解：I1/H4/H5）              ← 下一批
+  → 批 2 → 批 7
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
@@ -214,7 +217,7 @@ dotnet format BBDown.sln --verify-no-changes
 | 4 | `refactor/parser-extract-tracks` | #63 | ✅ 已完成（2026-10-01；18 夹具回放逐字节一致） |
 | 6 | `refactor/serve-decomposition` | #64 | ✅ 已完成（2026-10-01；成员逐字搬运，无代码行丢失/重复） |
 | 3a | `refactor/parameter-objects` | #65 | ✅ 已完成（2026-10-01；`MuxRequest`/`RangeDownloadRequest` + 兼容重载等价性测试） |
-| 3b | `refactor/parameter-objects`（续） | — | ⏳ 待开工（**下一批**：I5 `DownloadContext` / I13 `Page` 初始化器） |
+| 3b | `refactor/context-and-page` | #66 | ✅ 已完成（2026-10-01；9 元组 → `DownloadContext`，`Page` 初始化器） |
 | 5 | `refactor/download-pipeline` | — | ⏳ 待开工 |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
 | 7 | `refactor/remaining-structure` | — | ⏳ 待开工 |
@@ -264,6 +267,16 @@ dotnet format BBDown.sln --verify-no-changes
 | H2 细节 | 原实现的就地改写入参改为显式形态：`audioOnly/videoOnly` 归一化为局部变量并经 `request with { … }` 传给 mp4box 分支；mp4box 的 5 个转义值改为"转义后本地副本"（`EscapeString(request.X)`），语义与原先就地覆写等价 | 同上 |
 | H3 | `RangeDownloadRequest`（9 字段，取消令牌仍独立）：原 10 参方法体改为 `request.X` 命名访问，2 处调用点改为命名构造 | 全量单测 + 下载管线 34 例 |
 | 验证 | ① build 0 警告 0 错误；② 单测 **784 → 786**（+2 等价性 Theory 例）；③ format exit 0；④ **字面量多重集比对**：元数据键名（`title=`/`comment=`/`album=`…）在改写前后逐条一致（机械改写中曾误伤 3 处字符串键名与 5 行重复转义，均已修复并由该比对兜住） | — |
+
+**批 3b（I5/I13）· PR #66**：
+
+| 项 | 落地内容 | 安全网 |
+|---|---|---|
+| I5 | `SetUpWork` 9 元组 → `DownloadContext`（9 字段）；`DownloadPagesAsync` **11 参 → 4 参**（`myOption, vInfo, context, apiType` + 可选），两个调用方（`Program.DoWorkAsync`、serve 的 `ProcessDownloadTaskAsync`）不再逐值解构/透传；`DownloadPageAsync` **15 参 → `PageDownloadRequest` + token**，参数编排器调用点塌缩为一次转发 | 全量单测（含 DownloadPipelineTests 34 例）+ 编译期 |
+| I13 | `Page` 删 4 个阶梯构造器（8/9/10/12 参），保留拷贝构造 + 新增无参构造；**11 处调用点**（8 个 fetcher + 3 处测试）改对象初始化器——`required` 字段由编译器强制，`aid/cid/epid` 的净化仍只在属性 setter 收口 | **前置**：`EntityTests` 先补 3 例断言（字段映射 / 净化 / 拷贝构造，3 → 6 例） |
+| 机械改写兜底 | ✅ 纯字面量多重集比对（7 个 fetcher + `PathFormatTests` + `SubCheckPathSelectionTests`）**零差异**；生成器把 9 处行尾注释挂错字段（`epid = "", //epid` → 注释落到 `title`），已按"注释随原实参"修复，可读性保持不变 | — |
+| 验证 | ① build 0 警告 0 错误；② 单测 **786 → 789**（+3 `EntityTests`）；③ `dotnet format --verify-no-changes` exit 0；④ `Page` 构造语义由 6 例断言钉住（重构前后同一批断言） | — |
+
 
 
 

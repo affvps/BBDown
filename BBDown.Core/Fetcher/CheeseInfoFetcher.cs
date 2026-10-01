@@ -29,18 +29,21 @@ public class CheeseInfoFetcher : IFetcher
         List<Page> pagesInfo = new();
         foreach (var page in pages)
         {
-            Page p = new(page.GetInt32Safe("index"),
-                page.GetValueAsStringSafe("aid"),
-                page.GetValueAsStringSafe("cid"),
-                page.GetValueAsStringSafe("id"),
-                page.GetValueAsStringSafe("title").Trim(),
-                page.GetInt32Safe("duration"),
-                "",
-                page.GetInt64Safe("release_date"),
-                "",
-                "",
-                ownerName,
-                ownerMid);
+            Page p = new()
+            {
+                index = page.GetInt32Safe("index"),
+                aid = page.GetValueAsStringSafe("aid"),
+                cid = page.GetValueAsStringSafe("cid"),
+                epid = page.GetValueAsStringSafe("id"),
+                title = page.GetValueAsStringSafe("title").Trim(),
+                dur = page.GetInt32Safe("duration"),
+                res = "",
+                pubTime = page.GetInt64Safe("release_date"),
+                cover = "",
+                desc = "",
+                ownerName = ownerName,
+                ownerMid = ownerMid,
+            };
             if (p.epid == id) index = p.index.ToString();
             pagesInfo.Add(p);
         }
