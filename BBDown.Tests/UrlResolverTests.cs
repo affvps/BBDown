@@ -131,6 +131,30 @@ public class UrlResolverTests
         Assert.Equal(expected, result);
     }
 
+    // ── HTTP 分支夹具（I12 拆分前基线）：以下分支全部本地解析，不发起网络请求 ──
+    //
+    // 覆盖 ResolveAsync 的 http 分支中"纯字符串判定"的全部出口（av/bv/ss/md/泛抓取/短链
+    // 等需网络的分支见 NetworkIntegration 用例与拆分后的 ResolveHttpUrlAsync 直测）。
+    // 这些用例在拆分为 ResolveHttpUrlAsync 前后必须逐字保持通过——拆解类改动的主要安全网。
+
+    [Theory]
+    [InlineData("https://www.bilibili.com/cheese/play/ep123", "cheese:123")]
+    [InlineData("https://www.bilibili.com/bangumi/play/ep12345", "ep:12345")]
+    [InlineData("https://www.bilibili.com/bangumi/play?ep_id=777", "ep:777")]
+    [InlineData("https://www.bilibili.com/medialist/detail/ml110?business_id=456&business=space_collection", "listBizId:456")]
+    [InlineData("https://www.bilibili.com/medialist/detail/ml110?business_id=456&business=space_series", "seriesBizId:456")]
+    [InlineData("https://www.bilibili.com/channel/collectiondetail?sid=789", "listBizId:789")]
+    [InlineData("https://www.bilibili.com/channel/seriesdetail?sid=789", "seriesBizId:789")]
+    [InlineData("https://space.bilibili.com/123/lists/456?type=series", "seriesBizId:456")]
+    [InlineData("https://space.bilibili.com/123/lists/456", "listBizId:456")]
+    [InlineData("https://space.bilibili.com/123/favlist?fid=789", "favId:789:123")]
+    [InlineData("https://space.bilibili.com/12345", "mid:12345")]
+    [InlineData("https://www.bilibili.tv/en/play/12345/67890", "ep:67890")]
+    public async Task ResolveAsync_HttpUrl_LocalBranches(string url, string expected)
+    {
+        Assert.Equal(expected, await UrlResolver.ResolveAsync(url));
+    }
+
     // ── 泛抓取域名白名单（SSRF/凭据外发防护） ──
 
     [Theory]
