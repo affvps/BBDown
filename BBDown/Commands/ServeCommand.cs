@@ -96,13 +96,9 @@ public class ServeCommand : AsyncCommand<ServeSettings>
     {
         // 空值在 Program.StartServer 会回落到默认回环地址，视为回环
         if (string.IsNullOrWhiteSpace(listenUrl)) return true;
-        if (Uri.TryCreate(listenUrl, UriKind.Absolute, out var uri))
-        {
-            // DnsSafeHost 去掉 IPv6 字面量的方括号，IPAddress.TryParse 才能解析 [::1]
-            var host = uri.DnsSafeHost;
-            if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
-            if (System.Net.IPAddress.TryParse(host, out var ip)) return System.Net.IPAddress.IsLoopback(ip);
-        }
-        return false;
+        // 判定与 BBDownApiServer 的启动守卫（IsLoopbackListenAddress → IsLoopbackHost）共用
+        // 同一实现：两处必须一致，否则会出现"CLI 认为要 token / 服务器认为不要"的错位。
+        return Uri.TryCreate(listenUrl, UriKind.Absolute, out var uri)
+            && BBDownApiServer.IsLoopbackHost(uri.DnsSafeHost);
     }
 }

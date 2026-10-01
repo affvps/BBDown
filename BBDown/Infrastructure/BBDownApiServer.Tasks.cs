@@ -188,13 +188,7 @@ public partial class BBDownApiServer
             // 排队等待期间被取消（客户端 /cancel/{id} 或服务器关停）：标记取消并落盘
             task.SetStatus(DownloadTaskStatus.Cancelled);
             task.TaskFinishTime = DateTimeOffset.Now.ToUnixTimeSeconds();
-            lock (_taskLock)
-            {
-                task.CancelCts.Dispose();
-                runningTasks.Remove(task);
-                finishedTasks.Add(task);
-            }
-            PersistFinishedTasks();
+            FinishTask(task);
             return;
         }
 
@@ -217,13 +211,7 @@ public partial class BBDownApiServer
             task.SetStatus(cancelStatus);
             if (cancelStatus == DownloadTaskStatus.Failed)
                 Logger.LogError($"解析链接失败: {SanitizeLogString(option.Url)} - {SanitizeLogString(cancelMessage)}");
-            lock (_taskLock)
-            {
-                task.CancelCts.Dispose();
-                runningTasks.Remove(task);
-                finishedTasks.Add(task);
-            }
-            PersistFinishedTasks();
+            FinishTask(task);
             return;
         }
         catch (Exception e)
@@ -238,13 +226,7 @@ public partial class BBDownApiServer
             task.ErrorMessage = SanitizeErrorMessage(e.Message);
             task.TaskFinishTime = DateTimeOffset.Now.ToUnixTimeSeconds();
             task.SetStatus(DownloadTaskStatus.Failed);
-            lock (_taskLock)
-            {
-                task.CancelCts.Dispose();
-                runningTasks.Remove(task);
-                finishedTasks.Add(task);
-            }
-            PersistFinishedTasks();
+            FinishTask(task);
             Logger.LogError($"解析链接失败: {SanitizeLogString(option.Url)} - {SanitizeLogString(e.Message)}");
             return;
         }
@@ -304,9 +286,21 @@ public partial class BBDownApiServer
                 ? (double)(task.TotalDownloadedBytes / elapsed)
                 : 0;
         }
-        // 任务结束后释放它的取消令牌源，避免长驻进程里每个任务都残留一个 CTS。
-        // 必须在 _taskLock 内 Dispose：/cancel 处理器在同一把锁内调用 Cancel()，
-        // 若在锁外 Dispose 会与取消路径竞争（对已释放 CTS 调 Cancel 抛 ObjectDisposedException）。
+        FinishTask(task);
+
+        await NotifyCompletionCallbackAsync(task, notifyWebhook);
+    }
+
+    /// <summary>
+    /// 任务终态收尾（四步一体）：状态/时间由调用方先行设置，这里统一做
+    /// "释放取消源 → 从 runningTasks 移入 finishedTasks → 落盘"。
+    /// 必须在 _taskLock 内 Dispose：/cancel 处理器在同一把锁内调用 Cancel()，
+    /// 若在锁外 Dispose 会与取消路径竞争（对已释放 CTS 调 Cancel 抛 ObjectDisposedException）。
+    /// 任何退出路径（排队取消 / 解析取消 / 解析失败 / 正常终态）漏掉它，都会让任务永久
+    /// 滞留在 runningTasks 且不落盘，之后再无消费者——故四处共用这一份实现。
+    /// </summary>
+    private void FinishTask(DownloadTask task)
+    {
         lock (_taskLock)
         {
             task.CancelCts.Dispose();
@@ -314,7 +308,5 @@ public partial class BBDownApiServer
             finishedTasks.Add(task);
         }
         PersistFinishedTasks();
-
-        await NotifyCompletionCallbackAsync(task, notifyWebhook);
     }
 }
