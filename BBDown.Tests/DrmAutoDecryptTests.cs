@@ -96,6 +96,34 @@ public class DrmAutoDecryptTests
 
     // ── ③ mp4decrypt 与下载前预检 ──
 
+    /// <summary>
+    /// mp4decrypt 的参数契约：Bento4 的 mp4decrypt **只支持** <c>--key &lt;id&gt;:&lt;k&gt;</c>（可重复），
+    /// 没有 <c>--key-file</c>。回归背景：旧实现把 kid:key 写进临时文件再用 <c>--key-file</c> 传入，
+    /// mp4decrypt 直接以 <c>ERROR: unexpected argument (&lt;输入文件&gt;)</c> 失败——DRM 解密从未成功过
+    /// （用户实测报错即此）。
+    ///
+    /// 手工验证配方（本机已实测：解出的基本流与原文逐字节一致）：
+    /// <code>
+    /// ffmpeg -f lavfi -i testsrc -c:v libx264 plain.mp4
+    /// mp4encrypt --method MPEG-CENC --key 1:&lt;key&gt;:1 --property 1:KID:&lt;kid&gt; plain.mp4 enc.mp4
+    /// mp4decrypt --key &lt;kid&gt;:&lt;key&gt; enc.mp4 dec.mp4
+    /// </code>
+    /// </summary>
+    [Fact]
+    public void BuildDecryptArguments_UsesInlineKeyForm()
+    {
+        var args = Program.BuildDecryptArguments("aabbccdd", "00112233", "in.mp4", "out.mp4");
+
+        Assert.Equal(4, args.Count);
+        Assert.Equal("--key", args[0]);
+        Assert.Equal("aabbccdd:00112233", args[1]);
+        Assert.Equal("in.mp4", args[2]);
+        Assert.Equal("out.mp4", args[3]);
+        Assert.DoesNotContain("--key-file", args);
+        // mp4decrypt 只接受两个位置参数（输入、输出）：除 --key 外不允许再出现选项
+        Assert.DoesNotContain(args, a => a.StartsWith('-') && a != "--key");
+    }
+
     [Fact]
     public void ResolveMp4DecryptPath_ExplicitExistingPathWins()
     {
