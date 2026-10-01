@@ -20,10 +20,10 @@
 | E 韧性 Core | 6 | 6 | 0 |
 | F 测试 Infra | 12 | 12 | 0 |
 | G 测试结构 | 10 | 10 | 0 |
-| H 可读性 Infra | 13 | 10 | **3**（H6、H8、H10；H1~H5/H7/H9/H11/H12/H13 已完成） |
+| H 可读性 Infra | 13 | 11 | **2**（H6、H10；H1~H5/H7~H9/H11/H12/H13 已完成） |
 | I 可读性 App/Core | 22 | 17 | **5**（I6、I9、I10、I12、I16；I1~I5/I7/I8/I11/I13~I15/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **80** | **10** |
+| **合计** | **90** | **81** | **9** |
 
 > **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 + 批 6 + 批 3a 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮）、H1 随批 6 落地（第 21 轮）、H2/H3 随批 3a 落地（第 22 轮），I 组已完成 8 → 13、H 组 4 → 7；剩余项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余按该计划 §6 批次序推进，下一批为批 3b：I5/I13）。
 
@@ -32,6 +32,8 @@
 > **回填（2026-10-01，REFACTOR_PLAN 批 5b 后）**：H4 随批 5b 落地（PR #70，第 26 轮），H 组 8 → 9 / 剩余 5 → 4；同时回填 **I7**——第 19 轮已记录"批 1a（PR #60）验收 ✅"，但状态总览漏记，本轮一并修正（I 组 16 → 17 / 剩余 6 → 5）。合计由 **77/13 → 79/11**。剩余 11 项 = H5/H6/H8/H10（批 5c/2b/7）+ I6/I9/I10/I12/I16（批 7，其中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**）+ J1/J2（跟踪项）。
 
 > **回填（2026-10-01，REFACTOR_PLAN 批 5c-2 后）**：H5 随 5c-1（PR #72）+ 5c-2（PR #74）收口（第 27/28 轮），H 组 9 → 10 / 剩余 4 → 3；合计 **79/11 → 80/10**。剩余 10 项 = H6/H8/H10（批 2b 收尾 + 批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。**批 5（I1/H4/H5）至此全部收口**。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 2b-1 后）**：H8 随 2b-1（PR #76）收口（第 29 轮），H 组 10 → 11 / 剩余 3 → 2；合计 **80/10 → 81/9**。剩余 9 项 = H6/H10（批 2b-2 与批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。
 
 ---
 
@@ -114,7 +116,7 @@
 | H5 | High | 多处 | 重复簇抽 6 个辅助方法（任务收尾四元组 ×4、IsLoopback 判定、SSRF 字面 IP ×2、DNS+逐地址校验 ×3、头块 ×3、权威大小复核 ×3、clip 路径推导 ×4）。⚠️ **口径修正（第 26 轮）**："权威大小复核 ×3"已由批 5b 的 `VerifyExistingTargetAsync`（PR #70）消化。**🔶 5c-1 已落地（第 27 轮，PR #72）**：clip 路径推导 ×4 → `ClipPathFor`、头块 ×3 → `ApplyMediaRequestHeaders`；**✅ 5c-2 已落地（第 28 轮，PR #74）**：IsLoopback 判定 4 份实现 → `IsLoopbackHost` 唯一实现、SSRF 字面 IP ×2 + 归一化 ×5 → `TryParseLiteralIp`/`NormalizeMappedIpv4`（复用 `IsUnsafeLiteralIpAddress`）、DNS 逐地址校验 ×2 → `ResolveCallbackAddressesAsync` + `CallbackHostVerdict`、任务收尾四元组 ×4 → `FinishTask`——**H5 7 簇全部收口** |
 | H6 | Medium | LiveStreamUtil.cs:75,222,286 | 异常消息文本契约改 LiveRoomClosedException 专用异常 |
 | H7 | Medium | 多处 | ✅ 死代码逐条删除（BBDownUtil.GetFiles、UrlResolver.MdRegex、GetAvIdAsync 无 token 重载、空 WriteLine ×2、NormalizeLockKey 上方孤立 doc 归位到 AcquireDownloadLock；CommandLineSplitter 保留——其位与为非短路是有意语义已加注释） |
-| H8 | Medium | 多处 | 误导性命名：ReadLinesThrottled、_savePathLock、MyOptionBindingResult<T>、QualityName 档位映射顺序、nowId |
+| H8 | Medium | 多处 | 误导性命名：ReadLinesThrottled、_savePathLock、MyOptionBindingResult<T>、QualityName 档位映射顺序、nowId。**✅ 2026-10-01 全部 5 项收口**（3 项随 PR #69；余 2 项随批 2b-1/PR #76：`ReadLinesThrottled` → `ReadLinesDedupedAndCapped`、`QualityName` 补分支顺序文档，见第 29 轮） |
 | H9 | Medium | 多处 | 魔法数字集中常量（关停 30s/回调 2min/1048576/复核 15s/分片并发 8/退避 3000*2^n/完整性 0.8/FLV 常量 13 个） |
 | H10 | Medium | SubscriptionStore.cs:110-149,205 | 同一历史文件两套异常语义：抽 ReadHistoryLocked() 单入口 |
 | H12 | Low | 多处 | ✅ recevied 拼写修正、bool & bool 加非短路注释、SetUpServer→SetupServer 改名（1 定义+4 调用） |
@@ -664,3 +666,19 @@
 | 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
 | 状态计数 | H **9/4 → 10/3**（H5 ✅），合计 **79/11 → 80/10**；剩余 H6/H8/H10 + I6/I9/I10/I12/I16 + J1/J2 |
 | Info 级观察（不登记 RF） | ① `CallbackHostVerdict` 是"用枚举表达多结局"的正例——与批 4 拒绝 `ApiMode` 的判据一致：**结局可枚举且每个分支有独立处置**才引入，bool 组合语义不可枚举时不引入；② `IsLoopbackHost` 现在承担四种调用语义（Host 白名单 / Origin / 监听 / CLI），方法名仍准确，但若将来出现"需要 DNS 解析的回环判定"必须新开方法而非放宽它（文档已写明"刻意不做 DNS 解析"）；③ `ServeCommand` 依赖 `BBDownApiServer` 的静态判定属跨层引用，考虑到两处判定必须一致（否则启动守卫与 CLI 提示错位），这个方向的依赖比复制实现更安全 |
+
+---
+
+## 第 29 轮：REFACTOR_PLAN 批 2b-1 落地（H8 命名收口，2026-10-01）
+
+> 批 2b 按 2a/2b 先例再拆为 **2b-1（H8 余项，本轮）** 与 **2b-2（H10）**。本轮落地 2b-1（PR #76，合并提交 `9e9d7e7`）——**H8 全部 5 项收口**。**无新发现登记**，无行为变化。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| 命名核实 | ✅ 先读实现再定名（H8 原话要求"避免换成另一个不准确的名字"）：`ReadLinesThrottled` 的真实语义是**连续重复行合并**（只与上一行比较）+ **总行数封顶**，与时间无关 → `ReadLinesDedupedAndCapped`；四处引用（2 调用 + 定义 + `<see cref>`）同步，XML 引用由编译器校验 |
+| `QualityName` | ✅ 补"分支顺序即语义"文档：阈值臂需降序且整体先于精确值臂，反例与新增档位约定一并写明（映射结果一字未改） |
+| 机械等价对账 | ✅ `ExternalProcessRunner.cs` 显著代码行 **190 = 190**、`LiveStreamUtil.cs` **466 = 466**；两文件 `Logger`/`catch` 零差异；字面量差异仅来自 `<see cref>` 改名的 XML 引用与新注释 |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 状态计数 | H **10/3 → 11/2**（H8 ✅），合计 **80/10 → 81/9**；剩余 H6/H10 + I6/I9/I10/I12/I16 + J1/J2 |
+| Info 级观察（不登记 RF） | ① "改名"这类 R1 项的价值取决于**先读实现**：本次读完才发现"throttled"既不是时间限速也不是丢弃全部重复行（只合并**相邻**重复），若直接改为 `ReadLinesRateLimited` 反而制造新误导；② `QualityName` 一类"顺序即语义"的 switch，注释比改名更能防回归（读者重排的动机来自可读性，注释正对此动机）；③ 批 2b 已两次拆分（#69 三项改名 / #76 余两项），说明"条目内剩余项的风险与验证成本差异"是拆分的主要依据，而非条目边界 |
