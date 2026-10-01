@@ -74,8 +74,8 @@ public sealed class SystemProcessRunner : IExternalProcessRunner
 
         // 先启动 stdout/stderr 读取再等待退出，避免子进程写满管道缓冲区时
         // 双方互相等待（管道已满 → 子进程阻塞 → WaitForExit 永不返回）造成死锁。
-        var stdoutTask = spec.OnStandardOutput != null ? ReadLinesThrottled(p.StandardOutput, spec.OnStandardOutput) : null;
-        var stderrTask = spec.OnStandardError != null ? ReadLinesThrottled(p.StandardError, spec.OnStandardError) : null;
+        var stdoutTask = spec.OnStandardOutput != null ? ReadLinesDedupedAndCapped(p.StandardOutput, spec.OnStandardOutput) : null;
+        var stderrTask = spec.OnStandardError != null ? ReadLinesDedupedAndCapped(p.StandardError, spec.OnStandardError) : null;
         Task? stdinTask = null;
         if (spec.StandardInput != null)
         {
@@ -117,7 +117,7 @@ public sealed class SystemProcessRunner : IExternalProcessRunner
     /// <summary>
     /// 带 5 秒超时兜底地等待 stdout/stderr/stdin 管道任务全部完成。
     /// 仅在取消/超时（进程已被 Kill）的清理路径使用：Kill 后管道断裂会令
-    /// <see cref="ReadLinesThrottled"/>/<see cref="WriteStdinAsync"/> 结束，但极端情况下
+    /// <see cref="ReadLinesDedupedAndCapped"/>/<see cref="WriteStdinAsync"/> 结束，但极端情况下
     /// 读取可能仍短暂挂起，这里限制等待时间保证清理永不阻塞调用线程。
     /// 清理路径的任何异常都不应掩盖主路径已抛出的取消/超时异常，故一律忽略。
     /// </summary>
@@ -180,10 +180,12 @@ public sealed class SystemProcessRunner : IExternalProcessRunner
     }
 
     /// <summary>
-    /// 行式读取外部进程输出并转发回调。合并连续重复行（如 ffmpeg 反复刷同一进度行），
-    /// 超过 <see cref="MaxLogLinesPerProcess"/> 行后只提示一次截断。
+    /// 行式读取外部进程输出并转发回调。两重"节流"都在这里（此前名为 ReadLinesThrottled，
+    /// 容易被读成"按时间限速"，实际与时间无关）：① 合并**连续重复**行（如 ffmpeg 反复刷
+    /// 同一进度行，注意只与上一行比较，非相邻的重复行仍会转发）；② 总行数超过
+    /// <see cref="MaxLogLinesPerProcess"/> 后只转发一条截断提示。
     /// </summary>
-    private static async Task ReadLinesThrottled(StreamReader reader, Action<string> onLine)
+    private static async Task ReadLinesDedupedAndCapped(StreamReader reader, Action<string> onLine)
     {
         int lines = 0;
         string? last = null;
