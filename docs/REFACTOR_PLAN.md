@@ -52,6 +52,7 @@
 | **I2 补充**（2026-10-01） | `ExtractTracksAsync` ≈430~532 行 | ✅ **实测 532 行**（`Parser.cs:152-683`），占该文件 68% | 与描述一致；拆解后主方法 **39 行**，新增 15 个私有方法 + 3 个私有类型（见 §6 批 4） |
 | **H3 补充**（2026-10-01） | "`RangeDownloadToTmpAsync`（10 参），**4 处调用**" | ✅ 10 参确认；调用点实测 **2 处**（`BBDownDownloadUtil.cs:481`/`:816`），其余命中均为注释 | 范围 -2；无兼容重载需求 |
 | **H2 补充**（2026-10-01） | "`MuxAV` 20 参 / `MuxByMp4box` 15 参，仓内 13 处调用点" | ✅ `MuxAV` **20 参**确认；`MuxByMp4box` 实测 **16 参**；`MuxAV` 调用点 **13 处**中 12 处在测试（经兼容重载，零改动），1 处生产（`Download.cs`）已迁到参数对象 | 参数对象 + 兼容重载按计划落地，见 §6 批 3a |
+| **I1 补充**（2026-10-01） | "\`DownloadPageAsync\` ~520 行；弹幕块 ~55 行重复 / CoverOnly 分支 / 已有产物跳过" | 实测 **182 行**（批 3b 后）；登记所述三块**已在早前批次拆入** \`DownloadPageExecutor\`（\`DownloadPageExecution.cs:84-111\`：弹幕 → CoverOnly → 跳过已有产物）与 \`DownloadPageAssets\`，主方法内已无这些块 | **本批只拆剩余两块**：执行上下文装配（34 行）→ \`BuildPageExecutionContext\`、解析失败诊断（24 行）→ \`ReportNoTrackFailure\`；主方法 **182 → 141 行** |
 | **I5 补充**（2026-10-01） | "`SetUpWork` 10 元组" | 实测 **9 元组**；透传链 **4 层**：`SetUpWork` → `DownloadPagesAsync`（**11 参**）→ `DownloadPageAsync`（**15 参**）→ 各阶段 | 三层一并收敛：`DownloadContext`（9 字段）+`DownloadPagesAsync` 4 参+`DownloadPageAsync(PageDownloadRequest)` |
 | **I13 补充**（2026-10-01） | "`Page` 5 个阶梯构造器（8/9/10/12 参）；`EntityTests` 仅 3 例" | ✅ 5 个构造器 = 4 个阶梯 + 1 个拷贝构造；调用点实测 **11 处**（8 生产 + 3 测试），其中 **2 处**用拷贝构造（保留）；`EntityTests` 3 → **6 例** | 删 4 阶梯 + 无参构造；11 处全改初始化器（`required` 由编译器强制） |
 | **H1 补充**（2026-10-01） | "God 类 1683 行 / 52 方法" | 实测 **1683 行 / 72 个成员块**（字段+方法+类型），类确为 `partial`；文件尾部另堆着 **6 个顶层类型**（含 2 个 AOT 源生成上下文） | **改为文件级切分**（7 文件，成员逐字搬运）：不新建 `ServeSecurityMiddleware` 等 4 个独立类型——这些成员共享同一份实例状态（任务列表 / 锁 / 闸门），外置状态属行为风险改动，超出"零风险按成员切分"范围 |
@@ -205,8 +206,9 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 6（文件最大：1683 行，护栏 51 例）— PR #64（7 文件切分，无代码行丢失/重复）
   → ✅ 批 3a（H2/H3 参数对象）— PR #65
   → ✅ 批 3b（I5 DownloadContext / I13 Page 初始化器）— PR #66
-  → 批 5（下载管线拆解：I1/H4/H5）              ← 下一批
-  → 批 2 → 批 7
+  → ✅ 批 5a（I1 拆解：上下文装配 + 失败诊断）— PR #67
+  → 批 5b（H4 深层嵌套：预检决策 + DownloadClipWithRetry）  ← 下一批
+  → 批 5c（H5 重复簇 6 个辅助）→ 批 2 → 批 7
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
@@ -218,7 +220,9 @@ dotnet format BBDown.sln --verify-no-changes
 | 6 | `refactor/serve-decomposition` | #64 | ✅ 已完成（2026-10-01；成员逐字搬运，无代码行丢失/重复） |
 | 3a | `refactor/parameter-objects` | #65 | ✅ 已完成（2026-10-01；`MuxRequest`/`RangeDownloadRequest` + 兼容重载等价性测试） |
 | 3b | `refactor/context-and-page` | #66 | ✅ 已完成（2026-10-01；9 元组 → `DownloadContext`，`Page` 初始化器） |
-| 5 | `refactor/download-pipeline` | — | ⏳ 待开工 |
+| 5a | `refactor/download-pipeline` | #67 | ✅ 已完成（2026-10-01；主方法 182 → 141 行） |
+| 5b | `refactor/download-pipeline`（续） | — | ⏳ 待开工（**下一批**：H4） |
+| 5c | `refactor/download-pipeline`（续） | — | ⏳ 待开工（H5） |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
 | 7 | `refactor/remaining-structure` | — | ⏳ 待开工 |
 
@@ -276,6 +280,14 @@ dotnet format BBDown.sln --verify-no-changes
 | I13 | `Page` 删 4 个阶梯构造器（8/9/10/12 参），保留拷贝构造 + 新增无参构造；**11 处调用点**（8 个 fetcher + 3 处测试）改对象初始化器——`required` 字段由编译器强制，`aid/cid/epid` 的净化仍只在属性 setter 收口 | **前置**：`EntityTests` 先补 3 例断言（字段映射 / 净化 / 拷贝构造，3 → 6 例） |
 | 机械改写兜底 | ✅ 纯字面量多重集比对（7 个 fetcher + `PathFormatTests` + `SubCheckPathSelectionTests`）**零差异**；生成器把 9 处行尾注释挂错字段（`epid = "", //epid` → 注释落到 `title`），已按"注释随原实参"修复，可读性保持不变 | — |
 | 验证 | ① build 0 警告 0 错误；② 单测 **786 → 789**（+3 `EntityTests`）；③ `dotnet format --verify-no-changes` exit 0；④ `Page` 构造语义由 6 例断言钉住（重构前后同一批断言） | — |
+
+**批 5a（I1）· PR #67**：
+
+| 项 | 落地内容 | 安全网 |
+|---|---|---|
+| I1 | `DownloadPageAsync` **182 → 141 行**：拆出 `BuildPageExecutionContext`（34 行执行上下文装配，纯构造无副作用）与 `ReportNoTrackFailure`（24 行"无可用轨道"诊断，恒返回 false） | DownloadPipelineTests 34 例 + 全量单测 |
+| 口径修正 | 登记所述的"弹幕块 ~55 行重复 / CoverOnly 分支 / 已有产物跳过"三块**已在早前批次拆入** `DownloadPageExecutor`（`DownloadPageExecution.cs:84-111`）与 `DownloadPageAssets`——本批只拆剩余两块（见 §1） | — |
+| 验证 | ✅ build 0 警告 0 错误；单测 **789/789**（无新增用例：两块均为纯搬运，行为由既有 34 例管线测试兜底）；`dotnet format --verify-no-changes` exit 0 | — |
 
 
 

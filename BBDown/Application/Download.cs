@@ -138,6 +138,77 @@ internal partial class Program
     /// <summary>
     /// 下载单个分P。返回 false 表示该分P最终失败，供调用方避免将其记为已完成。
     /// </summary>
+    /// <summary>
+    /// 组装单页执行上下文（I1 拆解：原 <c>DownloadPageAsync</c> 内 34 行对象初始化）。
+    /// 字段全部来自请求上下文与本轮解析结果，无副作用。
+    /// </summary>
+    private static PageExecutionContext BuildPageExecutionContext(
+        PageDownloadRequest request,
+        ParsedResult parsedResult,
+        List<Subtitle> subtitleInfo,
+        List<AudioMaterial> audioMaterial,
+        BBDownDownloadUtil.DownloadConfig downloadConfig,
+        string desc,
+        string title,
+        string pic,
+        string coverPath,
+        int pagesCount,
+        long pubTime,
+        CancellationToken cancellationToken)
+        => new()
+        {
+            Page = request.Page,
+            Options = request.Job.Options,
+            VideoInfo = request.Job.VideoInfo,
+            SelectedPagesInfo = request.SelectedPagesInfo,
+            ParsedResult = parsedResult,
+            Description = desc,
+            Title = title,
+            Pic = pic,
+            CoverPath = coverPath,
+            Lang = request.Job.Lang,
+            SubtitleInfo = subtitleInfo,
+            AudioMaterial = audioMaterial,
+            DownloadConfig = downloadConfig,
+            Finalizer = CreateDownloadFinalizer(),
+            DownloadDanmaku = request.Job.DownloadDanmaku,
+            DownloadDanmakuFormats = request.Job.DownloadDanmakuFormats,
+            SavePathFormat = request.SavePathFormat,
+            PagesCount = pagesCount,
+            ApiType = request.Job.ApiType,
+            PubTime = pubTime,
+            RelatedTask = request.Job.RelatedTask,
+            CancellationToken = cancellationToken,
+        };
+
+    /// <summary>
+    /// 无可用轨道（既非 DASH 也非 FLV）时的失败诊断（I1 拆解：原 <c>DownloadPageAsync</c> 分支内联块）。
+    /// 始终返回 false，供调用方直接作为分P结果——解析失败不能报告假成功。
+    /// </summary>
+    private static bool ReportNoTrackFailure(ParsedResult parsedResult, MyOption options)
+    {
+        if (options.DecryptDrm)
+        {
+            Logger.LogError("此视频需要大会员登录才能获取完整DRM内容。");
+            Logger.LogError("请先运行: BBDown login  或使用 --cookie 参数");
+        }
+        else
+        {
+            Logger.LogError("解析此分P失败(建议--debug查看详细信息)");
+        }
+        if (parsedResult.WebJsonString.Length < 100)
+        {
+            Logger.LogError(parsedResult.WebJsonString);
+        }
+        // 完整播放 JSON 可能含带签名的媒体地址；只记录长度和摘要，避免临时 URL 泄漏。
+        var webJson = parsedResult.WebJsonString;
+        if (Config.Current.DebugLog)
+            Logger.LogDebug("WebJson {0} chars: {1}",
+                webJson.Length,
+                webJson.Length > LogJsonSummaryMaxChars ? webJson[..LogJsonSummaryMaxChars] + "…" : webJson);
+        return false;
+    }
+
     private static async Task<bool> DownloadPageAsync(PageDownloadRequest request, CancellationToken cancellationToken = default)
     {
         string desc = string.IsNullOrEmpty(request.Page.desc) ? request.Job.VideoInfo.Desc : request.Page.desc;
@@ -201,31 +272,9 @@ internal partial class Program
                         RelatedTask = request.Job.RelatedTask,
                     };
 
-                    var executionContext = new PageExecutionContext
-                    {
-                        Page = request.Page,
-                        Options = request.Job.Options,
-                        VideoInfo = request.Job.VideoInfo,
-                        SelectedPagesInfo = request.SelectedPagesInfo,
-                        ParsedResult = parsedResult,
-                        Description = desc,
-                        Title = title,
-                        Pic = pic,
-                        CoverPath = coverPath,
-                        Lang = request.Job.Lang,
-                        SubtitleInfo = subtitleInfo,
-                        AudioMaterial = audioMaterial,
-                        DownloadConfig = downloadConfig,
-                        Finalizer = CreateDownloadFinalizer(),
-                        DownloadDanmaku = request.Job.DownloadDanmaku,
-                        DownloadDanmakuFormats = request.Job.DownloadDanmakuFormats,
-                        SavePathFormat = request.SavePathFormat,
-                        PagesCount = pagesCount,
-                        ApiType = request.Job.ApiType,
-                        PubTime = pubTime,
-                        RelatedTask = request.Job.RelatedTask,
-                        CancellationToken = cancellationToken,
-                    };
+                    var executionContext = BuildPageExecutionContext(
+                        request, parsedResult, subtitleInfo, audioMaterial, downloadConfig,
+                        desc, title, pic, coverPath, pagesCount, pubTime, cancellationToken);
                     var dashPreparation = PrepareDashTracks(parsedResult, request.Job.Options, request.Page, request.Job.EncodingPriority, request.Job.DfnPriority);
                     if (dashPreparation.EarlyResult.HasValue) return dashPreparation.EarlyResult.Value;
 
@@ -256,26 +305,7 @@ internal partial class Program
                     else
                     {
                         // 无可用轨道（既非 DASH 也非 FLV）→ 解析失败，不能报告假成功。
-                        if (request.Job.Options.DecryptDrm)
-                        {
-                            Logger.LogError("此视频需要大会员登录才能获取完整DRM内容。");
-                            Logger.LogError("请先运行: BBDown login  或使用 --cookie 参数");
-                        }
-                        else
-                        {
-                            Logger.LogError("解析此分P失败(建议--debug查看详细信息)");
-                        }
-                        if (parsedResult.WebJsonString.Length < 100)
-                        {
-                            Logger.LogError(parsedResult.WebJsonString);
-                        }
-                        // 完整播放 JSON 可能含带签名的媒体地址；只记录长度和摘要，避免临时 URL 泄漏。
-                        var webJson = parsedResult.WebJsonString;
-                        if (Config.Current.DebugLog)
-                            Logger.LogDebug("WebJson {0} chars: {1}",
-                                webJson.Length,
-                                webJson.Length > LogJsonSummaryMaxChars ? webJson[..LogJsonSummaryMaxChars] + "…" : webJson);
-                        return false;
+                        return ReportNoTrackFailure(parsedResult, request.Job.Options);
                     }
                 }
                 // FormatException/OverflowException（RF-31）：SortTracks 的服务器可控 id
