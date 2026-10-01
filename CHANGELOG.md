@@ -2,6 +2,12 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **DRM 解密调用 mp4decrypt 的参数形式错误（解密必然失败）**：旧实现把 `kid:key` 写进临时文件后用 `--key-file` 传给 mp4decrypt，而 Bento4 的 mp4decrypt **只有** `--key <id>:<key>` 这一个传密钥的选项——实际报 `ERROR: unexpected argument (<输入文件>)`（退出码 1），页面级重试 3 次后整页失败。现改为 `--key <kid>:<key>`，并顺带不再把密钥写入磁盘临时文件（旧路径既不可用又会在临时目录留下密钥）。本机实测：Bento4 `mp4encrypt --method MPEG-CENC` 加密后按新参数解密，解出的基本流与原文**逐字节一致**。
+
 ## [1.7.1] - 2026-10-01
 
 ### 新增
