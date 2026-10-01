@@ -20,16 +20,18 @@
 | E 韧性 Core | 6 | 6 | 0 |
 | F 测试 Infra | 12 | 12 | 0 |
 | G 测试结构 | 10 | 10 | 0 |
-| H 可读性 Infra | 13 | 9 | **4**（H5、H6、H8、H10；H1~H4/H7/H9/H11/H12/H13 已完成） |
+| H 可读性 Infra | 13 | 10 | **3**（H6、H8、H10；H1~H5/H7/H9/H11/H12/H13 已完成） |
 | I 可读性 App/Core | 22 | 17 | **5**（I6、I9、I10、I12、I16；I1~I5/I7/I8/I11/I13~I15/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **79** | **11** |
+| **合计** | **90** | **80** | **10** |
 
 > **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 + 批 6 + 批 3a 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮）、H1 随批 6 落地（第 21 轮）、H2/H3 随批 3a 落地（第 22 轮），I 组已完成 8 → 13、H 组 4 → 7；剩余项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余按该计划 §6 批次序推进，下一批为批 3b：I5/I13）。
 
 > 回填前的历史快照为 `90 / 44 / 46`（2026-08）；本次补记的 21 项完成度分布为 F +6、G +6、B +1（B3）、H +3（H7/H11/H12/H13 中除 H11 外新补）、I +5（I8 与 I17~I20）。
 
 > **回填（2026-10-01，REFACTOR_PLAN 批 5b 后）**：H4 随批 5b 落地（PR #70，第 26 轮），H 组 8 → 9 / 剩余 5 → 4；同时回填 **I7**——第 19 轮已记录"批 1a（PR #60）验收 ✅"，但状态总览漏记，本轮一并修正（I 组 16 → 17 / 剩余 6 → 5）。合计由 **77/13 → 79/11**。剩余 11 项 = H5/H6/H8/H10（批 5c/2b/7）+ I6/I9/I10/I12/I16（批 7，其中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**）+ J1/J2（跟踪项）。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 5c-2 后）**：H5 随 5c-1（PR #72）+ 5c-2（PR #74）收口（第 27/28 轮），H 组 9 → 10 / 剩余 4 → 3；合计 **79/11 → 80/10**。剩余 10 项 = H6/H8/H10（批 2b 收尾 + 批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。**批 5（I1/H4/H5）至此全部收口**。
 
 ---
 
@@ -109,7 +111,7 @@
 | H2 | High | BBDownMuxer.cs:64,174 | MuxAV 20 参 / MuxByMp4box 15 参改 MuxRequest 参数对象 |
 | H3 | High | BBDownDownloadUtil.cs:28 | RangeDownloadToTmpAsync 10 参 → RangeDownloadRequest + 拆两段 |
 | H4 | High | BBDownDownloadUtil.cs:227,611 | Core 170/200 行嵌套 6-7 层：预检决策方法 + DownloadClipWithRetryAsync；6 个"检查 .tmp/.aria2"块收敛。**✅ 2026-10-01 批 5b 已落地**（PR #70：`DownloadFileCoreAsync` 163 → 91 行、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层；"目标等长 → 权威总长复核" 3 处副本 → `VerifyExistingTargetAsync`；logger 30 → 28 / catch 22 = 22，见第 26 轮） |
-| H5 | High | 多处 | 重复簇抽 6 个辅助方法（任务收尾四元组 ×4、IsLoopback 判定、SSRF 字面 IP ×2、DNS+逐地址校验 ×3、头块 ×3、权威大小复核 ×3、clip 路径推导 ×4）。⚠️ **口径修正（第 26 轮）**："权威大小复核 ×3"已由批 5b 的 `VerifyExistingTargetAsync`（PR #70）消化。**🔶 5c-1 已落地（第 27 轮，PR #72）**：clip 路径推导 ×4 → `ClipPathFor`、头块 ×3 → `ApplyMediaRequestHeaders`；**余 4 簇**（IsLoopback 判定实测 4 份实现、SSRF 字面 IP ×2、DNS + 逐地址校验实测 2 处、任务收尾四元组 ×4）留待 5c-2 |
+| H5 | High | 多处 | 重复簇抽 6 个辅助方法（任务收尾四元组 ×4、IsLoopback 判定、SSRF 字面 IP ×2、DNS+逐地址校验 ×3、头块 ×3、权威大小复核 ×3、clip 路径推导 ×4）。⚠️ **口径修正（第 26 轮）**："权威大小复核 ×3"已由批 5b 的 `VerifyExistingTargetAsync`（PR #70）消化。**🔶 5c-1 已落地（第 27 轮，PR #72）**：clip 路径推导 ×4 → `ClipPathFor`、头块 ×3 → `ApplyMediaRequestHeaders`；**✅ 5c-2 已落地（第 28 轮，PR #74）**：IsLoopback 判定 4 份实现 → `IsLoopbackHost` 唯一实现、SSRF 字面 IP ×2 + 归一化 ×5 → `TryParseLiteralIp`/`NormalizeMappedIpv4`（复用 `IsUnsafeLiteralIpAddress`）、DNS 逐地址校验 ×2 → `ResolveCallbackAddressesAsync` + `CallbackHostVerdict`、任务收尾四元组 ×4 → `FinishTask`——**H5 7 簇全部收口** |
 | H6 | Medium | LiveStreamUtil.cs:75,222,286 | 异常消息文本契约改 LiveRoomClosedException 专用异常 |
 | H7 | Medium | 多处 | ✅ 死代码逐条删除（BBDownUtil.GetFiles、UrlResolver.MdRegex、GetAvIdAsync 无 token 重载、空 WriteLine ×2、NormalizeLockKey 上方孤立 doc 归位到 AcquireDownloadLock；CommandLineSplitter 保留——其位与为非短路是有意语义已加注释） |
 | H8 | Medium | 多处 | 误导性命名：ReadLinesThrottled、_savePathLock、MyOptionBindingResult<T>、QualityName 档位映射顺序、nowId |
@@ -643,3 +645,22 @@
 | 状态计数 | **不变**（H5 作为条目未整体完成：余 4 簇 → H 仍为 9/4、合计 **79/11**） |
 | 范围决策 | 5c-2 全部落在 **webhook SSRF 守卫 / 监听地址判定**（`BBDownApiServer.Callback.cs`、`.Security.cs`、`ServeCommand.cs`）——判定语义一动即影响安全边界，须单独 PR + 逐判定对照，不在 5c-1 内合并推进 |
 | Info 级观察（不登记 RF） | ① `CleanStaleClipsFor` 用 `*_<stem>.vclip` glob 而非 `ClipPathFor`，看似可合并，但前者按"目录内任意序号"匹配（含其它任务残留），后者按确定的 5 位序号——**语义不同，刻意不合并**，其 `.vclip/.aclip` 一对字面量因此保留；② 三处头块收敛后 helper 的参数名恰好与原调用点局部名一致（`request`），故 `request.Headers.*` 三行在显著行对账中计数不变，属对账口径的正常现象 |
+
+---
+
+## 第 28 轮：REFACTOR_PLAN 批 5c-2 落地（H5 serve 侧四簇，2026-10-01）
+
+> 批 5c 增量二：serve 侧四簇收敛（PR #74，合并提交 `d044a05`）。**H5 7 簇全部收口**，批 5（I1/H4/H5）随之完成。**无新发现登记**；一处实现事实修正（`IsSafeCallbackUrlAsync` 的字面 IP 分支与 `IsUnsafeLiteralIpAddress` 是两份人工同步的同一判定）。用户可见行为零变化。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| IsLoopback 判定 | ✅ **4 份实现 → 1**：`BBDownApiServer.IsLoopbackHost` 为唯一实现，`Security.IsLoopbackOrigin` / `IsLoopbackListenAddress` / `ServeCommand.IsLoopbackListenUrl` 委托；`"localhost"` 字面量 3+1 → 1；CLI 与服务器启动守卫从此不可能漂移 |
+| 字面 IP 判定 | ✅ `TryParseLiteralIp`（判定 + IPv4-mapped 归一化）+ `NormalizeMappedIpv4`；`IsSafeCallbackUrlAsync` 的 8 行内联敏感段检查改为 `!IsUnsafeLiteralIpAddress(...)`，与连接侧结构性同源（此前靠注释声明一致） |
+| DNS + 逐地址校验 | ✅ `ResolveCallbackAddressesAsync` + `CallbackHostVerdict`：解析失败 / 零地址（RF-55）/ 命中敏感段三种结局与三条 Warn 文案逐字保留，校验侧与连接侧共用同一份判定 |
+| 任务收尾四元组 | ✅ `FinishTask(task)`：五条语句（lock + Dispose + Remove + Add + Persist）各 **4 → 1**，四条退出路径共用；"必须在 `_taskLock` 内 Dispose"的理由随注释进入方法文档 |
+| 机械等价对账 | ✅ 四文件 Logger 调用 **7/3/4/7 不变**；catch 仅 Callback.cs **4 → 3**（两个 `SocketException` catch 合并，无类型被吞）；显著代码行 183/242/81/199 → 178/231/75/185，增删逐条一一对应 |
+| 安全网 | ✅ `ServeApiSecurityTests` 40 处判定引用（`IsLoopbackHost`/`IsLoopbackOrigin`/SSRF 字面 IP/回环与链路本地 IPv6 用例）+ `ServeCommandTests`（非回环无 token 拒绝启动）+ `ServeApiHttpTests`（任务生命周期）；无新增用例（等值搬运） |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 状态计数 | H **9/4 → 10/3**（H5 ✅），合计 **79/11 → 80/10**；剩余 H6/H8/H10 + I6/I9/I10/I12/I16 + J1/J2 |
+| Info 级观察（不登记 RF） | ① `CallbackHostVerdict` 是"用枚举表达多结局"的正例——与批 4 拒绝 `ApiMode` 的判据一致：**结局可枚举且每个分支有独立处置**才引入，bool 组合语义不可枚举时不引入；② `IsLoopbackHost` 现在承担四种调用语义（Host 白名单 / Origin / 监听 / CLI），方法名仍准确，但若将来出现"需要 DNS 解析的回环判定"必须新开方法而非放宽它（文档已写明"刻意不做 DNS 解析"）；③ `ServeCommand` 依赖 `BBDownApiServer` 的静态判定属跨层引用，考虑到两处判定必须一致（否则启动守卫与 CLI 提示错位），这个方向的依赖比复制实现更安全 |
