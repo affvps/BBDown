@@ -1,9 +1,10 @@
 # BBDown 项目分析报告（PROJECT_ANALYSIS）
 
-> 创建时间：2026-09-18
-> 对应审查轮次：第 16 轮全库续审（发现清单见 [REVIEW_FINDINGS.md](REVIEW_FINDINGS.md) RF-72~RF-88）
-> 基线：`dotnet build -c Release` 0 警告 0 错误；单测 700/700 全绿（PR gate 过滤器）；`dotnet format --verify-no-changes` 通过
-> 分析方式：源码精读（`bin/obj` 除外）+ 三方并行深查 + Medium 全量人工复核 + 构建/测试/CI 实测
+> 更新日期：2026-10-02
+> 当前源码基线：`v1.7.2`（`1a720db`，`origin/master`）
+> 当前验证：Release 构建通过；单测 853/853 通过；`dotnet format --verify-no-changes` 通过
+> 分析范围：当前目录规模、关键架构/安全实现与 CI 配置检查；结合历史审查记录，不等同于逐行安全审计。
+> 未在本次本机验证：真实网络集成、跨平台 Native AOT 发布产物。历史发现见 [REVIEW_FINDINGS.md](REVIEW_FINDINGS.md) RF-1~RF-98；剩余跟踪项见 [REVIEW_PLAN.md](REVIEW_PLAN.md)。
 
 ---
 
@@ -11,13 +12,13 @@
 
 BBDown 是一个命令行 B 站下载器（C# / .NET 10 / Native AOT），由一个 CLI 可执行程序 + 一个嵌入式 Kestrel API 服务（serve 模式）组成。
 
-| 项目 | 文件数 | 代码行 | 职责 |
-|------|--------|--------|------|
-| `BBDown/` | 41 | 9,729 | CLI 应用层：命令（Spectre.Console.Cli）、下载管线、混流、直播、DRM、serve |
-| `BBDown.Core/` | 34 | 6,186 | 引擎库：链接/元数据 fetcher、Parser、HTTP 层、弹幕/字幕、DRM 密码学、日志 |
-| `BBDown.Tests/` | 61 | 10,063 | xUnit 套件（单测 + 本地集成 + 真网络集成） |
+| 项目 | C# 文件数 | C# 代码行 | 职责 |
+|------|-----------|-----------|------|
+| `BBDown/` | 59 | 11,787 | CLI 应用层：命令（Spectre.Console.Cli）、下载管线、混流、直播、DRM、serve |
+| `BBDown.Core/` | 38 | 7,242 | 引擎库：链接/元数据 fetcher、Parser、HTTP 层、弹幕/字幕、DRM 密码学、日志 |
+| `BBDown.Tests/` | 72 | 13,139 | xUnit 套件（单测 + 本地集成 + 真网络集成） |
 
-规模特征：**应用层体量最大且集中**（`BBDownApiServer.cs` 1,529 行、`BBDownDownloadUtil.cs` 1,159 行、`Download.cs` 1,123 行三个文件占了应用层的 ~39%）；Core 层相对均衡（最大 `HTTPUtil.cs` 854 行）。测试代码量（10,063 行）超过被测代码总量的一半，测试投入显著。
+规模特征：以上统计仅包含各项目中非 `bin/obj` 的 C# 源文件，共 169 个文件、32,168 行。测试代码约为生产代码（`BBDown/` + `BBDown.Core/`）的 69%，测试投入显著。下载与 serve 已拆分出多个职责文件；当前较大的生产文件包括 `BBDownDownloadUtil.cs`（1,327 行）、`Parser.cs`（923 行）和 `HTTPUtil.cs`（913 行），仍有继续控制单文件复杂度的空间。
 
 ---
 
@@ -40,20 +41,20 @@ BBDown 是一个命令行 B 站下载器（C# / .NET 10 / Native AOT），由一
                           Bilibili API / CDN / gRPC
 ```
 
-依赖方向清晰：`BBDown → BBDown.Core → (B 站网络)`，无反向依赖。Core 不引用应用层（唯一的反向耦合是 `BBDown.Core` 通过 `Config.Current` 读取运行期配置快照，靠 `AsyncLocal<AppSettings>` 做 serve 并发隔离）。
+依赖方向清晰：`BBDown → BBDown.Core → (B 站网络)`，Core 不引用应用层。运行期配置快照由 `BBDown.Core.Config` 提供，靠 `AsyncLocal<AppSettings>` 隔离 serve 并发任务流。
 
 ### 2.1 三条关键数据流
 
-1. **CLI 下载**：`Program.Main` → `BBDownConfigParser.MergeWithConfig`（配置文件合并）→ `DefaultCommand` → `DoWorkAsync` → `SetUpWork`（选项规范化/二进制探测/工作目录）→ `GetVideoInfoAsync`（凭据 + WBI + fetcher）→ `DownloadPagesAsync`（逐分 P）→ `DownloadPageAsync` → 轨道下载 → `MuxAndFinalizeAsync`（混流）。
-2. **serve 任务**：`POST /add-task` → `EnqueueDownloadTask`（立即返回 202 + JobId）→ `ProcessDownloadTaskAsync`（信号量闸门 → URL 解析 → `DownloadPagesAsync`）→ 状态/产物持久化。取消经 `/cancel/{id}` 联动 `CancellationTokenSource`。
-3. **网络层**：所有出站请求经 `HTTPUtil` 的池化 `HttpClient` 访问器，按"校验/不安全 × App/Media/Streaming/NoRedirect"矩阵隔离（9 个 `Lazy<HttpClient>` 实例 / 6 个访问器）。
+1. **CLI 下载**：`Program.Main` → `BBDownConfigParser.MergeWithConfig` → `DefaultCommand` / `SetUpWork` → fetcher 与 `Parser` 解析 → `DownloadPagesAsync` 构造 `DownloadPagesRequest` 并交给 `DownloadOrchestrator` → `DownloadPageExecutor` 执行单页工作 → `DownloadFinalizer` 收尾混流。
+2. **serve 任务**：`POST /add-task` → 任务入队并返回 202 + JobId → `ProcessDownloadTaskAsync`（并发闸门、URL 解析、复用下载编排）→ 状态与产物持久化；`/cancel/{id}` 通过取消令牌中止在途任务。
+3. **网络层**：出站请求经 `HTTPUtil` 池化 `HttpClient` 访问器，分离证书校验、媒体下载、流式读取及禁止自动重定向等路径；携带凭据的请求避免未经校验的自动跨主机跳转。
 
 ### 2.2 值得维护者了解的设计特征
 
-- **异常分类即控制流**：下载管线用两级 `catch (Exception ex) when (ex is ...)` 白名单（页面级 `Download.cs:98` / 重试级 `:1097`）实现"单 P 失败隔离"。任何**不在白名单内**的异常类型都会穿透两级过滤器，中止整批并丢掉 webhook/failedPages 汇总。这是全项目最高频的缺陷族——第 12~16 轮共登记了 `NotSupportedException`、`AggregateException`、`ArgumentOutOfRangeException`、`FormatException`、`OverflowException`、`UnauthorizedAccessException`、`Win32Exception`、`ArgumentException`、`InvalidProtocolBufferException`、`TimeoutException`，本轮又发现 `InvalidDataException`（RF-72）。**每次新增一个可能抛出新异常类型的调用点，都要评估是否需要源头规范化或扩展白名单。**
-- **信任边界显式化**：项目把 `--host`/`--ep-host`/`--tv-host` 镜像站与 `--insecure` 中间人明确列为对抗源（几乎每个净化注释都引用这个威胁模型），对"服务器可控字符串"进文件路径/日志的每一处做净化（RF-18/19/36/53/54/58 族）。本轮的 RF-73 就是这一原则在"文件名键 vs 叶子元数据"上的覆盖缺口。
-- **Native AOT 约束渗透全码**：`PublishAot=true`、JSON 必须走源生成上下文（6 个 `JsonSerializerContext`）、禁动态反射、裁剪警告靠 `NoWarn` 抑制。这限制了可选库（如 `IHttpClientFactory`、`Microsoft.Extensions.Logging` 的 JSON 行）并让 `AotCliBindingTests` 这类防线成为必需。
-- **静态可变状态的历史债**：`Program` 是 12 个 `partial class` 文件拼成的巨型静态类，`BBDownMuxer.FFMPEG`/`BBDownAria2c.ARIA2C`/`Program.IsServeMode` 是进程级静态字段。项目已用 `AsyncLocal` 配置快照 + `SanitizeUntrustedOptions` 路径清零把 serve 并发污染收口，但静态可变状态本身仍是风险源（OPTIMIZATION_PLAN P0-1）。
+- **异常分类即控制流**：`ExceptionPolicies` 已把可重试、可跳过和 best-effort 失败分类为具名策略，下载编排与订阅/稍后再看命令共用单条目失败规则。站点仍须正确区分超时与用户取消；新增可能抛出异常的调用点仍需评估其失败分类。
+- **信任边界显式化**：请求重定向逐跳校验，携带凭据的路径禁用自动跨主机跳转；serve 对非回环监听要求 token，并校验认证、回环 Host、写端点 Origin 和 JSON Content-Type。服务器返回值进入路径、日志或 API 响应前仍需持续检查净化边界。
+- **Native AOT 约束渗透全码**：`PublishAot=true`，JSON 使用源生成上下文，CLI 参数绑定有 AOT 回归测试。与此同时，主应用项目的 `NoWarn` 仍屏蔽部分 trimming/AOT 诊断，属于待清理的工具链债务，详见 [OPTIMIZATION_PLAN.md](OPTIMIZATION_PLAN.md)。
+- **依赖方向清晰但仍有静态耦合**：`BBDown → BBDown.Core → Bilibili API/CDN` 的依赖方向保持单向；`Config` 的 `AsyncLocal` 快照隔离 serve 请求配置。部分下载辅助、日志和媒体工具仍经 `Program` 静态入口组装，`BBDownApiServer` 也以多个 `partial` 文件共享实例状态，后续可继续缩小耦合面。
 
 ---
 
@@ -61,42 +62,41 @@ BBDown 是一个命令行 B 站下载器（C# / .NET 10 / Native AOT），由一
 
 ### 3.1 正面
 
-- **构建/格式门禁严格且真实**：Release 0 警告；`dotnet format --verify-no-changes` 在 CI 为硬门禁（实测 exit 0）；`.editorconfig` 统一 UTF-8/LF/4 空格/末尾换行。
-- **测试纪律强**：`failSkips: true`（任何 Skip 视为失败）、**零** `[Fact(Skip)]` 残留、程序集级串行、动态端口（`TestPort.Allocate`）、墙钟断言改区间重叠、进程树哨兵验证、共享状态 try/finally 快照恢复。这是少见的"主动防 CI 假绿"文化。
-- **安全纵深较完整**：HttpClient 池隔离矩阵、`VerifiedNoRedirectClient`（凭据载荷禁自动跳转）、重定向逐跳可信校验、gRPC 帧边界校验（含 48MB 解压上限）、DRM 密码学对照 RFC 4493、`CryptographicOperations.ZeroMemory`、`FixedTimeEquals`、弹幕 XML `DtdProcessing.Prohibit`（无 XXE）、webhook SSRF 三重防护、serve 的认证/CSRF/Host/Content-Type 四闸 fail-closed。
-- **韧性设计**：VOD 读停滞看门狗、直播"不设重试上限"的指数退避重连、断点续传的资源身份清单（防跨资源拼接）、混流事务化临时文件 + 原子替换、有界响应体（64MB）。
-- **文档与代码注释密度高**：几乎每处防御都有注释说明"为什么"与历史轮次（`RF-xx`）出处，可追溯性强。
+- **当前验证通过**：本次在基线 `1a720db` 上使用 .NET SDK 10.0.302 执行 Release 构建、PR 门禁单测过滤器（853 通过、0 失败、0 跳过）和 `dotnet format --verify-no-changes`，均通过。
+- **CI 覆盖面较全面**：PR workflow 有格式和 NuGet 漏洞门禁、安装并确认 ffmpeg 后的本地集成测试、Linux x64 AOT 冒烟及 Docker/serve 冒烟；网络集成测试会报告结果但设置为非阻断。
+- **测试纪律强**：`failSkips: true`、动态端口、隔离共享状态及针对 CLI 入口、AOT Settings 类型、异常策略和 serve 安全边界的回归测试，降低了静默旁路和假绿风险。
+- **安全纵深较完整**：HTTP 客户端池隔离、携带凭据的请求禁止未经校验的自动重定向、响应体和请求输入设上限；serve 的 token、失败限速、回环 Host、写端点 Origin/Content-Type 检查形成多层防护。
+- **韧性设计**：下载失败按单条目隔离并保留取消语义，外部进程使用逐项 argv、超时/取消时终止进程树；断点续传、混流收尾和直播重连路径都有相应测试。
+- **审查和变更可追溯**：RF-1~RF-98 均已记录处置结论；近期拆分计划记录了下载编排、API server、CLI 绑定和异常策略等改动的批次与验收依据。
 
-### 3.2 主要问题（本轮及历史登记）
+### 3.2 当前风险与维护债
 
-按性质归类，而非逐条重复 RF 编号：
+按当前状态归类；已修复的历史发现不再列为现存缺陷：
 
-| 类别 | 代表条目 | 性质 |
+| 类别 | 当前状态 | 影响 |
 |------|----------|------|
-| **异常逃逸面反复出现** | RF-72（`InvalidDataException`）、RF-14/31/43/44/47/48/49（历史） | 结构性：白名单式失败隔离 + 新增抛点未同步 = 周期性复发 |
-| **服务器可控值净化覆盖不全** | RF-73（`aid`/`cid` 路径键）、RF-18/58（叶子元数据）、RF-63（res/fps） | "旁支漏洞"：修复只覆盖登记声称的一部分引用面 |
-| **日志注入/灌盘面残留** | RF-74（serve 401 sink）、RF-70（WatchLater/Live title）、RF-54（派生串） | 同族 sink 逐个补齐，无统一入口 |
-| **假绿测试/门禁** | RF-75（复刻副本）、RF-76（AOT 防线 3/10）、RF-77（local-integration 可空跑）、RF-68/69（历史） | "看起来绿、实际没测到" |
-| **文档漂移** | RF-84（wiki 6 项）、RF-61/39/41/42（历史） | 每轮约 1 页；无单一口径源，修一处漏多处 |
-| **单体过重** | `BBDownApiServer.cs` 1,529 行、`DownloadPageAsync` ~760 行 | 可维护性债（OPTIMIZATION_PLAN P0-1） |
+| **Native AOT 诊断透明度** | 主项目仍抑制部分 trimming/AOT warnings；NuGet lock 文件已加入，但 CI 尚未启用 locked mode（详见 `OPTIMIZATION_PLAN.md` P0-3） | 依赖升级或新反射路径可能产生被屏蔽的警告；需持续审计 |
+| **外部 API / DRM 端到端验证** | 网络集成 job 为 `continue-on-error`；本次本机未跑网络集成或跨平台 AOT 发布。`v1.7.2` 修复了 `v1.7.1` 中 mp4decrypt 参数错误 | 本地单测不能完全覆盖 B 站接口变化、外部工具差异和真实媒体内容 |
+| **静态耦合** | 下载调度和单页执行已有注入边界，但部分辅助设施仍由 `Program` 静态入口组装；API server 多个 partial 文件仍共享实例状态 | 增加维护复杂度，部分整合测试仍难隔离生产边界 |
+| **剩余排期项** | `REVIEW_PLAN.md` 记录 90 项中 87 项完成、3 项剩余：I10 已决定不做，J1/J2 为 Ubuntu 18.04 apt 可用性及 GitHub Actions SHA 固定策略跟踪 | 属于已知跟踪项，不是当前未处置的 RF 安全/功能缺陷 |
+| **文档基线管理** | 审查和优化计划包含明确的历史基线与行号锚点 | 阅读时应以文档日期及当前源码为准，不能把历史快照当作当前实现状态 |
 
 ### 3.3 审查历史趋势
 
-项目已完成 **16 轮**审查，登记 `RF-1`~`RF-88`。观察到的模式：
+项目审查记录目前到第 **18** 轮，发现编号为 `RF-1`~`RF-98`；其中第 17、18 轮聚焦外部 PR 的回归面和测试覆盖，不应解读为两次新的全库审计。`REVIEW_FINDINGS.md` 中的发现均已修复或有明确的维持现状结论。
 
-- **收敛中但未收敛完**：High 级发现自早期后不再出现；Medium 级从功能缺陷转向"边界一致性/防线密闭性"（如 RF-72/73 都是"已有防线未覆盖全部引用面"）。
-- **"修复在位 ≠ 覆盖声称面"复发三次**（RF-51、RF-63、RF-68、本轮的 RF-73）：消纳批验证需要额外做"登记声称的引用面是否全部覆盖"的复核。
-- **旁支缺陷占比上升**：本轮 6 个 Medium 中 3 个（RF-72/73/74）是既有修复的旁支或同族漏网。
+- 多轮审查暴露的共同模式是边界覆盖和测试对生产入口的约束需要持续核对；后续批次已加强异常策略、路径/日志净化、CI 假绿防护和 CLI 入口测试。
+- 结构性重构已显著拆分下载与 API server 职责，但不代表静态状态和跨模块依赖已完全消除。
+- 最新评分基于当前快照和有代表性的代码/CI 路径检查；不是正式渗透测试，也不是对每个历史风险点重新逐行复核。
 
 ---
 
 ## 4. 风险热点（按影响排序）
 
-1. **整批中止杠杆（RF-72）**：任何未被两级过滤器覆盖的异常类型都会把"单 P 失败"放大为"整批放弃 + 丢 webhook"。本轮新增的 64MB 上限与 gRPC 帧校验本身是加固，但其抛出的 `InvalidDataException` 又成了新的逃逸面。**建议**：把两级过滤器视为"最后兜底"，对性能/安全加固引入的确定性失败类型统一在源头规范化为 `InvalidOperationException`（RF-14/43/47 先例）。
-2. **路径遍历（RF-73）**：服务器可控 `aid`/`cid`/`epid` 直拼路径，镜像站/中间人可令产物写出 `--work-dir` 之外，且 `CleanNonResumableWorkArtifacts` 会对其递归删除。**建议**：读取点 `[0-9]+` 白名单。
-3. **serve 未认证日志灌盘（RF-74）**：非回环+token 部署下，未认证客户端可无限刷 `bbdown-api.log`（无轮转）填充磁盘。**建议**：sink 脱敏 + 截断 + 日志限速。
-4. **假绿门禁（RF-75/76/77）**：入档/进度回归网无效、AOT 防线漏 7 个 Settings 类、local-integration 可静默空跑。**建议**：抽生产 helper、补齐类型枚举、CI 断言 ffmpeg 存在。
-5. **可维护性（OPTIMIZATION_PLAN P0-1）**：巨石文件阻碍单测与 review，且命令层无注入缝导致 RF-30/32/45 等语义只能"代码走查"验证。**建议**：`DownloadOrchestrator` 拆分（已在路线图）。
+1. **真实服务兼容性**：Bilibili API、DRM 取钥和媒体工具是外部依赖；网络集成结果不阻断 PR。`v1.7.2` 的 mp4decrypt 修复说明接口/工具契约仍需真实样例回归。建议维护代表性解析、DRM 解密和混流样例，并明确平台覆盖范围。
+2. **AOT/依赖警告被抑制**：AOT 兼容构建有 PR 冒烟，但 `NoWarn` 与未强制 locked restore 降低了依赖更新时的诊断透明度。建议按 `OPTIMIZATION_PLAN.md` P0-3 收敛抑制项并设计多 RID lock 文件工作流。
+3. **剩余静态耦合**：下载管线已有 `DownloadOrchestrator`/`DownloadPageExecutor`，但生产依赖仍部分由静态 `Program` 方法组装；API server partial 类型共享状态。建议以新行为测试为安全网渐进拆分，不做纯机械的大规模重写。
+4. **历史计划快照的可读性**：`REVIEW_PLAN.md`、`OPTIMIZATION_PLAN.md` 和 `REFACTOR_PLAN.md` 包含多轮回填与撰写时锚点。维护者应优先读顶部状态总览和最新日期，避免把旧轮次中的未修复列表当成当前积压。
 
 ---
 
@@ -104,24 +104,24 @@ BBDown 是一个命令行 B 站下载器（C# / .NET 10 / Native AOT），由一
 
 | 优先级 | 方向 | 关联 |
 |--------|------|------|
-| P0 | 拆分 `DownloadPagesAsync`/`DownloadPageAsync`/`BBDownApiServer`，引入注入缝使命令层可黑盒测试 | OPTIMIZATION_PLAN P0-1；解除 RF-30/32/45/72/73 的测试盲区 |
-| P0 | 建立"异常分类即控制流"的统一登记表（哪些类型在白名单、哪些在源头规范化），新增抛点时强制评估 | RF-72 及历史异常族 |
-| P1 | 服务器可控字符串"进路径/进日志"的统一净化入口（而非逐 sink 补丁） | RF-73/74/80 及历史净化族 |
-| P1 | 修复假绿门禁（抽生产 helper、补齐 AOT 类型、CI 断言 ffmpeg） | RF-75/76/77, RF-67/68/69 |
-| P1 | 文档单一权威源（选项表/退出码表/字段表/占位符表），减少跨页漂移 | RF-84 及历史文档族 |
-| P2 | Docker 配方修正 + PR CI 加镜像冒烟 | RF-85/87 |
-| P2 | 依赖与供应链（SharpZipLib 评估、`NoWarn` 收敛、lock 文件、CI 缓存） | OPTIMIZATION_PLAN P0-3 |
+| P0 | 收敛 Native AOT `NoWarn` 并为多 RID restore/publish 设计 locked mode | `OPTIMIZATION_PLAN.md` P0-3 |
+| P1 | 为关键外部链路维护可重复的解析、DRM 解密和混流端到端样例 | `NetworkIntegration` 非阻断；`v1.7.2` DRM 修复 |
+| P1 | 继续把静态 `Program` 设施和 API server 状态移入显式依赖边界 | `OPTIMIZATION_PLAN.md` P0-1 |
+| P2 | 维护文档顶部的当前基线、验证结果和剩余项，并将历史锚点明确标为快照 | `REVIEW_PLAN.md` / `REFACTOR_PLAN.md` / 本报告 |
 
 ---
 
 ## 6. 结论
 
-项目工程成熟度高：构建/格式/测试门禁真实有效，安全纵深与韧性设计覆盖面广，注释可追溯性强，且已具备 16 轮生产问题收敛的痕迹。**无致命缺陷**。
+基于 `v1.7.2` 当前源码、CI 配置与本次本地验证，工程健康度综合评分为 **8.2/10**。项目的测试纪律、安全边界和持续重构表现较强；主要扣分来自外部 API/DRM 真实场景覆盖、AOT 警告抑制及残留静态耦合。
 
-现存问题集中在三类系统性的"覆盖完整性"而非"机制缺失"：
+| 维度 | 评分 |
+|------|------|
+| 架构与可维护性 | 8.2/10 |
+| 正确性与韧性 | 8.0/10 |
+| 安全性 | 8.5/10 |
+| 测试与 CI | 9.0/10 |
+| AOT、依赖与发布 | 7.8/10 |
+| 文档与兼容性 | 7.8/10 |
 
-1. **失败隔离白名单的完整性**——每新增一个抛点就新增一个逃逸面（RF-72）；
-2. **净化/收口的完整性**——同一表达式里修了叶子、漏了键（RF-73），同一族 sink 修了一个、漏了另一个（RF-74、RF-80）；
-3. **验证的完整性**——测试/门禁存在假绿路径（RF-75/76/77）。
-
-这三类都可以用"统一入口 + 完整性复核"而非逐点打补丁来根治，是下一阶段技术投入的最高 ROI 方向。可维护性债（巨石文件）则是解除命令层测试盲区、把"代码走查验证"变成"自动化验证"的前置条件。
+评分是工程质量判断，不是正式安全认证。当前没有从审查记录中发现尚未处置的 RF 高/中风险项；这不代表外部服务变更、未覆盖的平台组合或未来代码修改没有回归风险。下一阶段应优先提升 AOT 诊断透明度和真实 DRM/API 场景的可重复验证。
