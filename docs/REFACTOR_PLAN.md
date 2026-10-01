@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）已完成并验收。批 5 按依赖拆为 5a/5b/5c，**下一批为批 5c**（H5 重复簇收敛；其中"权威大小复核 ×3"一簇已由批 5b 的 H4-c 消化，开批前须重测）。批 2b 收尾（H8 余 2 项 + H10）与批 7 在其后。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）已完成并验收。批 5 按依赖拆为 5a/5b/5c，5c 再拆为 **5c-1（下载侧，已完成）** 与 **5c-2（serve 侧安全敏感路径）**，**下一批为批 5c-2**：实测余 4 簇——IsLoopback 判定（4 份实现）、SSRF 字面 IP ×2、DNS + 逐地址校验（实测 2 处）、任务收尾四元组 ×4。批 2b 收尾（H8 余 2 项 + H10）与批 7 在其后。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -152,7 +152,9 @@
 
 - **I1** ✅ **已完成（5a）**：`DownloadPageAsync` 182 → 141 行 → `BuildPageExecutionContext` + `ReportNoTrackFailure`（登记所述三个重复块已被更早批次消化，见 §1）
 - **H4** ✅ **已完成（5b）**：`DownloadFileCoreAsync` 163 → 91 行（预检四段决策树 → `PrepareSingleThreadTargetAsync` + `SingleThreadPrecheck` 决策记录）、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层（分片重试 → `DownloadClipWithRetryAsync`）；“目标等长 → 权威总长复核”的 **3 处副本 → `VerifyExistingTargetAsync`**
-- **H5** ⏳ 待开工（5c）：重复簇抽辅助——任务收尾四元组 ×4、`IsLoopback`、SSRF 字面 IP ×2、DNS + 逐地址校验 ×3、头块 ×3、clip 路径推导 ×4。⚠️ 其中 **“权威大小复核 ×3”已由 5b 的 H4-c 消化**，开批前须实测校正
+- **H5** 🔶 **进行中**：登记为 6 簇、实测 7 簇，扣掉已由 5b 消化的 “权威大小复核 ×3”后余 6 簇 →
+  - **5c-1 ✅ 已完成（PR #72，下载侧）**：clip 路径推导 ×4 → `ClipPathFor`；头块 ×3 → `ApplyMediaRequestHeaders`
+  - **5c-2 ⏳ 待开工（serve 侧，安全敏感）**：IsLoopback 判定（实测 **4 份实现**）、SSRF 字面 IP ×2（`Callback.cs:43`/`:171`）、DNS + 逐地址校验（实测 **2 处**：`Callback.cs:83`/`:192`，登记 ×3 已校正）、任务收尾四元组 ×4（边界待实测）
 
 ### 批 6 — serve 拆解（`refactor/serve-decomposition`，R3）
 
@@ -214,8 +216,9 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 5a（I1 拆解：上下文装配 + 失败诊断）— PR #67
   → ✅ 批 5b（H4 深层嵌套：预检决策 + DownloadClipWithRetry + 目标复核收敛）— PR #70
   → ✅ 批 2a（H9 魔法数具名）— PR #68
-  → 批 5c（H5 重复簇：6 簇辅助收敛）  ← 下一批
-  → 批 5c → 批 2b（H8/H10）→ 批 7
+  → ✅ 批 5c 增量一（H5 下载侧：clip 路径推导 + 头块）— PR #72
+  → 批 5c-2（H5 serve 侧：IsLoopback / SSRF 字面 IP / DNS 逐地址校验 / 任务收尾）  ← 下一批
+  → 批 5c-2 → 批 2b（H8/H10）→ 批 7
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
@@ -229,7 +232,8 @@ dotnet format BBDown.sln --verify-no-changes
 | 3b | `refactor/context-and-page` | #66 | ✅ 已完成（2026-10-01；9 元组 → `DownloadContext`，`Page` 初始化器） |
 | 5a | `refactor/download-pipeline` | #67 | ✅ 已完成（2026-10-01；主方法 182 → 141 行） |
 | 5b | `refactor/download-pipeline-nesting` | #70 | ✅ 已完成（2026-10-01；`DownloadFileCoreAsync` 163 → 91 行、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层、目标复核 3 处副本 → `VerifyExistingTargetAsync`；logger 30 → 28 / catch 22 = 22） |
-| 5c | `refactor/download-pipeline`（续） | — | ⏳ 待开工（**下一批**：H5 重复簇） |
+| 5c-1 | `refactor/h5-cluster-dedup` | #72 | ✅ 已完成（2026-10-01；clip 路径推导 ×4 → `ClipPathFor`、头块 ×3 → `ApplyMediaRequestHeaders`；logger 28 = 28 / catch 22 = 22） |
+| 5c-2 | `refactor/serve-dedup`（拟） | — | ⏳ 待开工（**下一批**：H5 serve 侧 4 簇） |
 | 2a | `refactor/naming-and-constants` | #68 | ✅ 已完成（2026-10-01；8 个具名常量 / 约 15 处内联值） |
 | 2b | `refactor/naming-h8`（增量） | #69 | 🔶 进行中（H8 **3/5 项**已落地：`_savePathLock`→`_taskStateLock`、`MyOptionBindingResult`→`RequestBodyBindingResult`、`nowId`→`inputTrackId`；余 `ReadLinesThrottled` 改名与 `QualityName` 档位映射注释 + H10） |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
@@ -310,6 +314,15 @@ dotnet format BBDown.sln --verify-no-changes
 | 机械等价对账 | `catch` 子句 **22 = 22（零差异）**；`Logger` 调用 **30 → 28**（唯一差异即收敛掉的那条重复，其余 28 条逐字未变）；显著代码行 855 → 877 增删逐条一一对应（`return;`×3 → 决策返回×2 + `return ex.ActualTotal`×1；`break;`×1 → `return null;`×1；复核 5 行 ×3 → ×1；`{/}` +3/+3 = 3 个新方法体） | 27 例管线测试 + 全量单测 |
 | 语义等价差异 | 资源身份字符串改为调用点算一次后传参（原为两处各算一次），`"R"` 字面量 5 → 4（纯表达式，值相同）；三个新方法均 `private`（不新增可测 API 面，需要时再按 `PrepareAria2cTargetAsync` 的 `internal` 先例开放） | — |
 | 验证 | ✅ build 0 警告 0 错误；单测 **789/789**（与开批基线一致，无新增用例——三项均逐字搬运，由既有 27 例 `DownloadPipelineTests`（HTTP 假服务器逐字节 + 请求计数断言）兜底）；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿 | — |
+
+**批 5c 增量一（H5 下载侧）· PR #72**（合并提交 `77c306a`）：
+
+| 项 | 落地内容 | 安全网 |
+|---|---|---|
+| clip 路径推导 ×4 | 新增 `ClipPathFor(path, index)`（`00000_<stem>.vclip/.aclip`）：轨道清单 `"00000_"` 字面量拼接、预期分片表、返回分片表、分片临时文件四处收敛；`"00000_"` 1 → 0、`ToString("00000")` 3 → 1、`.vclip`/`.aclip` 各 5 → 2（余 1 对在 `CleanStaleClipsFor` 的 glob 匹配里，语义不同故不合并） | `MultipleClips_AssembledInOrderByteExact`（合并顺序依赖 5 位序号）/ `CleanStaleClips_*` ×2 / `OversizedStaleClip_IsTruncatedNotMerged` / `StaleSegmentFromOtherResource_IsReplacedWithFreshContent` |
+| 头块 ×3 | 新增 `ApplyMediaRequestHeaders(request, url)`：Referer/User-Agent/Cookie 三头 + "TV 接口（`platform=android_tv_yst`/`platform=android`）不加网页 Referer"守卫；五个字面量各 **3 → 1** | `ProbesOnce_NotPerLayer`（HEAD=1 / GET=0 / Range=1 请求计数）+ 全量单测 |
+| 机械等价对账 | `catch` **22 = 22**、`Logger` **28 = 28**（均零差异）；显著代码行 877 → 869 增删逐条对应（移除 4 处路径推导 + 3 处头块，新增 2 个 helper + 7 行调用点，`{/}` +1/+1）；字面量差异**全部**是 3 → 1 的重复收敛 | — |
+| 验证 | ✅ build 0 警告 0 错误；单测 **789/789**（无新增用例——两簇均逐字搬运）；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿 | — |
 
 ---
 

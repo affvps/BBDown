@@ -109,7 +109,7 @@
 | H2 | High | BBDownMuxer.cs:64,174 | MuxAV 20 参 / MuxByMp4box 15 参改 MuxRequest 参数对象 |
 | H3 | High | BBDownDownloadUtil.cs:28 | RangeDownloadToTmpAsync 10 参 → RangeDownloadRequest + 拆两段 |
 | H4 | High | BBDownDownloadUtil.cs:227,611 | Core 170/200 行嵌套 6-7 层：预检决策方法 + DownloadClipWithRetryAsync；6 个"检查 .tmp/.aria2"块收敛。**✅ 2026-10-01 批 5b 已落地**（PR #70：`DownloadFileCoreAsync` 163 → 91 行、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层；"目标等长 → 权威总长复核" 3 处副本 → `VerifyExistingTargetAsync`；logger 30 → 28 / catch 22 = 22，见第 26 轮） |
-| H5 | High | 多处 | 重复簇抽 6 个辅助方法（任务收尾四元组 ×4、IsLoopback 判定、SSRF 字面 IP ×2、DNS+逐地址校验 ×3、头块 ×3、权威大小复核 ×3、clip 路径推导 ×4）。⚠️ **口径修正（第 26 轮）**："权威大小复核 ×3"已由批 5b 的 `VerifyExistingTargetAsync`（PR #70）消化，5c 开批前须实测重列 |
+| H5 | High | 多处 | 重复簇抽 6 个辅助方法（任务收尾四元组 ×4、IsLoopback 判定、SSRF 字面 IP ×2、DNS+逐地址校验 ×3、头块 ×3、权威大小复核 ×3、clip 路径推导 ×4）。⚠️ **口径修正（第 26 轮）**："权威大小复核 ×3"已由批 5b 的 `VerifyExistingTargetAsync`（PR #70）消化。**🔶 5c-1 已落地（第 27 轮，PR #72）**：clip 路径推导 ×4 → `ClipPathFor`、头块 ×3 → `ApplyMediaRequestHeaders`；**余 4 簇**（IsLoopback 判定实测 4 份实现、SSRF 字面 IP ×2、DNS + 逐地址校验实测 2 处、任务收尾四元组 ×4）留待 5c-2 |
 | H6 | Medium | LiveStreamUtil.cs:75,222,286 | 异常消息文本契约改 LiveRoomClosedException 专用异常 |
 | H7 | Medium | 多处 | ✅ 死代码逐条删除（BBDownUtil.GetFiles、UrlResolver.MdRegex、GetAvIdAsync 无 token 重载、空 WriteLine ×2、NormalizeLockKey 上方孤立 doc 归位到 AcquireDownloadLock；CommandLineSplitter 保留——其位与为非短路是有意语义已加注释） |
 | H8 | Medium | 多处 | 误导性命名：ReadLinesThrottled、_savePathLock、MyOptionBindingResult<T>、QualityName 档位映射顺序、nowId |
@@ -624,3 +624,22 @@
 | 口径修正 | ⚠️ H5 登记为 6 簇，其中"**权威大小复核 ×3**"已由本轮 H4-c 消化 → 5c 开批前须实测重列（已在第 6 轮 H5 行标注） |
 | 状态回填 | ⚠️ **I7**（异常过滤器收口）第 19 轮已记录"批 1a 验收 ✅"（PR #60：`ExceptionPolicies` 9 条策略 + 生产 64 处站点），但状态总览仍列其为剩余项——本轮回填（I 组 16/6 → 17/5，合计 77/13 → 79/11）；1a 的"94/102 处"口径疑点仍按第 19 轮 Info ④ 挂账 |
 | Info 级观察（不登记 RF） | ① `VerifyExistingTargetAsync` 的"复核失败/未知总长一律退回纯长度跳过"是刻意保守（宁可重下不可误删），三处调用点**跳过后的副作用各不相同**（清分片 / 清合并临时文件 / 直接返回决策），故只收敛复核本身而不合并调用点；② 主方法剩余 91/152 行中约 40 行是重试/catch 样板，进一步拆解需引入"重试策略"抽象，收益低于风险，暂不排期（同 5a 观察②） |
+
+---
+
+## 第 27 轮：REFACTOR_PLAN 批 5c 增量一落地（H5 下载侧重复簇，2026-10-01）
+
+> 批 5c（H5 重复簇）按仓库先例拆为 **5c-1（下载侧，本轮）** 与 **5c-2（serve 侧安全敏感路径）**。本轮落地 5c-1（PR #72，合并提交 `77c306a`）。**无新发现登记**；一处口径校正（H5 登记 6 簇、实测 7 簇；DNS + 逐地址校验实测 2 处非 ×3；IsLoopback 为 4 份实现）。用户可见行为零变化，故不改 CHANGELOG / README / wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| 实测校正（H5） | ✅ 逐簇实测：clip 路径推导 **4 处**、头块 **3 处**、IsLoopback **4 份实现**（`ServeCommand.IsLoopbackListenUrl` + `Security.IsLoopbackOrigin/IsLoopbackHost/IsLoopbackListenAddress`）、SSRF 字面 IP **2 处**（`Callback.cs:43`/`:171` 逐字重复）、DNS + 逐地址校验 **2 处**（`Callback.cs:83` 可注入 dnsResolver / `:192` 直连）、任务收尾四元组 **待实测**；"权威大小复核 ×3"已由 5b 消化 |
+| clip 路径推导 ×4 | ✅ `ClipPathFor(path, index)`：`"00000_"` 字面量 1 → 0、`ToString("00000")` 3 → 1、`.vclip`/`.aclip` 各 5 → 2（余 1 对在 `CleanStaleClipsFor` 的 glob 匹配里，语义不同故不合并） |
+| 头块 ×3 | ✅ `ApplyMediaRequestHeaders(request, url)`：Referer/User-Agent/Cookie + TV 接口不加 Referer 的守卫；五个字面量各 3 → 1 |
+| 机械等价对账 | ✅ `catch` **22 = 22**、`Logger` **28 = 28**（零差异）；显著代码行 877 → 869 增删逐条一一对应；字面量差异全部是 3 → 1 的重复收敛 |
+| 安全网 | ✅ `MultipleClips_AssembledInOrderByteExact`（5 位序号决定合并顺序）、`CleanStaleClips_*` ×2、`OversizedStaleClip_IsTruncatedNotMerged`、`StaleSegmentFromOtherResource_IsReplacedWithFreshContent`、`ProbesOnce_NotPerLayer`（HEAD=1/GET=0/Range=1 请求计数）+ 全量单测；无新增用例（逐字搬运） |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 状态计数 | **不变**（H5 作为条目未整体完成：余 4 簇 → H 仍为 9/4、合计 **79/11**） |
+| 范围决策 | 5c-2 全部落在 **webhook SSRF 守卫 / 监听地址判定**（`BBDownApiServer.Callback.cs`、`.Security.cs`、`ServeCommand.cs`）——判定语义一动即影响安全边界，须单独 PR + 逐判定对照，不在 5c-1 内合并推进 |
+| Info 级观察（不登记 RF） | ① `CleanStaleClipsFor` 用 `*_<stem>.vclip` glob 而非 `ClipPathFor`，看似可合并，但前者按"目录内任意序号"匹配（含其它任务残留），后者按确定的 5 位序号——**语义不同，刻意不合并**，其 `.vclip/.aclip` 一对字面量因此保留；② 三处头块收敛后 helper 的参数名恰好与原调用点局部名一致（`request`），故 `request.Headers.*` 三行在显著行对账中计数不变，属对账口径的正常现象 |
