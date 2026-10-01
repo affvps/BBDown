@@ -496,7 +496,7 @@
 
 ## 第 19 轮：REFACTOR_PLAN 批 1a 验收 + 批 1b 落地（2026-10-01）
 
-> 本轮按 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md) §6 的批次序执行：①验收批 1a（I7 异常过滤策略收口，PR #60）；②落地批 1b（I11/I14/I15/I3）。**无新发现登记**——I11 实测出的"门面大半是死代码"属既有条目的范围细化，登记在 REFACTOR_PLAN §1 实测校正表。用户可见行为零变化，故不改 CHANGELOG / README / wiki。
+> 本轮按 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md) §6 的批次序执行：①验收批 1a（I7 异常过滤策略收口，PR #60）；②落地批 1b（I11/I14/I15/I3，PR #61）。**无新发现登记**——I11 实测出的"门面大半是死代码"属既有条目的范围细化，登记在 REFACTOR_PLAN §1 实测校正表。用户可见行为零变化，故不改 CHANGELOG / README / wiki。
 
 | 项 | 结果 |
 |----|------|

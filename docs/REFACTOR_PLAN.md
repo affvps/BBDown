@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3）已完成并验收；剩余批次按 §6 顺序推进，**下一批为批 4**（Parser 巨方法拆解，需先跑夹具回放基线）。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）已完成并验收；剩余批次按 §6 顺序推进，**下一批为批 4**（Parser 巨方法拆解，需先跑夹具回放基线）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -195,7 +195,7 @@ dotnet format BBDown.sln --verify-no-changes
 | 批次 | 分支 | PR | 状态 |
 |:---:|---|---|---|
 | 1a | `refactor/exception-policies` | #60 | ✅ 已完成（2026-10-01 验收：9 条策略 / 生产 64 处站点 + 真值表 9 引用） |
-| 1b | `refactor/consistency-cleanup` | 本批 | ✅ 已完成（2026-10-01；基线 775 → 收批 784 全绿） |
+| 1b | `refactor/consistency-cleanup` | #61 | ✅ 已完成（2026-10-01；基线 775 → 收批 784 全绿） |
 | 4 | `refactor/parser-extract-tracks` | — | ⏳ 待开工（**下一批**） |
 | 6 | `refactor/serve-decomposition` | — | ⏳ 待开工 |
 | 3 | `refactor/parameter-objects` | — | ⏳ 待开工 |
@@ -207,7 +207,7 @@ dotnet format BBDown.sln --verify-no-changes
 
 **批 1a（I7）· PR #60**：`BBDown.Core/Util/ExceptionPolicies.cs` 9 条具名策略；生产代码 64 处站点全部改用具名谓词（Core 9 + App 55），`ExceptionPolicyTests` 以真值表逐类型钉住各策略集合（+9 引用）。站点自有守卫（`ct.IsCancellationRequested` 等 2 处）与 28 种唯一集合按要求保留原地。
 
-**批 1b（I11/I14/I15/I3）· 本批**：
+**批 1b（I11/I14/I15/I3）· PR #61**：
 
 | 项 | 落地内容 | 安全网 |
 |---|---|---|
