@@ -38,6 +38,18 @@ public static class LiveStreamUtil
         public LiveStreamUnavailableException(string message) : base(message) { }
     }
 
+    /// <summary>
+    /// 直播间已下播：终结态（正常结束）而非可恢复故障，调用方据此走"停止录制并合成保存"路径。
+    /// 此前该状态靠 <see cref="InvalidOperationException"/> 的**消息文本**（"当前未在直播"）识别，
+    /// 文案一改就会让"下播"静默退化成"瞬态故障"（进入不设上限的退避重连，录制永不结束）；
+    /// 改为专用异常后由类型而非文案保证（H6）。继承 <see cref="InvalidOperationException"/>：
+    /// 既有的瞬态故障过滤器仍捕获它，由过滤器内的一处类型判定改走正常结束。
+    /// </summary>
+    public sealed class LiveRoomClosedException : InvalidOperationException
+    {
+        public LiveRoomClosedException(string message) : base(message) { }
+    }
+
     /// <summary>本地写盘失败（磁盘满/权限/文件被占用）：重试无意义，立即终止并保留已录分段。</summary>
     public sealed class LiveStreamWriteException : IOException
     {
@@ -96,7 +108,7 @@ public static class LiveStreamUtil
         if (title == "") title = $"直播间{roomId}";
         string uname = info.GetValueAsStringSafe("uname");
         if (info.GetInt32Safe("live_status") != 1)
-            throw new InvalidOperationException($"直播间 {roomId} 当前未在直播");
+            throw new LiveRoomClosedException($"直播间 {roomId} 当前未在直播");
 
         // 画质：先请求 qn=30000（最高档，杜比/4K/原画按账号权限自动回落），接口对未登录
         // 请求只返回游客画质（最高 720P），带 Cookie 才返回账号可看的最高画质——因此调用方
@@ -252,7 +264,7 @@ public static class LiveStreamUtil
         }
 
         // 确认直播间仍在直播：在播返回 true；确认下播返回 false；其它异常原样抛出，
-        // 由下方外层 catch 按瞬态故障退避重连。
+        // 由下方外层 catch 按瞬态故障退避重连。下播按类型判定（H6），不再匹配异常消息文本。
         async Task<bool> IsRoomLiveAsync()
         {
             try
@@ -260,7 +272,7 @@ public static class LiveStreamUtil
                 _ = await ResolveAsync(roomId, token);
                 return true;
             }
-            catch (InvalidOperationException ex) when (ex.Message.Contains("当前未在直播"))
+            catch (LiveRoomClosedException)
             {
                 return false;
             }
@@ -339,8 +351,8 @@ public static class LiveStreamUtil
                 }
                 catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or TimeoutException or LiveStreamWriteException)
                 {
-                    // 直播间下播（"当前未在直播"）是终结态而非可恢复故障：正常结束，走合成保存
-                    if (ex is InvalidOperationException && ex.Message.Contains("当前未在直播"))
+                    // 直播间下播是终结态而非可恢复故障：正常结束，走合成保存
+                    if (ex is LiveRoomClosedException)
                         break;
                     // 不可恢复的终结态：重试不会改变结果——直播间不提供 flv / 本地写盘失败
                     if (ex is LiveStreamUnavailableException or LiveStreamWriteException)

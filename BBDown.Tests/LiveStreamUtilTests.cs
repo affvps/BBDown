@@ -535,6 +535,62 @@ public class LiveStreamUtilTests
     }
 
     /// <summary>
+    /// H6：直播间未在直播（下播）是终结态，必须抛专用异常 <c>LiveRoomClosedException</c>。
+    /// 此前该状态由异常消息文本（"当前未在直播"）识别——文案一改，"下播"就静默退化成
+    /// "瞬态故障"并进入不设上限的退避重连。本用例钉住**类型**：改回
+    /// <see cref="InvalidOperationException"/> 即失败（<c>ThrowsAsync</c> 要求精确类型）。
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_RoomNotLive_ThrowsLiveRoomClosed()
+    {
+        using var server = new FakeLiveServer();
+        server.IsLive = false;
+
+        var originalHost = LiveStreamUtil.LiveApiHost;
+        LiveStreamUtil.LiveApiHost = $"http://127.0.0.1:{server.Port}";
+        try
+        {
+            var ex = await Assert.ThrowsAsync<LiveStreamUtil.LiveRoomClosedException>(
+                () => LiveStreamUtil.ResolveAsync("12345", CancellationToken.None));
+            Assert.Contains("当前未在直播", ex.Message);
+        }
+        finally
+        {
+            LiveStreamUtil.LiveApiHost = originalHost;
+        }
+    }
+
+    /// <summary>
+    /// H6：录制循环遇到"下播"必须立即结束（NoData）而不是退避重连——若类型判定失效，
+    /// 异常会落入瞬态故障分支，本调用永不返回（WaitAsync 超时即失败）。
+    /// </summary>
+    [Fact]
+    public async Task DownloadToFile_NotLive_EndsImmediatelyWithoutRetry()
+    {
+        using var server = new FakeLiveServer();
+        server.IsLive = false;
+
+        var dir = Path.Combine(Path.GetTempPath(), "live-notlive-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var outPath = Path.Combine(dir, "out.flv");
+        var originalHost = LiveStreamUtil.LiveApiHost;
+        try
+        {
+            LiveStreamUtil.LiveApiHost = $"http://127.0.0.1:{server.Port}";
+            var result = await LiveStreamUtil.DownloadToFileAsync("12345", outPath, null, CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(LiveStreamUtil.LiveRecordResult.NoData, result);
+            Assert.Empty(server.PlayRequests); // 未在直播：不请求流地址，更不退避重连
+        }
+        finally
+        {
+            LiveStreamUtil.LiveApiHost = originalHost;
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>
     /// 在假服务器上跑一次完整 DownloadToFileAsync：替换 ProcessRunner 为假 concat
     /// 执行器（真实拼接分段字节），LiveApiHost 指向本地服务器。
     /// <paramref name="progressTcs"/> 非空时在客户端首次落盘数据时完成——供"取消"类

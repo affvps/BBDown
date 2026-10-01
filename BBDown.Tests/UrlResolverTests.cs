@@ -131,6 +131,64 @@ public class UrlResolverTests
         Assert.Equal(expected, result);
     }
 
+    // ── HTTP 分支夹具（I12 拆分前基线）：以下分支全部本地解析，不发起网络请求 ──
+    //
+    // 覆盖 ResolveAsync 的 http 分支中"纯字符串判定"的全部出口（av/bv/ss/md/泛抓取/短链
+    // 等需网络的分支见 NetworkIntegration 用例与拆分后的 ResolveHttpUrlAsync 直测）。
+    // 这些用例在拆分为 ResolveHttpUrlAsync 前后必须逐字保持通过——拆解类改动的主要安全网。
+
+    [Theory]
+    [InlineData("https://www.bilibili.com/cheese/play/ep123", "cheese:123")]
+    [InlineData("https://www.bilibili.com/bangumi/play/ep12345", "ep:12345")]
+    [InlineData("https://www.bilibili.com/bangumi/play?ep_id=777", "ep:777")]
+    [InlineData("https://www.bilibili.com/medialist/detail/ml110?business_id=456&business=space_collection", "listBizId:456")]
+    [InlineData("https://www.bilibili.com/medialist/detail/ml110?business_id=456&business=space_series", "seriesBizId:456")]
+    [InlineData("https://www.bilibili.com/channel/collectiondetail?sid=789", "listBizId:789")]
+    [InlineData("https://www.bilibili.com/channel/seriesdetail?sid=789", "seriesBizId:789")]
+    [InlineData("https://space.bilibili.com/123/lists/456?type=series", "seriesBizId:456")]
+    [InlineData("https://space.bilibili.com/123/lists/456", "listBizId:456")]
+    [InlineData("https://space.bilibili.com/123/favlist?fid=789", "favId:789:123")]
+    [InlineData("https://space.bilibili.com/12345", "mid:12345")]
+    [InlineData("https://www.bilibili.tv/en/play/12345/67890", "ep:67890")]
+    public async Task ResolveAsync_HttpUrl_LocalBranches(string url, string expected)
+    {
+        Assert.Equal(expected, await UrlResolver.ResolveAsync(url));
+    }
+
+    /// <summary>
+    /// av/bv 的 http 分支产出纯数字，公开入口会在 <c>FixAvidAsync</c> 里为 av 号做一次
+    /// 跳转检查（网络请求），因此这两个分支只能直测拆分出的 <see cref="UrlResolver.ResolveHttpUrlAsync"/>。
+    /// BV 期望值取自 <see cref="BilibiliBvConverterTests"/> 独立钉住的映射（BV17x411w7KC↔av170001），
+    /// 不调用转换器现算——否则用例与实现同源、失去证据价值。
+    /// </summary>
+    [Theory]
+    [InlineData("https://www.bilibili.com/video/av170001", "170001")]
+    [InlineData("https://www.bilibili.com/video/Av170001", "170001")]
+    [InlineData("https://www.bilibili.com/video/BV17x411w7KC", "170001")]
+    [InlineData("https://www.bilibili.com/video/bv17x411w7KC", "170001")]
+    public async Task ResolveHttpUrlAsync_VideoUrl_ReturnsAid(string url, string expected)
+    {
+        Assert.Equal(expected, await UrlResolver.ResolveHttpUrlAsync(url));
+    }
+
+    /// <summary>裸 ID 分支直测（不受 FixAvidAsync 网络检查影响）。</summary>
+    [Theory]
+    [InlineData("av170001", "170001")]
+    [InlineData("AV99999", "99999")]
+    [InlineData("BV17x411w7KC", "170001")]
+    [InlineData("ep123", "ep:123")]
+    [InlineData("mid:123", "mid:123")]
+    public async Task ResolveBareIdAsync_BareTargets_ReturnExpected(string input, string expected)
+    {
+        Assert.Equal(expected, await UrlResolver.ResolveBareIdAsync(input));
+    }
+
+    [Fact]
+    public async Task ResolveBareIdAsync_UnknownInput_ThrowsArgumentException()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => UrlResolver.ResolveBareIdAsync("invalid_input"));
+    }
+
     // ── 泛抓取域名白名单（SSRF/凭据外发防护） ──
 
     [Theory]
