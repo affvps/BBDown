@@ -17,6 +17,25 @@ internal static class BBDownLoginUtil
     private const int QrCodePngScale = 7;
 
     /// <summary>
+    /// 扫码登录轮询状态码（B 站 passport 接口，I6）。WEB 端点的 <c>data.code</c> 是 JSON 数字；
+    /// TV 端点按**字符串**语义解析（TV 轮询响应的 code 用 <c>GetStringSafe</c> 取会得空串，
+    /// 见 LoginTV 内注释），因此同值常量在两套端点各有一份、类型不同、不可互换。
+    /// </summary>
+    private static class QrPollCode
+    {
+        /// <summary>WEB：二维码已过期。</summary>
+        public const int WebExpired = 86038;
+        /// <summary>WEB：等待用户扫码。</summary>
+        public const int WebWaitScan = 86101;
+        /// <summary>WEB：已扫码，等待用户在手机上确认。</summary>
+        public const int WebWaitConfirm = 86090;
+        /// <summary>TV：二维码已过期（与 <see cref="WebExpired"/> 同值，字符串形态）。</summary>
+        public const string TvExpired = "86038";
+        /// <summary>TV：等待用户扫码（TV 端点没有"等待确认"阶段）。</summary>
+        public const string TvWaitScan = "86039";
+    }
+
+    /// <summary>
     /// 轮询扫码登录状态，并透出 poll 响应的 Set-Cookie 头。
     /// B 站新版登录（2026）将 SESSDATA 等凭证经 Set-Cookie 下发，必须保留响应头。
     /// </summary>
@@ -69,6 +88,51 @@ internal static class BBDownLoginUtil
             ?.Substring(prefix.Length) ?? "";
     }
 
+    /// <summary>
+    /// 生成二维码并在控制台打印，同时尽力写出 qrcode.png 供手机扫描。WEB/TV 两个登录流程
+    /// 共用（I6，此前两处逐字复制"生成 → 落盘 → 失败降级 → 打印"四步）。
+    /// 图片写入失败属良性降级：控制台二维码仍可扫，只记 Debug。
+    /// </summary>
+    private static async Task RenderQrCodeAsync(string url)
+    {
+        Logger.Log("生成二维码...");
+        QRCodeGenerator qrGenerator = new();
+        QRCodeData qrCodeData = qrGenerator.CreateQrCode(url, QRCodeGenerator.ECCLevel.Q);
+        PngByteQRCode pngByteCode = new(qrCodeData);
+        try
+        {
+            await File.WriteAllBytesAsync("qrcode.png", pngByteCode.GetGraphic(QrCodePngScale));
+            Logger.Log("生成二维码成功: qrcode.png, 请打开并扫描, 或扫描打印的二维码");
+        }
+        catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
+        {
+            Logger.LogDebug("无法写入本地二维码图片文件: {0}", ex.Message);
+            Logger.Log("请扫描下方打印的控制台二维码");
+        }
+        var consoleQRCode = new ConsoleQRCode(qrCodeData);
+        consoleQRCode.GetGraphic();
+    }
+
+    /// <summary>
+    /// 以"仅属主可读写"的权限写出登录凭据文件（WEB 写 cookie 串 / TV 写 access_token）并收紧
+    /// 权限。两个登录流程共用（I6）。创建文件时即以 owner 读写权限打开：Unix 上避免先以
+    /// umask 默认权限落盘、再 chmod 收紧的两步窗口。
+    /// </summary>
+    private static async Task WriteOwnerOnlyFileAsync(string path, string content)
+    {
+        var opts = new FileStreamOptions
+        {
+            Mode = FileMode.Create,
+            Access = FileAccess.Write,
+        };
+        if (!OperatingSystem.IsWindows())
+            opts.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        await using (var fs = new FileStream(path, opts))
+        using (var writer = new StreamWriter(fs))
+            await writer.WriteAsync(content);
+        SetOwnerOnlyPermission(path);
+    }
+
     public static async Task<bool> LoginWEB(CancellationToken cancellationToken = default)
     {
         try
@@ -80,22 +144,7 @@ internal static class BBDownLoginUtil
             string url = loginDoc.RootElement.GetPropertySafe("data").GetStringSafe("url")!;
             string qrcodeKey = BBDownUtil.GetQueryString("qrcode_key", url);
             bool flag = false;
-            Logger.Log("生成二维码...");
-            QRCodeGenerator qrGenerator = new();
-            QRCodeData qrCodeData = qrGenerator.CreateQrCode(url, QRCodeGenerator.ECCLevel.Q);
-            PngByteQRCode pngByteCode = new(qrCodeData);
-            try
-            {
-                await File.WriteAllBytesAsync("qrcode.png", pngByteCode.GetGraphic(QrCodePngScale));
-                Logger.Log("生成二维码成功: qrcode.png, 请打开并扫描, 或扫描打印的二维码");
-            }
-            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
-            {
-                Logger.LogDebug("无法写入本地二维码图片文件: {0}", ex.Message);
-                Logger.Log("请扫描下方打印的控制台二维码");
-            }
-            var consoleQRCode = new ConsoleQRCode(qrCodeData);
-            consoleQRCode.GetGraphic();
+            await RenderQrCodeAsync(url);
 
             while (true)
             {
@@ -117,16 +166,16 @@ internal static class BBDownLoginUtil
                     return false;
                 }
                 int code = dataElem.GetInt32Safe("code");
-                if (code == 86038)
+                if (code == QrPollCode.WebExpired)
                 {
                     Logger.LogColor("二维码已过期, 请重新执行登录指令.");
                     return false;
                 }
-                else if (code == 86101) //等待扫码
+                else if (code == QrPollCode.WebWaitScan)
                 {
                     continue;
                 }
-                else if (code == 86090) //等待确认
+                else if (code == QrPollCode.WebWaitConfirm)
                 {
                     if (!flag)
                     {
@@ -157,18 +206,7 @@ internal static class BBDownLoginUtil
                         return false;
                     }
                     var cookiePath = Path.Combine(Program.APP_DIR, "BBDown.data");
-                    // 创建文件时即以 owner 读写权限打开（Unix 上避免先以 umask 默认权限落盘再收紧的两步窗口）
-                    var opts = new FileStreamOptions
-                    {
-                        Mode = FileMode.Create,
-                        Access = FileAccess.Write,
-                    };
-                    if (!OperatingSystem.IsWindows())
-                        opts.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-                    await using (var fs = new FileStream(cookiePath, opts))
-                    using (var writer = new StreamWriter(fs))
-                        await writer.WriteAsync(merged);
-                    SetOwnerOnlyPermission(cookiePath);
+                    await WriteOwnerOnlyFileAsync(cookiePath, merged);
                     return true;
                 }
                 else
@@ -224,22 +262,7 @@ internal static class BBDownLoginUtil
             using var authDoc = JsonDocument.Parse(web);
             string url = authDoc.RootElement.GetPropertySafe("data").GetStringSafe("url")!;
             string authCode = authDoc.RootElement.GetPropertySafe("data").GetStringSafe("auth_code")!;
-            Logger.Log("生成二维码...");
-            QRCodeGenerator qrGenerator = new();
-            QRCodeData qrCodeData = qrGenerator.CreateQrCode(url, QRCodeGenerator.ECCLevel.Q);
-            PngByteQRCode pngByteCode = new(qrCodeData);
-            try
-            {
-                await File.WriteAllBytesAsync("qrcode.png", pngByteCode.GetGraphic(QrCodePngScale));
-                Logger.Log("生成二维码成功: qrcode.png, 请打开并扫描, 或扫描打印的二维码");
-            }
-            catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
-            {
-                Logger.LogDebug("无法写入本地二维码图片文件: {0}", ex.Message);
-                Logger.Log("请扫描下方打印的控制台二维码");
-            }
-            var consoleQRCode = new ConsoleQRCode(qrCodeData);
-            consoleQRCode.GetGraphic();
+            await RenderQrCodeAsync(url);
             parameters.Set("auth_code", authCode);
             parameters.Set("ts", BiliApiKeys.GetTimeStamp(true));
             parameters.Remove("sign");
@@ -260,12 +283,12 @@ internal static class BBDownLoginUtil
                 // 对数字一律返回空串，导致 code 恒为 "" 永远匹配不到 86038/86039，
                 // 每次轮询都误入成功分支。GetValueAsStringSafe 用 ToString() 兼容数字与字符串。
                 string code = pollDoc2.RootElement.GetValueAsStringSafe("code");
-                if (code == "86038")
+                if (code == QrPollCode.TvExpired)
                 {
                     Logger.LogColor("二维码已过期, 请重新执行登录指令.");
                     return false;
                 }
-                else if (code == "86039") //等待扫码
+                else if (code == QrPollCode.TvWaitScan)
                 {
                     continue;
                 }
@@ -281,19 +304,7 @@ internal static class BBDownLoginUtil
                     Logger.Log("登录成功: AccessToken=" + SensitiveDataMasker.MaskValue(cc));
                     //导出cookie
                     var tvTokenPath = Path.Combine(Program.APP_DIR, "BBDownTV.data");
-                    // 与 WEB 登录一致：创建文件时即以 owner 读写权限打开，
-                    // 避免先以 umask 默认权限落盘再收紧的两步窗口
-                    var tvOpts = new FileStreamOptions
-                    {
-                        Mode = FileMode.Create,
-                        Access = FileAccess.Write,
-                    };
-                    if (!OperatingSystem.IsWindows())
-                        tvOpts.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-                    await using (var tvFs = new FileStream(tvTokenPath, tvOpts))
-                    using (var tvWriter = new StreamWriter(tvFs))
-                        await tvWriter.WriteAsync("access_token=" + cc);
-                    SetOwnerOnlyPermission(tvTokenPath);
+                    await WriteOwnerOnlyFileAsync(tvTokenPath, "access_token=" + cc);
                     return true;
                 }
                 else
