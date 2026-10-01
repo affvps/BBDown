@@ -250,19 +250,17 @@ public partial class BBDownApiServer
     /// internal 供测试直接验证判定逻辑。
     /// </summary>
     internal static bool IsLoopbackOrigin(string origin)
-    {
-        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
-        var host = uri.DnsSafeHost;
-        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
-        if (IPAddress.TryParse(host, out var ip)) return IPAddress.IsLoopback(ip);
-        return false;
-    }
+        // 无法解析为绝对 URI 的 Origin 一律拒绝；其余判定委托给唯一实现
+        => Uri.TryCreate(origin, UriKind.Absolute, out var uri) && IsLoopbackHost(uri.DnsSafeHost);
 
     /// <summary>
-    /// 无 token 模式读端点的 Host 白名单（RF-15）：仅接受字面回环 Host
-    /// （localhost / 127.0.0.0/8 / ::1），DNS rebinding 下 Host 是攻击者域名即被拒。
-    /// 刻意不做 DNS 解析——rebinding 靠 DNS 答案翻转绕过解析校验，字面量比对才可靠。
-    /// 空 Host（极老 HTTP/1.0 客户端）一律拒绝：浏览器/HTTP 库均发送 Host。
+    /// 回环主机判定（**全库唯一实现**）：serve 的 Host 白名单（RF-15）、写端点的 Origin
+    /// 跨源防护、监听地址判定（<see cref="IsLoopbackListenAddress"/> 与 CLI 的 `-l` 提示）
+    /// 全部委托到这里——此前四处各写一份 `localhost / TryParse / IsLoopback` 判定，
+    /// 任一处漂移都会让"是否需要 --serve-token"两侧判断错位。
+    /// 仅接受字面回环 Host（localhost / 127.0.0.0/8 / ::1），DNS rebinding 下 Host 是
+    /// 攻击者域名即被拒。刻意不做 DNS 解析——rebinding 靠 DNS 答案翻转绕过解析校验，
+    /// 字面量比对才可靠。空 Host（极老 HTTP/1.0 客户端）一律拒绝：浏览器/HTTP 库均发送 Host。
     /// internal 供测试直接验证判定逻辑。
     /// </summary>
     internal static bool IsLoopbackHost(string? host)
@@ -293,12 +291,7 @@ public partial class BBDownApiServer
     /// 用 DnsSafeHost（IPv6 字面量不带方括号）以便 IPAddress.TryParse 解析 [::1]。
     /// </summary>
     private static bool IsLoopbackListenAddress(Uri listenUri)
-    {
-        var host = listenUri.DnsSafeHost;
-        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
-        if (IPAddress.TryParse(host, out var ip)) return IPAddress.IsLoopback(ip);
-        return false;
-    }
+        => IsLoopbackHost(listenUri.DnsSafeHost);
 
     /// <summary>
     /// 清除网络请求体中可能导致任意命令/程序执行或凭据外泄的字段。

@@ -40,32 +40,19 @@ public partial class BBDownApiServer
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
         if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
 
-        bool hostIsLiteralIp = IPAddress.TryParse(uri.DnsSafeHost, out var literalIp) && literalIp is not null;
+        var literalIp = TryParseLiteralIp(uri.DnsSafeHost);
 
-        if (hostIsLiteralIp)
+        if (literalIp is not null)
         {
-            // IPv4-mapped IPv6（如 [::ffff:169.254.169.254]）会把下方的 169.254 检查绕过
-            // （其 AddressFamily 是 InterNetworkV6），统一映射回 IPv4 后再做检查。
-            if (literalIp!.IsIPv4MappedToIPv6) literalIp = literalIp.MapToIPv4();
             // 字面 IP 是操作者显式配置的地址：仅拦回环/链路本地/云元数据。
             // RFC1918 内网字面 IP 放行（局域网回调是 serve 正常用法），
             // 因为字面 IP 不涉及 DNS 重绑定，攻击者无法借它打内网——攻击者构造的
             // "域名回调"永远走下方 DNS 解析分支（RFC1918 已拒绝）。若需进一步收紧，
             // 局域网回调用户应配置 --serve-token 或前置反向代理。
-            if (IPAddress.IsLoopback(literalIp)) return false;
-            if (literalIp.IsIPv6LinkLocal) return false;
-            if (literalIp.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-            {
-                var b = literalIp.GetAddressBytes();
-                if (b.Length == 4 && b[0] == 169 && b[1] == 254) return false; // 169.254.0.0/16 云元数据面
-                if (b.All(x => x == 0)) return false; // 0.0.0.0：连接时绑定到回环
-            }
-            else if (literalIp.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-            {
-                var b6 = literalIp.GetAddressBytes();
-                if (b6.Length == 16 && b6.All(x => x == 0)) return false; // [::]
-            }
-            return true;
+            // IPv4-mapped IPv6（如 [::ffff:169.254.169.254]）由 TryParseLiteralIp 归一化；
+            // 判定与连接侧（SendCallbackAsync）共用 IsUnsafeLiteralIpAddress——此前两侧各写
+            // 一份、靠注释声明"一致"，任何一侧新增拦截段都可能漏同步。
+            return !IsUnsafeLiteralIpAddress(literalIp);
         }
 
         // DnsSafeHost：IPv6 字面量不带方括号（uri.Host 对 [::1] 会带方括号，IPAddress.TryParse
@@ -76,27 +63,63 @@ public partial class BBDownApiServer
         if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return false;
         // 域名回调的 DNS 重绑定缺口：攻击者注册解析到 169.254.169.254 / 内网地址的域名
         // （如 metadata.google.internal），仅比对字符串会放行，任务完成时 HttpClient 才解析 DNS。
-        // 这里提前解析并校验全部地址；域名解析出的任一地址命中回环/链路本地/169.254/RFC1918/ULA
-        // 即拒绝——内网地址只允许"字面 IP"形式的显式配置，域名一律要求公网可达。
+        // 解析 + 逐地址校验与连接侧共用 ResolveCallbackAddressesAsync：域名解析出的任一地址
+        // 命中回环/链路本地/169.254/RFC1918/ULA 即拒绝——内网地址只允许"字面 IP"形式的显式
+        // 配置，域名一律要求公网可达。两侧判定必须同源，否则重绑定窗口重新打开。
+        var (verdict, _) = await ResolveCallbackAddressesAsync(host, dnsResolver);
+        // 解析失败 / 零地址（RF-55）/ 任一地址命中敏感段：回调必然失败，按不安全处理
+        return verdict == CallbackHostVerdict.Allowed;
+    }
+
+    /// <summary>域名回调地址的解析结果：区分失败原因，供校验侧（只关心是否放行）与连接侧
+    /// （逐种原因记 Warn 后跳过）各自映射——两侧共用同一份解析与逐地址校验，避免判定漂移。</summary>
+    private enum CallbackHostVerdict
+    {
+        Allowed,
+        DnsFailed,
+        NoAddresses,
+        Blocked,
+    }
+
+    /// <summary>
+    /// 解析回调域名并校验**全部**地址（与连接侧共用，杜绝"校验用一套 DNS、连接用另一套"的
+    /// 重绑定窗口）：解析失败、解析出零地址（RF-55：空数组零次迭代会"校验空过"放行，而连接侧
+    /// 取 addresses[0] 会抛 IndexOutOfRange）或任一地址命中敏感/内网段
+    /// （<see cref="IsBlockedAddress"/>）都判失败。dnsResolver 供测试注入（生产传 null 用系统 DNS）。
+    /// 返回的地址数组已做 IPv4-mapped 归一化，可直接用于绑定连接。
+    /// </summary>
+    private static async Task<(CallbackHostVerdict Verdict, IPAddress[] Addresses)> ResolveCallbackAddressesAsync(
+        string host, Func<string, Task<IPAddress[]>>? dnsResolver)
+    {
+        IPAddress[] addresses;
         try
         {
-            var addresses = dnsResolver is not null ? await dnsResolver(host) : await Dns.GetHostAddressesAsync(host);
-            // RF-55：部分 DNS 应答形态可返回零地址——空数组零次迭代会"校验空过"放行，
-            // 而连接侧（SendCallbackAsync）对空数组记 Warn 跳过，两侧语义必须一致：
-            // 解析不出任何地址的回调必然失败，按不安全处理。
-            if (addresses.Length == 0) return false;
-            foreach (var addr in addresses)
-            {
-                var resolvedIp = addr.IsIPv4MappedToIPv6 ? addr.MapToIPv4() : addr;
-                if (IsBlockedAddress(resolvedIp)) return false;
-            }
-            return true;
+            addresses = dnsResolver is not null ? await dnsResolver(host) : await Dns.GetHostAddressesAsync(host);
         }
         catch (System.Net.Sockets.SocketException)
         {
-            // 域名无法解析：回调必然失败，按不安全处理
-            return false;
+            return (CallbackHostVerdict.DnsFailed, []);
         }
+        if (addresses.Length == 0) return (CallbackHostVerdict.NoAddresses, []);
+        var normalized = new IPAddress[addresses.Length];
+        for (int i = 0; i < addresses.Length; i++)
+        {
+            normalized[i] = NormalizeMappedIpv4(addresses[i]);
+            if (IsBlockedAddress(normalized[i])) return (CallbackHostVerdict.Blocked, []);
+        }
+        return (CallbackHostVerdict.Allowed, normalized);
+    }
+
+    /// <summary>IPv4-mapped IPv6（如 [::ffff:169.254.169.254]）统一映射回 IPv4：其 AddressFamily
+    /// 是 InterNetworkV6，不映射会绕过 169.254/16 等 IPv4 段检查。</summary>
+    private static IPAddress NormalizeMappedIpv4(IPAddress ip) => ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip;
+
+    /// <summary>字面 IP 判定 + 归一化：非字面 IP 返回 null。归一化见
+    /// <see cref="NormalizeMappedIpv4"/>；校验侧与连接侧共用，两侧判定必须同源。</summary>
+    private static IPAddress? TryParseLiteralIp(string host)
+    {
+        if (!IPAddress.TryParse(host, out var parsed) || parsed is null) return null;
+        return NormalizeMappedIpv4(parsed);
     }
 
     /// <summary>
@@ -168,13 +191,13 @@ public partial class BBDownApiServer
             var uri = new Uri(webhook);
             // DnsSafeHost：IPv6 字面量不带方括号（uri.Host 对 [::1] 会带方括号，无法解析）
             var host = uri.DnsSafeHost;
-            bool hostIsLiteralIp = IPAddress.TryParse(host, out var literalIp) && literalIp is not null;
+            var literalIp = TryParseLiteralIp(host);
             IPAddress target;
-            if (hostIsLiteralIp)
+            if (literalIp is not null)
             {
                 // 字面 IP 是管理员显式配置的地址：直接绑定到该 IP（与 IsSafeCallbackUrlAsync 的
                 // 字面 IP 分支一致，RFC1918 局域网回调放行）。此处不再解析 DNS。
-                literalIp = literalIp!.IsIPv4MappedToIPv6 ? literalIp.MapToIPv4() : literalIp;
+                // IPv4-mapped → IPv4 的归一化已由 TryParseLiteralIp 完成。
                 if (IsUnsafeLiteralIpAddress(literalIp))
                 {
                     Logger.LogWarn($"回调地址是敏感字面 IP，已跳过本次回调: {webhook}");
@@ -184,38 +207,23 @@ public partial class BBDownApiServer
             }
             else
             {
-                // 域名回调：解析一次并校验全部地址；任一地址命中敏感/内网段即跳过。
-                // 与 IsSafeCallbackUrlAsync 使用同一套 DNS 解析逻辑（域名重绑定校验在此完成）。
-                IPAddress[] addresses;
-                try
+                // 域名回调：解析一次并校验全部地址；与校验侧共用 ResolveCallbackAddressesAsync
+                // （域名重绑定校验在此完成）。三种失败的 Warn 文案与收敛前逐字保持一致。
+                var (verdict, addresses) = await ResolveCallbackAddressesAsync(host, dnsResolver: null);
+                switch (verdict)
                 {
-                    addresses = await Dns.GetHostAddressesAsync(host);
-                }
-                catch (SocketException)
-                {
-                    Logger.LogWarn($"回调地址 DNS 解析失败，已跳过本次回调: {webhook}");
-                    return;
-                }
-                // RF-55：部分 DNS 应答形态可返回零地址——此时 addresses[0] 会抛
-                // IndexOutOfRangeException（不在回调过滤器白名单），把已成功且已持久化的
-                // 任务打成误导性的"任务异常终止"。与校验侧（IsSafeCallbackUrlAsync 对空数组
-                // 返回 false）对齐：记 Warn 跳过本次回调。
-                if (addresses.Length == 0)
-                {
-                    Logger.LogWarn($"回调地址解析结果为空，已跳过本次回调: {webhook}");
-                    return;
-                }
-                foreach (var addr in addresses)
-                {
-                    var resolvedIp = addr.IsIPv4MappedToIPv6 ? addr.MapToIPv4() : addr;
-                    if (IsBlockedAddress(resolvedIp))
-                    {
+                    case CallbackHostVerdict.DnsFailed:
+                        Logger.LogWarn($"回调地址 DNS 解析失败，已跳过本次回调: {webhook}");
+                        return;
+                    case CallbackHostVerdict.NoAddresses:
+                        Logger.LogWarn($"回调地址解析结果为空，已跳过本次回调: {webhook}");
+                        return;
+                    case CallbackHostVerdict.Blocked:
                         Logger.LogWarn($"回调地址解析到敏感地址，已跳过本次回调: {webhook}");
                         return;
-                    }
                 }
-                // 解析结果可能含多个地址（已全部校验通过），取第一个连接
-                target = addresses[0].IsIPv4MappedToIPv6 ? addresses[0].MapToIPv4() : addresses[0];
+                // 解析结果可能含多个地址（已全部校验通过且已归一化），取第一个连接
+                target = addresses[0];
             }
 
             var handler = new SocketsHttpHandler
