@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）、批 5c 增量二（H5 serve 侧四簇，PR #74）已完成并验收——**批 5（I1/H4/H5）全部收口**。**批 2b-1（H8 余 2 项，PR #76）与批 2b-2（H10 历史读取单入口，PR #78）已完成并验收**——批 2（H8/H9/H10）全部收口。**批 7（H6 `LiveRoomClosedException` / I6 登录去重 / I9 Settings 基类 / I12 `UrlResolver` 拆分）已完成并验收（PR #80）——H 组清零，I 组仅剩 I16（I10 已定案不做），本计划的批次序至此执行完毕**（I16 未排期，见 §6 末）。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）、批 5c 增量二（H5 serve 侧四簇，PR #74）已完成并验收——**批 5（I1/H4/H5）全部收口**。**批 2b-1（H8 余 2 项，PR #76）与批 2b-2（H10 历史读取单入口，PR #78）已完成并验收**——批 2（H8/H9/H10）全部收口。**批 7（H6 `LiveRoomClosedException` / I6 登录去重 / I9 Settings 基类 / I12 `UrlResolver` 拆分）已完成并验收（PR #80）——H 组清零，本计划的批次序至此执行完毕**。**收口批（2026-10-01，PR #82）**：I16 落地（I 组仅剩定案不做的 I10），并一次性收口三项挂账决策——四族"单条目可跳过"异常过滤器合并为单一核心、`apiType` 展示与实际分派统一、`OPTIMIZATION_PLAN` P2-3 DRM 密钥清零；批 1a 的异常过滤器统计口径一并重算统一（见 §1/§3）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -59,6 +59,7 @@
 | **I6 补充**（2026-10-01） | "`LoginWEB`/`LoginTV` 复制 → 2 helper + `QrPollCode` 常量组" | ✅ 实测两处逐字复制四段：QR 四步（生成/落盘/降级/打印）×2、owner-only 凭据写入 ×2、轮询码 4 个字面量（WEB int / TV string）×2 | 收敛后 Logger 29 → 25、catch 8 → 7（减少量全是被收敛的重复），**日志文案集合 23 = 23 零差异** |
 | **I9 补充**（2026-10-01） | "两个 Settings 类（9/11 个选项）复制 8 个下载选项 + 两份 `BuildOption` → 公共基类" | ⚠️ 实测 Spectre 分支注册 `AddBranch<SubSettings>` → `AddCommand<TCommand>` 把命令约束为 `ICommandLimiter<SubSettings>`（对 Settings **协变**）：`sub check` 的 Settings 必须是 `SubSettings` 的派生类型；"选项放进 `SubSettings`"会让 `sub add/list/remove` 多出 8 个无效选项（CLI 面变化），"显式泛型注册 `AddCommand<TCommand, TSettings>`"在该版本 Spectre 不存在（实测编译报"需要 1 个类型参数"） | **改口径**：基类取中间层 `DownloadOptionSettings : SubSettings`（`abstract`，不进 `SettingsTypeCatalog`/`CliOptionIndex` 清单，另在 `Program.Main` 补 AOT root）；`sub add/list/remove` 仍直接派生 `SubSettings`，CLI 面不变；唯一用户可见差异是 `watchlater --help` 的 `--limit` 位置（首→末） |
 | **I12 补充**（2026-10-01） | "`ResolveAsync` 200 行 13 分支" | ✅ 实测 **208 行**（`:15-223`）：http 分支 13 个判定出口 + 裸 ID 分支 7 个出口；`[GeneratedRegex]` 8 个、正则调用 24 处 | 按"先补 http 分支夹具"执行：**12 例本地夹具先行落地**（拆分前 54/54 绿），拆分后再补 10 例直测覆盖 av/bv 分支 |
+| **I16 补充**（2026-10-01） | "`MergeWithConfig` 4 次手工扫参；静态缓存 `BuildAliasMap`" | ✅ 实测 **3 份 argv 扫描**（`IsSubCommandInvocation` / `GetPositionalTokens` / `--config-file` 手扫）+ **2 段逐字相同的取值收集 while**；别名表缓存已由 PR #53 的 `CliOptionIndex` 承担 | 收敛为 4 个私有 helper（`SkipArgument` / `GetOptionValue` / `OptionName` / `CountOptionValueTokens`）；文件 205 → 223 行；行为等价（显式选项扫描刻意不跳过值，注释写明理由） |
 | **H1 补充**（2026-10-01） | "God 类 1683 行 / 52 方法" | 实测 **1683 行 / 72 个成员块**（字段+方法+类型），类确为 `partial`；文件尾部另堆着 **6 个顶层类型**（含 2 个 AOT 源生成上下文） | **改为文件级切分**（7 文件，成员逐字搬运）：不新建 `ServeSecurityMiddleware` 等 4 个独立类型——这些成员共享同一份实例状态（任务列表 / 锁 / 闸门），外置状态属行为风险改动，超出"零风险按成员切分"范围 |
 | **ApiMode 偏差**（2026-10-01） | "`PickDataRoot`/`PickTrackBaseUrl` 纯函数 + `ApiMode` 枚举" | 三 bool（tv/intl/app）的组合语义**无法用单一枚举等价表达**：`tvApi && appApi` 同时为真时，两处 `!tvApi` 门控（杜比/Hi-Res 跳过）与"归一化优先级（Intl > App > Tv）"不等价；且 `Workflow.cs:159` 的 `apiType` 用的是**另一套**优先级（TV > APP > INTL > WEB） | **不引入 `ApiMode`**：改为私有 `PlayRequest` 收敛长参数，避免在可达组合上改变行为；两处优先级口径不一致记为本批 Info 观察 |
 
@@ -95,7 +96,7 @@
 
 > ✅ **已完成**（PR #60）；验收记录见 §6。
 
-**开工前审计实测（2026-09-30）**：全库 `catch (Exception ex) when (…)` 共 **94 处 / 40 种类型集合**（计划原述"30 处"口径不准），分为：
+**开工前审计实测（口径已于第 32 轮统一）**：**统一计数口径**——全仓 `catch (Exception …) when (…)` 按正则统计（排除 `bin`/`obj`），"具名" = 谓词含 `ExceptionPolicies.`，其余为内联集合；**收口后实测 104 处（具名 67 / 内联 37）**。批 1a 当时按同一方法得到下表的三层拆分（历史记录里的 94/102/66 三组数字口径不一且未标注方法，已作废）：
 
 | 层 | 站点数 | 处置 |
 |---|---:|---|
@@ -107,7 +108,7 @@
 
 纪律：① 每族集合与迁移前**逐字一致**（零行为变更）；② 站点自有守卫不并入谓词；③ `ExceptionPolicyTests` 真值表逐类型钉住集合（子类型感知：`ArgumentException` 会命中 `ArgumentOutOfRangeException`），增删类型或写成近似集合即失败。
 
-> **待决策（本批不做）**：长链"单条目可跳过"族沿 4 个集合漂移（`SubCommand` 10 型 / `WatchLater` 9 型 / 下载页 11 型 / `DownloadPageExecution` 10 型），代码注释自称"与下载页过滤器同步扩充"——**合并为一个集合会改变 4 个站点的捕获面**（行为变更），登记为后续决策项，本批保留现状。
+> **待决策 → ✅ 已在第 32 轮收口**：长链"单条目可跳过"族沿 4 个集合漂移（`SubCommand` 10 型 / `WatchLater` 9 型 / 下载页 11 型 / `DownloadPageExecution` 10 型）——现收敛为 `ExceptionPolicies.IsItemFailureCore`（12 型）+ `IsSkippableItemFailure`（核心 + `TaskCanceledException`）+ `IsRetryablePageFailure`（仅核心），5 处站点统一；捕获面按"不再中止整批"方向扩大（已记 CHANGELOG），取消守卫仍留在站点上。
 
 #### 批 1b — 命名/重复/常量一致化（`refactor/consistency-cleanup`）
 
@@ -203,9 +204,10 @@ dotnet format BBDown.sln --verify-no-changes
 
 | 项 | 处置 | 理由 |
 |---|---|---|
-| **J1**（`release.yml` ubuntu:18.04 EOL） | ⭕ 维持现状 + 设触发条件 | glibc 2.27 兼容是刻意选择；**触发条件**：apt 源失效或镜像下线时迁移基镜像 |
+| **J1**（`release.yml` ubuntu:18.04 EOL） | ⭕ 维持现状 + 设触发条件（早期预警已确认） | glibc 2.27 兼容是刻意选择；**触发条件**：apt 源失效或镜像下线时迁移基镜像。**早期预警（第 32 轮）**：`build_latest.yml` 每次 master push 都用同一 `ubuntu:18.04` 容器构建，源失效会在合并后立即暴露，而非等到发版；迁移时须同时决定 glibc 下限（升 20.04/22.04 会把上限抬到 2.31） |
 | **J2**（Actions 未 SHA 固定） | ⭕ 维持现状 | Dependabot 周更兜底；严格供应链硬化另开 `deps` 批 |
 | **I10**（`BBDownUtil` god 工具类整体拆分） | ❌ 不做 | 签名 / 时间戳部分已被批 1 的 I3 收口；其余拆分会大面积改调用点，收益低于风险 |
+| **`SubscriptionStore.LoadCoreAsync` 容忍字面量 `null`**（订阅**清单**文件） | ⭕ 维持现状（第 32 轮定案） | 与历史文件"`null` = 损坏"刻意不同：清单为空的后果只是"没有订阅"，历史为空则"全部内容被当作新增重下"。差异已在代码注释与批 2b-2 记录中写明 |
 | **H9 中已常量化的 8 处** | ❌ 不动 | 已完成，无重复劳动 |
 
 ---
@@ -227,10 +229,11 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 2b-1（H8 余 2 项：ReadLinesThrottled 改名 + QualityName 顺序文档）— PR #76
   → ✅ 批 2b-2（H10：SubscriptionStore 历史读取单入口）— PR #78
   → ✅ 批 7（H6 下播异常 / I6 登录去重 / I9 选项基类 / I12 UrlResolver 拆分）— PR #80
+  → ✅ 收口批（I16 扫参收敛 / 异常过滤器对齐 / apiType 单一来源 / P2-3 DRM 密钥清零）— PR #82
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
-**批 7 之后**：本计划的 7 批全部执行完毕。I 组仅剩 **I16**（`BBDownConfigParser` 手工扫参收敛）——未纳入任何批次，建议单独评估：别名表已由 `CliOptionIndex` 收口，剩余扫参循环属可读性收益，可与 J1/J2 跟踪项一并决定"另开小批"或"维持现状"。
+**批 7 之后**：本计划的 7 批全部执行完毕。**收口批（PR #82）**已把 I16 与三项挂账决策（异常过滤器漂移、`apiType` 优先级、P2-3 密钥清零）一并落地——I 组仅剩定案不做的 I10，J1/J2 为跟踪项。
 
 | 批次 | 分支 | PR | 状态 |
 |:---:|---|---|---|
@@ -249,10 +252,11 @@ dotnet format BBDown.sln --verify-no-changes
 | 2b-2 | `refactor/subscription-history` | #78 | ✅ 已完成（2026-10-01；`ReadHistoryLockedAsync` 单入口统一损坏语义，顺带修复写路径 IO 失败裸奔 + 校验范围分歧；+3 变异验证用例，测试 789 → 792） |
 | 2 | `refactor/naming-and-constants` | #68 / #69 / #76 / #78 | ✅ 已完成（2026-10-01；按 2a/2b-1/2b-2 拆分落地，见上四行） |
 | 7 | `refactor/remaining-structure` | #80 | ✅ 已完成（2026-10-01；H6 专用异常 + I6 登录去重 + I9 选项基类 + I12 UrlResolver 拆分；测试 792 → 821，CI 9 项全绿） |
+| 收口 | `refactor/remaining-closure` | #82 | ✅ 已完成（2026-10-01；I16 + 异常过滤器对齐 + apiType 单一来源 + P2-3 DRM 密钥清零；测试 821 → 832，CI 9 项全绿） |
 
 #### 已完成批次记录
 
-**批 1a（I7）· PR #60**：`BBDown.Core/Util/ExceptionPolicies.cs` 9 条具名策略；生产代码 64 处站点全部改用具名谓词（Core 9 + App 55），`ExceptionPolicyTests` 以真值表逐类型钉住各策略集合（+9 引用）。未收口站点保留内联集合与站点自有守卫（`ct.IsCancellationRequested` 等）。⚠️ **1a 记录的"94 处 = 64 收口 + 2 带附加条件 + 28 唯一集合"与收批实测对不上**：按同一口径（`catch (Exception …) when (`，排除 bin/obj）实测生产 when-过滤器 **102 处 = 64 具名 + 38 内联**；1a 类文档内"66 处重复族"亦与 64/28/2 不自洽。不影响收口正确性（64 处逐字等价 + 真值表钉住），口径待重算统一——详见 `REVIEW_PLAN.md` 第 19 轮 Info 观察④。
+**批 1a（I7）· PR #60**：`BBDown.Core/Util/ExceptionPolicies.cs` 9 条具名策略；生产代码 64 处站点全部改用具名谓词（Core 9 + App 55），`ExceptionPolicyTests` 以真值表逐类型钉住各策略集合（+9 引用）。未收口站点保留内联集合与站点自有守卫（`ct.IsCancellationRequested` 等）。✅ **统计口径已统一（第 32 轮）**：口径为"全仓 `catch (Exception …) when (…)` 正则统计（排除 bin/obj），具名 = 谓词含 `ExceptionPolicies.`，其余为内联"——收口后实测 **104 处（具名 67 / 内联 37）**；1a 记录里的 94/102/66 三组数字口径不一且未标注方法，已作废（数字已同步进 `ExceptionPolicies` 类文档）。
 
 **批 1b（I11/I14/I15/I3）· PR #61**：
 
@@ -380,11 +384,22 @@ dotnet format BBDown.sln --verify-no-changes
 | 验证 | ✅ build 0 警告 0 错误；单测 **792 → 821**（+29）；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿（含 Native AOT smoke 与 Docker smoke） | — |
 | Info 观察 | ① I16（配置解析层扫参收敛）是本计划执行完毕后 I 组唯一剩余项，未排期；② `DownloadOptionSettings` 之所以是 `SubSettings` 的派生类型纯属 Spectre 分支约束（§1 I9 补充），若将来 `sub` 分支结构调整（例如取消分支改为独立命令），可重新评估把它移出该继承链；③ I12 的 av/bv 分支只能直测 `ResolveHttpUrlAsync`（公开入口会经 `FixAvidAsync` 发一次真实请求），若将来给 `FixAvidAsync` 加可注入缝，可把这两例并回公开入口用例 | — |
 
+**收口批（I16 + 三挂账决策 + P2-3）· PR #82**（合并提交 `028f67e`）：
+
+| 项 | 落地内容 | 安全网 / 证据 |
+|---|---|---|
+| I16 | `BBDownConfigParser` 3 份 argv 扫描 + 2 段重复取值 while → `SkipArgument`/`GetOptionValue`/`OptionName`/`CountOptionValueTokens`（205 → 223 行） | `ConfigMergeTests` 13 例 + 位置参数用例；变异：`SkipArgument` 不跳过值 → 4 例失败 |
+| 异常过滤器对齐 | 四族漂移集合 → `IsItemFailureCore`(12) + `IsSkippableItemFailure`(核心+TCE) + `IsRetryablePageFailure`(核心)；5 处站点统一 | 真值表 10 条策略 + 两条策略同源关系式；变异：核心集去掉 `FormatException` → 真值表失败 |
+| apiType 单一来源 | `Parser.PlayApiMode` + `ResolveApiMode`/`ApiModeLabel`，分派与展示共用（INTL > APP > TV > WEB） | `PlayApiModeTests` 9 例（含多开关组合） |
+| P2-3 | `WvdDevice.Dispose` 清零 client_id、`Create` finally 清零私钥源字节、`WidevineCdm` 丢弃的 `macKeyClient` 清零 | `Dispose_ClearsClientIdBytes`；变异：去掉清零 → 用例失败 |
+| 用户可见差异 | ① 单条目失败不再中止整批（捕获面扩大，取消语义不变）；② 多开关时 `<apiType>` 与实际接口一致——均已记 CHANGELOG | — |
+| 验证 | ✅ build 0 警告 0 错误；单测 **821 → 832**（+11）；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿 | — |
+
 ---
 
 ## 7. 与其它计划的关系
 
-- **`REVIEW_PLAN.md`**：本计划消费其状态总览中 H/I 的剩余项；每批完成后回填该表（起点 H 4/9、I 8/14）。**批 7 收口后为 H 13/0、I 20/2**——I 组剩余 I10（§5 定案不做）与 I16（未排期），J1/J2 为跟踪项。
+- **`REVIEW_PLAN.md`**：本计划消费其状态总览中 H/I 的剩余项；每批完成后回填该表（起点 H 4/9、I 8/14）。**收口批后为 H 13/0、I 21/1**——I 组仅剩 I10（§5 定案不做），J1/J2 为跟踪项（§5）。
 - **`OPTIMIZATION_PLAN.md`**：存在重叠项，评估时合并口径——`P0-1 ≈ I1/I2/I10`（已部分消纳）、`P1-1 ≈ H5`、`P1-2 ≈ I2`、`P1-3 ≈ J1`。本计划执行时若与 P 项重合，以本计划的批次与验收为准，并在 OPTIMIZATION_PLAN 对应条目补注。
 - **`MAINTENANCE_PLAN.md`**：已结项（第 8 轮验收）；其产出的 `ParserFixtureTests` + `FakeBilibiliApiServer` 正是批 4 的安全网。
 - **`REVIEW_FINDINGS.md`**：本计划执行中产生的新发现按 RF 编号登记；已定案的"不做项"（§5）登记为 ⭕ 维持现状。
