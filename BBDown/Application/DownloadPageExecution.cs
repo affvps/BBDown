@@ -181,9 +181,9 @@ internal sealed class DownloadPageExecutor
             {
                 throw;
             }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException
-                                        or IOException or TaskCanceledException or KeyNotFoundException or FormatException
-                                        or TimeoutException or AggregateException or UnauthorizedAccessException)
+            // 与"单条目可跳过"共用同一策略：附加资源（评论）抓不到只告警，不让整页失败。
+            // 用户取消已由上方带 token 守卫的 catch 重抛。
+            catch (Exception ex) when (ExceptionPolicies.IsSkippableItemFailure(ex))
             {
                 Logger.LogWarn($"评论下载失败（已跳过）: {ex.Message}");
             }

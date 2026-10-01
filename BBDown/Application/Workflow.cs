@@ -158,7 +158,9 @@ internal partial class Program
             Logger.Log("视频为互动视频，暂时不支持tv下载，修改为默认下载");
             myOption.UseTvApi = false;
         }
-        string apiType = myOption.UseTvApi ? "TV" : (myOption.UseAppApi ? "APP" : (myOption.UseIntlApi ? "INTL" : "WEB"));
+        // 与 Parser 的实际分派同源（此前这里是 TV > APP > INTL，而分派是 INTL > APP > TV，
+        // 同时给出多个 --use-*-api 时展示值会与实际走的接口不一致）。
+        string apiType = Parser.ApiModeLabel(Parser.ResolveApiMode(myOption.UseTvApi, myOption.UseIntlApi, myOption.UseAppApi));
 
         //打印分P信息
         List<Page> pagesInfo = vInfo.PagesInfo;

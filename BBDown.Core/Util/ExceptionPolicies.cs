@@ -4,9 +4,13 @@ namespace BBDown.Core.Util;
 /// 异常过滤策略（I7）：把散落在各 <c>catch</c> 站点上的
 /// <c>when (ex is A or B or …)</c> 类型集合收敛为**具名策略**。
 ///
-/// 背景：全库 <c>catch (Exception ex) when (…)</c> 实测 **94 处 / 40 种类型集合**，
-/// 其中 66 处属于"集合完全一致"的重复族（同一策略被逐字复制到多个站点，
-/// 且历史上因手工同步而出现漂移——如 `SubCommand` 与下载页过滤器各自维护一份）。
+/// 背景：全库 <c>catch (Exception ex) when (…)</c> 的重复族收口（I7）。
+/// **计数口径（2026-10-01 统一）**：全仓 <c>catch (Exception …) when (…)</c> 正则统计
+/// （排除 bin/obj），"具名" = 谓词含 <c>ExceptionPolicies.</c>，其余为内联集合——
+/// 收口后实测 **104 处（具名 67 / 内联 37）**；文档里此前的 94 / 102 / 66 三组数字
+/// 口径互不一致且未标注方法，已作废。
+/// 重复族的成因是同一策略被逐字复制到多个站点，且历史上因手工同步而漂移
+/// （如 `SubCommand` 与下载页过滤器各自维护一份）。
 ///
 /// 三条纪律（本类**不是**通用异常工具，禁止在此放与"具体站点策略"无关的判断）：
 /// <list type="number">
@@ -79,11 +83,30 @@ public static class ExceptionPolicies
             or InvalidOperationException or TimeoutException;
 
     /// <summary>
-    /// 单条目（单 aid / 单视频）失败可跳过：<c>sub check</c> 与 <c>watchlater</c> 的逐条目循环，
-    /// 失败计入失败数并继续下一个。订阅级循环（整订阅失败继续其余订阅）亦用此集合。
+    /// 单条目级故障的**类型核心集**（不含取消类）：传输失败、响应解析与结构缺失、
+    /// 本地文件与权限、服务端可控数据畸形（Format/Overflow/InvalidData/Aggregate）。
+    /// 下面两个派生谓词共用它，因此"可跳过"与"可重试"的捕获面不会再各自漂移。
     /// </summary>
-    public static bool IsSkippableItemFailure(Exception ex)
+    private static bool IsItemFailureCore(Exception ex)
         => ex is HttpRequestException or System.Text.Json.JsonException or KeyNotFoundException
             or InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException
-            or TimeoutException or TaskCanceledException or InvalidDataException;
+            or TimeoutException or InvalidDataException or AggregateException or FormatException or OverflowException;
+
+    /// <summary>
+    /// 单条目（单 aid / 单视频 / 单 P）失败可跳过：失败计入失败数并继续下一个。
+    /// 站点：<c>sub check</c> 逐 aid 与逐订阅、<c>watchlater</c> 逐视频、下载编排逐 P、
+    /// 页面附加资源（评论）的 best-effort 抓取。
+    /// 含 <see cref="TaskCanceledException"/>（HttpClient 超时的抛型）：使用本谓词的站点
+    /// **必须**已有用户取消守卫（<c>catch (OperationCanceledException) when (ct.IsCancellationRequested) throw;</c>
+    /// 或体内 <c>if (ct.IsCancellationRequested) throw;</c>），否则会把主动取消吞成"条目失败"。
+    /// </summary>
+    public static bool IsSkippableItemFailure(Exception ex)
+        => IsItemFailureCore(ex) || ex is TaskCanceledException;
+
+    /// <summary>
+    /// 页面级重试的可重试集：与核心集一致，但**不含** <see cref="TaskCanceledException"/>——
+    /// 该站点把"超时（token 未取消 → 重试）"与"用户取消（立即上抛）"分开表达，
+    /// 谓词里带上取消类型会吞掉取消，取消条件由站点自行附加。
+    /// </summary>
+    public static bool IsRetryablePageFailure(Exception ex) => IsItemFailureCore(ex);
 }

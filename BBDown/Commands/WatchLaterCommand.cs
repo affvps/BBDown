@@ -71,10 +71,10 @@ public class WatchLaterCommand : AsyncCommand<WatchLaterSettings>
                 {
                     throw;
                 }
-                // UnauthorizedAccessException（RF-44）：与下载页过滤器同步扩充。
-                // InvalidDataException（RF-72）：有界响应体/帧校验抛型，同族。
-                catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException
-                                            or IOException or UnauthorizedAccessException or ArgumentException or TimeoutException or TaskCanceledException or InvalidDataException)
+                // 与 sub check / 下载编排共用同一份"单条目可跳过"策略（此前是三份手工同步的
+                // 类型集合：RF-44/RF-72 的扩充就漏过本处）。用户取消已由上方带 token 守卫的
+                // catch 重抛，谓词内的 TaskCanceledException 只会命中 HttpClient 超时。
+                catch (Exception ex) when (ExceptionPolicies.IsSkippableItemFailure(ex))
                 {
                     // 单个视频失败不应中止整批稍后再看，但必须计入失败数，
                     // 让调用方拿到非零退出码（此前静默继续并返回 0，

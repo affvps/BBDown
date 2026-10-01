@@ -10,10 +10,46 @@ using BBDown.Core.Entity;
 
 namespace BBDown.Core;
 
+/// <summary>
+/// 播放地址接口模式：<c>--use-tv-api</c> / <c>--use-app-api</c> / <c>--use-intl-api</c>
+/// 三个开关解析出的**唯一**结果（收口项：此前"实际分派"与"展示的 &lt;apiType&gt;"各有一套优先级）。
+/// </summary>
+public enum PlayApiMode
+{
+    /// <summary>默认：web playurl（走 WBI 签名）。</summary>
+    Web,
+    /// <summary>国际版 intl playurl（两次请求 code=0/1）。</summary>
+    Intl,
+    /// <summary>APP 接口（AppHelper gRPC 路径）。</summary>
+    App,
+    /// <summary>TV 接口（access_key + sign，platform=android_tv_yst）。</summary>
+    Tv,
+}
+
 public static partial class Parser
 {
     /// <summary>调试日志中 PlayJson 摘要的最大字符数（防巨响应刷屏/耗内存）。</summary>
     private const int LogJsonSummaryMaxChars = 1024;
+
+    /// <summary>
+    /// 三个 <c>--use-*-api</c> 开关 → 唯一接口模式。**优先级即语义**：INTL &gt; APP &gt; TV &gt; WEB，
+    /// 与 <c>GetPlayJsonAsync</c> 的分派逐条对应（分派本身也改为读这个枚举，见下）。
+    /// 同时给出多个开关时，日志与 <c>&lt;apiType&gt;</c> 展示值必须等于实际走的接口。
+    /// </summary>
+    public static PlayApiMode ResolveApiMode(bool tvApi, bool intlApi, bool appApi)
+        => intlApi ? PlayApiMode.Intl
+            : appApi ? PlayApiMode.App
+            : tvApi ? PlayApiMode.Tv
+            : PlayApiMode.Web;
+
+    /// <summary><see cref="PlayApiMode"/> 的展示名（日志与 <c>&lt;apiType&gt;</c> 占位符使用）。</summary>
+    public static string ApiModeLabel(PlayApiMode mode) => mode switch
+    {
+        PlayApiMode.Intl => "INTL",
+        PlayApiMode.App => "APP",
+        PlayApiMode.Tv => "TV",
+        _ => "WEB",
+    };
 
     public static string WbiSign(string api)
     {
@@ -39,21 +75,24 @@ public static partial class Parser
     {
         Logger.LogDebug("aid={0},cid={1},epId={2},tvApi={3},IntlApi={4},appApi={5},qn={6}", aid, cid, epId, tvApi, intl, appApi, qn);
 
-        if (intl) return await GetPlayJsonAsync(aid, cid, epId, qn, token: token);
+        // 接口模式由 ResolveApiMode 单点决定（优先级 INTL > APP > TV > WEB）；展示用的
+        // <apiType> 占位符读同一个枚举，两者不可能再漂移。
+        var apiMode = ResolveApiMode(tvApi, intl, appApi);
+        if (apiMode == PlayApiMode.Intl) return await GetPlayJsonAsync(aid, cid, epId, qn, token: token);
 
 
         bool cheese = aidOri.StartsWith("cheese:");
         bool bangumi = cheese || aidOri.StartsWith("ep:");
         Logger.LogDebug("bangumi={0},cheese={1}", bangumi, cheese);
 
-        if (appApi) return await AppHelper.DoReqAsync(aid, cid, epId, qn, bangumi, encoding, Config.Current.Token, token);
+        if (apiMode == PlayApiMode.App) return await AppHelper.DoReqAsync(aid, cid, epId, qn, bangumi, encoding, Config.Current.Token, token);
 
-        string prefix = tvApi ? bangumi ? $"{Config.Current.TvHost}/pgc/player/api/playurltv" : $"{Config.Current.TvHost}/x/tv/playurl"
+        string prefix = apiMode == PlayApiMode.Tv ? bangumi ? $"{Config.Current.TvHost}/pgc/player/api/playurltv" : $"{Config.Current.TvHost}/x/tv/playurl"
             : bangumi ? $"{Config.Current.Host}/pgc/player/web/v2/playurl" : $"{Config.Current.Host}/x/player/wbi/playurl";
         prefix = $"{WithApiScheme(prefix)}?";
 
         string api;
-        if (tvApi)
+        if (apiMode == PlayApiMode.Tv)
         {
             StringBuilder apiBuilder = new();
             if (Config.Current.Token != "") apiBuilder.Append($"access_key={Config.Current.Token}&");
