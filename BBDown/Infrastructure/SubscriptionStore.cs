@@ -181,56 +181,74 @@ public static class SubscriptionStore
         }
     }
 
-    /// <summary>某个订阅已成功下载过的 avid 集合。
-    /// 历史文件损坏时隔离为 .corrupt-时间戳 并抛异常（调用方应中止该订阅，不能当空历史
-    /// 继续——否则已下载内容会被当作新增重新下载一遍）。严格验证结构：目标字段存在但
-    /// 不是数组（如 {"mid:1":"broken"}）、数组元素不是字符串，都按损坏处理并隔离，
-    /// 不能静默当空历史。</summary>
+    /// <summary>
+    /// 某个订阅已成功下载过的 avid 集合。历史文件损坏时隔离为 .corrupt-时间戳 并抛异常
+    /// （调用方应中止该订阅，不能当空历史继续——否则已下载内容会被当作新增重新下载一遍）。
+    /// 读取与"损坏判定"完全委托给 <see cref="ReadHistoryLockedAsync"/> 单入口，
+    /// 与写路径（<see cref="RecordDownloadedAsync"/>）共用同一套异常语义。
+    /// </summary>
     public static async Task<HashSet<string>> LoadHistoryAsync(string target, CancellationToken cancellationToken = default)
     {
         await _ioLock.WaitAsync(cancellationToken);
         try
         {
-            try
-            {
-                if (!File.Exists(HistoryFile)) return [];
-                using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(HistoryFile, cancellationToken));
-                // 根节点必须是对象：历史文件是 {"target": [avid,...]} 结构
-                if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                {
-                    throw new JsonException($"历史文件根节点不是对象（实际 {doc.RootElement.ValueKind}）");
-                }
-                if (!doc.RootElement.TryGetProperty(target, out var arr))
-                    return []; // 该订阅尚无历史（合法：从未下载过）
-                // 目标字段存在但不是数组 → 结构损坏，不能当空历史（否则全部内容会被当新增重下）
-                if (arr.ValueKind != JsonValueKind.Array)
-                {
-                    throw new JsonException($"订阅 {target} 的历史字段不是数组（实际 {arr.ValueKind}）");
-                }
-                var result = new HashSet<string>();
-                foreach (var e in arr.EnumerateArray())
-                {
-                    // 数组元素不是字符串（数字/对象/null）→ 结构损坏
-                    if (e.ValueKind != JsonValueKind.String)
-                        throw new JsonException($"订阅 {target} 的历史数组包含非字符串元素（{e.ValueKind}）");
-                    result.Add(e.GetString()!);
-                }
-                return result;
-            }
-            catch (Exception ex) when (ExceptionPolicies.IsJsonOrIoFailure(ex))
-            {
-                // 损坏历史隔离而非当空历史/静默重置：保留现场供排查，同时以专用异常中止。
-                // 静默当空历史会让已下载内容被当作新增重新下载；静默重置会丢失所有订阅的历史。
-                // 调用方必须捕获 SubscriptionDataCorruptException 终止整个 sub check——
-                // 若按普通订阅失败继续，后续订阅会因历史文件已不存在而把全部内容当新增重新下载。
-                string? corrupt = IsolateCorruptFile(HistoryFile);
-                Logger.LogError($"订阅历史文件损坏（{ex.Message}），已隔离为 {corrupt ?? HistoryFile}，中止当前订阅以避免重复下载");
-                throw new SubscriptionDataCorruptException($"订阅历史文件损坏，已隔离为 {corrupt ?? HistoryFile}，请检查后恢复", ex);
-            }
+            var hist = await ReadHistoryLockedAsync(cancellationToken);
+            // 该订阅尚无历史是合法场景（从未下载过）：返回空集合，不视为损坏
+            return hist.TryGetValue(target, out var list) ? new HashSet<string>(list) : new HashSet<string>();
         }
         finally
         {
             _ioLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// 历史文件的**唯一读取入口**（调用方必须已持有 <see cref="_ioLock"/>）：返回
+    /// <c>{"target": [avid,...]}</c> 的可变副本；文件不存在返回空字典。
+    /// **损坏语义唯一**——此前 <see cref="LoadHistoryAsync"/> 与 <see cref="RecordDownloadedAsync"/>
+    /// 各写一套（前者按 `IsJsonOrIoFailure` 隔离并抛专用异常，后者只 catch `JsonException`，
+    /// 于是同一份文件在"读取"与"写入"两条路径上对 IO 失败的反应不同）。现在统一为：
+    /// JSON 结构不符（根非对象 / 值非字符串数组 / 元素非字符串，含字面量 `null`）或读取
+    /// IO 失败 → 隔离为 .corrupt-时间戳 + 抛 <see cref="SubscriptionDataCorruptException"/>，
+    /// 调用方必须中止流程。当空历史继续会让已下载内容被当作新增重下；静默重置会丢失全部历史。
+    /// **严格校验整个文件**（不只调用方关心的那个 target）：任何一条损坏都意味着文件不可信，
+    /// 而写路径会把整份文件重写回盘，不能"只看自己那条"。
+    /// </summary>
+    private static async Task<Dictionary<string, List<string>>> ReadHistoryLockedAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(HistoryFile)) return [];
+        try
+        {
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(HistoryFile, cancellationToken));
+            // 根节点必须是对象：历史文件是 {"target": [avid,...]} 结构
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                throw new JsonException($"历史文件根节点不是对象（实际 {doc.RootElement.ValueKind}）");
+            var result = new Dictionary<string, List<string>>();
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                // 目标字段存在但不是数组 → 结构损坏，不能当空历史（否则全部内容会被当新增重下）
+                if (prop.Value.ValueKind != JsonValueKind.Array)
+                    throw new JsonException($"订阅 {prop.Name} 的历史字段不是数组（实际 {prop.Value.ValueKind}）");
+                var list = new List<string>();
+                foreach (var e in prop.Value.EnumerateArray())
+                {
+                    // 数组元素不是字符串（数字/对象/null）→ 结构损坏
+                    if (e.ValueKind != JsonValueKind.String)
+                        throw new JsonException($"订阅 {prop.Name} 的历史数组包含非字符串元素（{e.ValueKind}）");
+                    list.Add(e.GetString()!);
+                }
+                result[prop.Name] = list;
+            }
+            return result;
+        }
+        catch (Exception ex) when (ExceptionPolicies.IsJsonOrIoFailure(ex))
+        {
+            // 统一损坏语义：隔离现场供排查 + 专用异常中止。调用方必须捕获
+            // SubscriptionDataCorruptException 终止整个 sub check——若按普通订阅失败继续，
+            // 后续订阅会因历史文件已不存在而把全部内容当新增重新下载。
+            string? corrupt = IsolateCorruptFile(HistoryFile);
+            Logger.LogError($"订阅历史文件损坏（{ex.Message}），已隔离为 {corrupt ?? HistoryFile}，中止当前操作以避免重复下载或丢失历史");
+            throw new SubscriptionDataCorruptException($"订阅历史文件损坏，已隔离为 {corrupt ?? HistoryFile}，请检查后恢复", ex);
         }
     }
 
@@ -239,24 +257,7 @@ public static class SubscriptionStore
         await _ioLock.WaitAsync(cancellationToken);
         try
         {
-            var hist = new Dictionary<string, List<string>>();
-            if (File.Exists(HistoryFile))
-            {
-                try
-                {
-                    hist = JsonSerializer.Deserialize(await File.ReadAllTextAsync(HistoryFile, cancellationToken),
-                        SubscriptionJsonContext.Default.DictionaryStringListString) ?? new();
-                }
-                catch (JsonException ex)
-                {
-                    // 历史文件损坏：隔离而非静默重置。静默重置会让已下载过的内容在下次
-                    // 检查时被当作新增重新下载一遍，且丢失全部订阅的历史。
-                    string? corrupt = IsolateCorruptFile(HistoryFile);
-                    Logger.LogError($"订阅历史文件损坏（{ex.Message}），已隔离为 {corrupt ?? HistoryFile}，中止记录以避免覆盖历史");
-                    throw new SubscriptionDataCorruptException($"订阅历史文件损坏，已隔离为 {corrupt ?? HistoryFile}，请检查后恢复", ex);
-                }
-            }
-
+            var hist = await ReadHistoryLockedAsync(cancellationToken);
             if (!hist.TryGetValue(target, out var list)) { list = []; hist[target] = list; }
             // Remove + Add：重复下载同一 avid 时把它移到末尾（保持"最近"语义），键唯一。
             list.Remove(aid);

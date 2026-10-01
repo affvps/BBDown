@@ -111,6 +111,55 @@ public class SubscriptionStoreTests : IDisposable
     }
 
     /// <summary>
+    /// 变异验证（H10 收敛新增）：历史文件内容是字面量 `null`。旧实现里两条路径不一致——
+    /// LoadHistory 视为损坏（根不是对象），RecordDownloaded 的 \`Deserialize(...) ?? new()\`
+    /// 却静默当空历史并随后重写整份文件。统一后按"损坏不可信"处理（宁可中止也不静默当空，
+    /// 静默当空会让已下载内容被当作新增重下）。
+    /// </summary>
+    [Fact]
+    public async Task LoadHistory_NullJsonFile_IsolatesAndThrowsCorruptException()
+    {
+        File.WriteAllText(HistoryFile, "null");
+
+        var ex = await Assert.ThrowsAsync<SubscriptionDataCorruptException>(
+            () => SubscriptionStore.LoadHistoryAsync("mid:1"));
+        Assert.Contains(".corrupt-", ex.Message);
+        Assert.False(File.Exists(HistoryFile));
+        Assert.Single(Directory.GetFiles(_tempRoot, "BBDownSubscriptions.history.json.corrupt-*"));
+    }
+
+    /// <summary>
+    /// 同上，写路径：字面量 `null` 历史文件此前会被静默当空并重写（丢证据、丢历史），
+    /// 统一后与读路径同语义（隔离 + 专用异常）。
+    /// </summary>
+    [Fact]
+    public async Task RecordDownloaded_NullJsonFile_IsolatesAndThrowsCorruptException()
+    {
+        File.WriteAllText(HistoryFile, "null");
+
+        var ex = await Assert.ThrowsAsync<SubscriptionDataCorruptException>(
+            () => SubscriptionStore.RecordDownloadedAsync("mid:1", "170001"));
+        Assert.Contains(".corrupt-", ex.Message);
+        Assert.False(File.Exists(HistoryFile));
+    }
+
+    /// <summary>
+    /// 变异验证（H10 收敛新增）：**别的**订阅条目结构损坏时，读取一个健康订阅也判损坏。
+    /// 旧实现只校验被请求的那个 target，别的条目坏掉时照样返回结果；而写路径会把整份
+    /// 文件重写回盘（坏条目会被原样写回或触发中断），读路径"只看自己那条"会让两条路径
+    /// 对同一份文件给出不同结论。
+    /// </summary>
+    [Fact]
+    public async Task LoadHistory_OtherTargetCorrupt_IsolatesAndThrowsCorruptException()
+    {
+        File.WriteAllText(HistoryFile, "{\"mid:2\":\"broken\"}");
+
+        var ex = await Assert.ThrowsAsync<SubscriptionDataCorruptException>(
+            () => SubscriptionStore.LoadHistoryAsync("mid:1"));
+        Assert.Contains(".corrupt-", ex.Message);
+    }
+
+    /// <summary>
     /// 回归：RecordDownloaded 遇到损坏历史也必须抛专用异常（而非静默重置），
     /// 否则已下载内容会在下次检查时被当作新增重新下载，且丢失全部历史。
     /// </summary>
