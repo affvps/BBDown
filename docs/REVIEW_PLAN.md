@@ -20,10 +20,10 @@
 | E 韧性 Core | 6 | 6 | 0 |
 | F 测试 Infra | 12 | 12 | 0 |
 | G 测试结构 | 10 | 10 | 0 |
-| H 可读性 Infra | 13 | 11 | **2**（H6、H10；H1~H5/H7~H9/H11/H12/H13 已完成） |
+| H 可读性 Infra | 13 | 12 | **1**（H6；H1~H5/H7~H13 已完成） |
 | I 可读性 App/Core | 22 | 17 | **5**（I6、I9、I10、I12、I16；I1~I5/I7/I8/I11/I13~I15/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **81** | **9** |
+| **合计** | **90** | **82** | **8** |
 
 > **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 + 批 6 + 批 3a 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮）、H1 随批 6 落地（第 21 轮）、H2/H3 随批 3a 落地（第 22 轮），I 组已完成 8 → 13、H 组 4 → 7；剩余项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余按该计划 §6 批次序推进，下一批为批 3b：I5/I13）。
 
@@ -34,6 +34,8 @@
 > **回填（2026-10-01，REFACTOR_PLAN 批 5c-2 后）**：H5 随 5c-1（PR #72）+ 5c-2（PR #74）收口（第 27/28 轮），H 组 9 → 10 / 剩余 4 → 3；合计 **79/11 → 80/10**。剩余 10 项 = H6/H8/H10（批 2b 收尾 + 批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。**批 5（I1/H4/H5）至此全部收口**。
 
 > **回填（2026-10-01，REFACTOR_PLAN 批 2b-1 后）**：H8 随 2b-1（PR #76）收口（第 29 轮），H 组 10 → 11 / 剩余 3 → 2；合计 **80/10 → 81/9**。剩余 9 项 = H6/H10（批 2b-2 与批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 2b-2 后）**：H10 随 2b-2（PR #78）收口（第 30 轮），H 组 11 → 12 / 剩余 2 → 1；合计 **81/9 → 82/8**。剩余 8 项 = **H6**（批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。**批 2（H8/H9/H10）至此全部收口**，H 组仅剩 H6。
 
 ---
 
@@ -118,7 +120,7 @@
 | H7 | Medium | 多处 | ✅ 死代码逐条删除（BBDownUtil.GetFiles、UrlResolver.MdRegex、GetAvIdAsync 无 token 重载、空 WriteLine ×2、NormalizeLockKey 上方孤立 doc 归位到 AcquireDownloadLock；CommandLineSplitter 保留——其位与为非短路是有意语义已加注释） |
 | H8 | Medium | 多处 | 误导性命名：ReadLinesThrottled、_savePathLock、MyOptionBindingResult<T>、QualityName 档位映射顺序、nowId。**✅ 2026-10-01 全部 5 项收口**（3 项随 PR #69；余 2 项随批 2b-1/PR #76：`ReadLinesThrottled` → `ReadLinesDedupedAndCapped`、`QualityName` 补分支顺序文档，见第 29 轮） |
 | H9 | Medium | 多处 | 魔法数字集中常量（关停 30s/回调 2min/1048576/复核 15s/分片并发 8/退避 3000*2^n/完整性 0.8/FLV 常量 13 个） |
-| H10 | Medium | SubscriptionStore.cs:110-149,205 | 同一历史文件两套异常语义：抽 ReadHistoryLocked() 单入口 |
+| H10 | Medium | SubscriptionStore.cs:110-149,205 | 同一历史文件两套异常语义：抽 ReadHistoryLocked() 单入口。**✅ 2026-10-01 批 2b-2 已落地**（PR #78：`ReadHistoryLockedAsync` 单入口；顺带修复写路径只 catch `JsonException` 致读取 IO 失败裸奔、及只校验被请求 target 的分歧；3 处行为变化补 3 例变异验证，测试 789 → 792，见第 30 轮） |
 | H12 | Low | 多处 | ✅ recevied 拼写修正、bool & bool 加非短路注释、SetUpServer→SetupServer 改名（1 定义+4 调用） |
 | H13 | Low | LiveStreamUtil.cs:57,235 | ✅ ResolveAsync 5 元组 → sealed record LiveStreamInfo；LiveCommand/LiveStreamUtil 内部/测试三处消费改按名访问 |
 
@@ -682,3 +684,20 @@
 | 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
 | 状态计数 | H **10/3 → 11/2**（H8 ✅），合计 **80/10 → 81/9**；剩余 H6/H10 + I6/I9/I10/I12/I16 + J1/J2 |
 | Info 级观察（不登记 RF） | ① "改名"这类 R1 项的价值取决于**先读实现**：本次读完才发现"throttled"既不是时间限速也不是丢弃全部重复行（只合并**相邻**重复），若直接改为 `ReadLinesRateLimited` 反而制造新误导；② `QualityName` 一类"顺序即语义"的 switch，注释比改名更能防回归（读者重排的动机来自可读性，注释正对此动机）；③ 批 2b 已两次拆分（#69 三项改名 / #76 余两项），说明"条目内剩余项的风险与验证成本差异"是拆分的主要依据，而非条目边界 |
+
+---
+
+## 第 30 轮：REFACTOR_PLAN 批 2b-2 落地（H10 历史读取单入口，2026-10-01）
+
+> 批 2b 第二增量落地（PR #78，合并提交 `2cc7848`）——**批 2（H8/H9/H10）全部收口**，H 组仅剩 H6。本轮**含刻意行为变化**，按 REFACTOR_PLAN §4 纪律 #5 补 3 例变异验证；无新发现登记。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| 单入口 | ✅ `ReadHistoryLockedAsync`（调用方须持 `_ioLock`）：返回 `{"target":[avid,...]}` 可变副本；"损坏 → 隔离 `.corrupt-*` + 抛 `SubscriptionDataCorruptException`"语义收口一处，读写两条路径共用 |
+| 分歧修复 | ✅ 写路径 `RecordDownloadedAsync` 此前只 catch `JsonException`，**读取的 IO 失败以原始异常穿透**（不隔离、不告警）；现统一 `IsJsonOrIoFailure`（`catch` 5 → 4）。校验范围也统一为整个文件（旧读路径只看被请求的 target） |
+| 行为变化 + 变异验证 | ✅ ① 字面量 `null` 历史文件：写路径此前静默当空并重写 → 现按损坏处理；② `{"mid:1":null}`：写路径此前在 `list.Remove` 处抛 **NullReferenceException** → 现按损坏处理（顺带修 NRE）；③ 别的订阅条目损坏：读健康订阅也中止。`SubscriptionStoreTests` **11 → 14**，全量 **789 → 792** |
+| 机械等价对账 | ✅ `SubscriptionStore.cs` 显著代码行 **209 → 199**、`catch` **5 → 4**、`Logger` **4 → 3**；诊断由逐 target 改为逐属性遍历（`{target}` → `{prop.Name}`，等价）；`SubscriptionStoreTests.cs` 日志/catch 零差异 |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **792/792**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 状态计数 | H **11/2 → 12/1**（H10 ✅），合计 **81/9 → 82/8**；H 组仅剩 H6 |
+| Info 级观察（不登记 RF） | ① `LoadCoreAsync`（订阅**清单**文件）仍用 `?? []` 容忍字面量 `null`，与历史文件刻意不同——历史当空 = "全部内容被当新增重下"，清单当空只是"没有订阅"；差异已写入计划与 PR 描述，若完全对齐需另开评估；② 本轮是批 2 唯一**净增测试**的增量（789 → 792）："统一语义"类改动应以测试而非多重集对账为主要证据；③ 命名按 async 约定取 `ReadHistoryLockedAsync`（登记为 `ReadHistoryLocked()`），偏差已在计划 §3 注明 |
