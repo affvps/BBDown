@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）已完成并验收；剩余批次按 §6 顺序推进，**下一批为批 4**（Parser 巨方法拆解，需先跑夹具回放基线）。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）已完成并验收；剩余批次按 §6 顺序推进，**下一批为批 6**（serve 拆解，1683 行 / 护栏 51 例）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -49,6 +49,8 @@
 | **I11 补充**（2026-10-01） | "门面双命名体系，12 个成员" | **13 个成员中 9 个全库零引用**（`COOKIE`/`TOKEN`/`DEBUG_LOG`/`HOST`/`EPHOST`/`TVHOST`/`AREA`/`SKIP_SSL_CHECK`/`qualitys`）；存活 4 个：`WBI`(4 引用)/`COOKIE_FLOW`(2)/`SET_CLOCK_OFFSET`(2)/`WBI_FLOW`(1) | **改口径**：无可统一的"第二套命名体系"，实际动作是**删死代码 + 存活项改名**（H7/I17 先例），见 §6.2 |
 | **I15 补充**（2026-10-01） | `.Replace("[] ", "")` ×4 | **实测 3 处**（`Display.cs:48`/`:71`、`DownloadTrackPreparation.cs:109`） | 范围 -1；带宽估算公式实测 **6 处**，与描述一致 |
 | **I3 补充**（2026-10-01） | appkey/盐"散落" | **实测：2 份 `GetSign` + 2 份 `GetTimeStamp` + 5 处字面量**（盐 ×3：`Parser.cs:775` 两把、`BBDownUtil.cs:160` 一把；appkey ×2：`Parser.cs:58`/`:138`）| 收敛为 `BiliApiKeys` 单实现；`ParserFixtureTests.cs:169` 的 `appkey=4409e2ce8ffd12b8` 断言即现成安全网 |
+| **I2 补充**（2026-10-01） | `ExtractTracksAsync` ≈430~532 行 | ✅ **实测 532 行**（`Parser.cs:152-683`），占该文件 68% | 与描述一致；拆解后主方法 **39 行**，新增 15 个私有方法 + 3 个私有类型（见 §6 批 4） |
+| **ApiMode 偏差**（2026-10-01） | "`PickDataRoot`/`PickTrackBaseUrl` 纯函数 + `ApiMode` 枚举" | 三 bool（tv/intl/app）的组合语义**无法用单一枚举等价表达**：`tvApi && appApi` 同时为真时，两处 `!tvApi` 门控（杜比/Hi-Res 跳过）与"归一化优先级（Intl > App > Tv）"不等价；且 `Workflow.cs:159` 的 `apiType` 用的是**另一套**优先级（TV > APP > INTL > WEB） | **不引入 `ApiMode`**：改为私有 `PlayRequest` 收敛长参数，避免在可达组合上改变行为；两处优先级口径不一致记为本批 Info 观察 |
 
 **测量方法**（可复现）：`wc -l` 逐文件；方法规模用相邻方法定义行号差；调用点用 `grep -rn` 排除 `obj/`；"是否落地"用重构产物符号存在性核验（见 `REVIEW_PLAN.md` 状态总览说明）。
 
@@ -125,6 +127,8 @@
 
 ### 批 4 — Parser 巨方法拆解（`refactor/parser-extract-tracks`，R3）
 
+> ✅ **已完成**（PR #63，2026-10-01）；夹具回放基线逐字节一致，偏差（不引入 `ApiMode`、I16 未并批）见 §6 批 4 记录。
+
 - **I2**：`ExtractTracksAsync` **≈532 行** → `PickDataRoot` / `PickTrackBaseUrl` 纯函数 + `ApiMode` 枚举 + 按阶段分段（数据根定位 / 轨道解析 / 二次重取接管）；合并数据节点定位的 3 份漂移变体
 - **前置（强制）**：先跑夹具回放基线并**存档结果**（18 个夹具 JSON + `FakeBilibiliApiServer`），拆解后逐字节比对轨道集合（id/qn/bandwidth/codecid/URL 选择）
 - 可选 **I16**：`BBDownConfigParser` 7 处手工扫参收敛为 `SkipOptionValue`（同属"解析层"，可与本批合并）
@@ -186,8 +190,8 @@ dotnet format BBDown.sln --verify-no-changes
 ```
 ✅ 批 1a（I7 异常策略：64 处收口，真值表钉住）— PR #60
   → ✅ 批 1b（命名/常量/重复收敛）— PR #61
-  → 批 4（存量最大：532 行，护栏最强）      ← 下一批（先跑夹具回放基线）
-  → 批 6（文件最大：1683 行，护栏 51 例）
+  → ✅ 批 4（存量最大：532 行，护栏最强）— PR #63（夹具回放逐字节一致）
+  → 批 6（文件最大：1683 行，护栏 51 例）      ← 下一批
   → 批 3 → 批 5 → 批 2 → 批 7
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
@@ -196,8 +200,8 @@ dotnet format BBDown.sln --verify-no-changes
 |:---:|---|---|---|
 | 1a | `refactor/exception-policies` | #60 | ✅ 已完成（2026-10-01 验收：9 条策略 / 生产 64 处站点 + 真值表 9 引用） |
 | 1b | `refactor/consistency-cleanup` | #61 | ✅ 已完成（2026-10-01；基线 775 → 收批 784 全绿） |
-| 4 | `refactor/parser-extract-tracks` | — | ⏳ 待开工（**下一批**） |
-| 6 | `refactor/serve-decomposition` | — | ⏳ 待开工 |
+| 4 | `refactor/parser-extract-tracks` | #63 | ✅ 已完成（2026-10-01；18 夹具回放逐字节一致） |
+| 6 | `refactor/serve-decomposition` | — | ⏳ 待开工（**下一批**） |
 | 3 | `refactor/parameter-objects` | — | ⏳ 待开工 |
 | 5 | `refactor/download-pipeline` | — | ⏳ 待开工 |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
@@ -217,6 +221,17 @@ dotnet format BBDown.sln --verify-no-changes
 | I3 | 新增 `BBDown.Core/Util/BiliApiKeys.cs`（TV/BiliPlus appkey ×2 + 盐 ×2 + 唯一 `GetSign`/`GetTimeStamp`）；删除 4 份重复实现；3 处 appkey 字面量改常量 | `ParserFixtureTests` 的 `appkey=4409e2ce8ffd12b8` 断言 + 全量单测 |
 
 > 纪律遵守：**无用户可见行为变化**（组装/估算与旧写法逐字符、逐算式等价；签名算法与常量值一字未改），故不写 CHANGELOG、不动 wiki 与 README（`AGENTS.md` 只要求用户可见变更更新文档）。
+
+**批 4（I2）· PR #63**：
+
+| 项 | 落地内容 | 安全网 |
+|---|---|---|
+| 结构 | `ExtractTracksAsync` **532 行 → 39 行**；拆出 `ExtractIntlTracksAsync`（INTL 两轮合并）、`ExtractDashTracksAsync`、`TryReRequestForDashAsync`（免二压接管）、`ExtractDurlTracksAsync`（最高清晰度重发 + 分段映射）、`ExtractClipInfoPoints`，以及轨道映射纯函数 `MapDashVideoTracks`/`MapDashAudioTracks`/`MapDubbingTracks`/`MapRawAudioTrack`/`ExtractDrmInfo` | 18 夹具回放逐字节一致 |
+| 收敛 | 数据根定位 **3 份漂移变体 → `PickDataRoot`**；轨道基址选择 **6 处重复 → `PickTrackBaseUrl`**；播放 JSON 摘要日志 → `LogPlayJsonSummary`；长参数列表 → 私有 `PlayRequest` | 同上 |
+| 所有权 | 新增私有 `PlayResponse`（"响应文档 + 当前数据根"绑定）：两次重发的接管与释放收敛为 `TakeOver()`，消除拆解前 `respJson`/`root`/`newResp` 三变量的手工同步与释放分支 | 同上 + DRM/重发夹具 |
+| 偏差 | ① **不引入 `ApiMode` 枚举**（三 bool 组合语义不可归一，见 §1）；② **I16 未并入**（跨子系统）；③ 顺带清理 FLV 分支冗余局部变量（`url` 恒为空串 → `baseUrl = ""`；`quality`/`videoCodecid`/`size`/`length` 改为声明即赋值） | — |
+| 验证 | ① 拆解前转储 18 夹具 / 15 场景的回放结果（轨道全字段 + 分段 + 清晰度 + DRM + 请求序列，query 中 `wts`/`w_rid`/`sign`/`ts` 归一为 `<v>`），两次运行 **SHA-256 一致**（`75FE2843…`，确认转储可复现）；② 拆解后同一转储 **SHA-256 完全相同**（逐字节）；③ 9 条日志文案、`throw` 1 处、`catch` 8 处计数逐字不变；④ 单测 **784/784**（拆解期间含临时转储用例为 785，删除后 784）；⑤ build 0 警告 0 错误；⑥ format exit 0 | — |
+| 规模 | `Parser.cs` 784 → 885 行（新增 XML 文档与所有权助手），主方法净减 **493 行** | — |
 
 ---
 

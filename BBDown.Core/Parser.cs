@@ -149,538 +149,651 @@ public static partial class Parser
         return webJson;
     }
 
+    /// <summary>
+    /// 解析播放地址并映射轨道。I2 拆解：原 532 行巨方法按"取文档 → 数据根定位 → dash/durl/intl
+    /// 分派 → 轨道映射"分段，重发接管的所有权收敛到 <see cref="PlayResponse"/>；公开签名与行为不变。
+    /// </summary>
     public static async Task<ParsedResult> ExtractTracksAsync(string aidOri, string aid, string cid, string epId, bool tvApi, bool intlApi, bool appApi, string encoding, bool wantDrm = false, string qn = "0", CancellationToken token = default)
     {
+        var request = new PlayRequest(aidOri, aid, cid, epId, tvApi, intlApi, appApi, encoding, wantDrm, qn);
         ParsedResult parsedResult = new();
 
         //调用解析
-        parsedResult.WebJsonString = await GetPlayJsonAsync(encoding, aidOri, aid, cid, epId, tvApi, intlApi, appApi, wantDrm, qn, token);
-
-        // 调试日志不记录完整播放 JSON：其中包含带签名的媒体地址（deadline/sign 参数），
-        // 全文落盘会把可用的临时签名 URL 写进日志文件。只记录长度 + 前 1KB 摘要，
-        // 排查问题足够，避免签名媒体地址泄漏到日志。
-        if (Config.Current.DebugLog)
-        {
-            Logger.LogDebug("PlayJson {0} chars: {1}",
-                parsedResult.WebJsonString.Length,
-                parsedResult.WebJsonString.Length > LogJsonSummaryMaxChars ? parsedResult.WebJsonString[..LogJsonSummaryMaxChars] + "…" : parsedResult.WebJsonString);
-        }
+        parsedResult.WebJsonString = await GetPlayJsonAsync(request, request.Qn, token);
+        LogPlayJsonSummary(parsedResult.WebJsonString);
 
         //intl接口需要两次请求(code=0和code=1)
-        if (intlApi)
-        {
-            foreach (var code in new[] { "0", "1" })
-            {
-                if (code == "1")
-                    parsedResult.WebJsonString = await GetPlayJsonAsync(aid, cid, epId, qn, code, token);
+        if (intlApi) return await ExtractIntlTracksAsync(request, parsedResult, token);
 
-                using var intlJson = JsonDocument.Parse(parsedResult.WebJsonString);
-                // intl 接口某次请求可能不返回 video_info / stream_list（code=0 与 code=1 返回结构不同），
-                // GetPropertySafe 遇到缺失会抛 KeyNotFoundException 直接中断整次解析，
-                // 这里逐级判空后跳过本次迭代，等待下一次请求
-                var intlData = intlJson.RootElement.TryGetPropertySafe("data");
-                if (intlData is not { ValueKind: JsonValueKind.Object }) continue;
-                var videoInfo = intlData.Value.TryGetPropertySafe("video_info");
-                if (videoInfo is not { ValueKind: JsonValueKind.Object }) continue;
-                var streamList = videoInfo.Value.TryGetPropertySafe("stream_list");
-                if (streamList is not { ValueKind: JsonValueKind.Array }) continue;
-                int pDur = videoInfo.Value.GetInt32Safe("timelength") / 1000;
-                var audioElements = videoInfo.Value.EnumerateArraySafe("dash_audio").ToList();
-
-                foreach (var stream in streamList.Value.EnumerateArray())
-                {
-                    if (stream.TryGetProperty("dash_video", out JsonElement dashVideo))
-                    {
-                        if (dashVideo.GetValueAsStringSafe("base_url") != "")
-                        {
-                            // 与上方 data/video_info/stream_list 的防御风格一致：某条流缺
-                            // stream_info 时跳过该流而不是抛 KeyNotFoundException 中断整次解析
-                            var streamInfo = stream.TryGetPropertySafe("stream_info");
-                            if (streamInfo is not { ValueKind: JsonValueKind.Object }) continue;
-                            var videoId = streamInfo.Value.GetValueAsStringSafe("quality");
-                            var urlList = new List<string>() { dashVideo.GetValueAsStringSafe("base_url") };
-                            urlList.AddRange(dashVideo.EnumerateArraySafe("backup_url").Select(i => i.ToString()));
-                            Video v = new()
-                            {
-                                dur = pDur,
-                                id = videoId,
-                                dfn = AppSettings.QualityMap.GetValueOrDefault(videoId, $"未知({videoId})"),
-                                bandwidth = dashVideo.GetInt64Safe("bandwidth") / 1000,
-                                baseUrl = urlList.FirstOrDefault(i => !BaseUrlRegex().IsMatch(i), urlList.First()),
-                                codecs = GetVideoCodec(dashVideo.GetValueAsStringSafe("codecid")),
-                                size = dashVideo.GetDoubleSafe("size")
-                            };
-                            if (!parsedResult.VideoTracks.Contains(v)) parsedResult.VideoTracks.Add(v);
-                        }
-                    }
-                }
-
-                foreach (var node in audioElements)
-                {
-                    var urlList = new List<string>() { node.GetValueAsStringSafe("base_url") };
-                    urlList.AddRange(node.EnumerateArraySafe("backup_url").Select(i => i.ToString()));
-                    Audio a = new()
-                    {
-                        id = node.GetValueAsStringSafe("id"),
-                        dfn = node.GetValueAsStringSafe("id"),
-                        dur = pDur,
-                        bandwidth = node.GetInt64Safe("bandwidth") / 1000,
-                        baseUrl = urlList.FirstOrDefault(i => !BaseUrlRegex().IsMatch(i), urlList.First()),
-                        codecs = "M4A"
-                    };
-                    if (!parsedResult.AudioTracks.Contains(a)) parsedResult.AudioTracks.Add(a);
-                }
-            }
-            return parsedResult;
-        }
-
-        var respJson = JsonDocument.Parse(parsedResult.WebJsonString);
+        var response = new PlayResponse(JsonDocument.Parse(parsedResult.WebJsonString));
         try
         {
-            var data = respJson.RootElement;
+            // data 在任何接管发生前就是原始根：业务校验针对原始响应（与拆解前一致）
+            JsonElement data = response.Document.RootElement;
             ThrowIfPlayLimited(data);
             // UGC 的播放限制通过顶层业务 code 表达（区域限制 -86038、风控 -412、视频失效 -404 等），
             // 而 play_check 只在 pgc 响应的 result 节点出现、对 UGC 不可达，这里统一兜底。
             ThrowIfBizError(data);
 
-            // 根据API版本自动定位数据节点
-            JsonElement root;
-            if (data.TryGetProperty("result", out var resultElem) && resultElem.ValueKind == JsonValueKind.Object)
-            {
-                root = resultElem.TryGetProperty("video_info", out var vi) ? vi : resultElem;
-            }
-            else if (data.TryGetProperty("data", out var dataElem))
-            {
-                root = dataElem;
-            }
-            else
-            {
-                root = data;
-            }
-
             bool bangumi = aidOri.StartsWith("ep:");
 
-            if (root.TryGetProperty("dash", out _)) //dash
-            {
-                List<JsonElement>? audio = null;
-                List<JsonElement>? video = null;
-                List<JsonElement>? backgroundAudio = null;
-                List<JsonElement>? roleAudio = null;
-                int pDur = 0;
-
-                if (root.TryGetProperty("dash", out var dashElem))
-                    pDur = dashElem.GetInt32Safe("duration");
-                if (pDur == 0)
-                    pDur = root.GetInt32Safe("timelength") / 1000;
-
-                parsedResult.ActualDurationSec = pDur;
-
-                // DRM metadata
-                parsedResult.IsDrm = root.GetBooleanSafe("is_drm");
-                parsedResult.DrmTechType = root.GetInt32Safe("drm_tech_type");
-                parsedResult.DrmType = root.GetValueAsStringSafe("drm_type");
-                if (parsedResult.IsDrm) Logger.LogDebug("DRM detected: type={0}, tech={1}", parsedResult.DrmType, parsedResult.DrmTechType);
-
-                //免二压视频需要重新请求
-                // dolby/flac 追加标记（RF-26）：dash 可能完全没有 audio 键而仅有 dolby/flac 音频，
-                // 此时 pass 0 已把它们追加进 audio；pass 1 重发失败降级（沿用第一轮文档）时
-                // 若不跳过重追加会产生重复音轨。仅当重发的新文档接管（root 换新）时才重置标记重追加。
-                bool dolbyApplied = false;
-                bool flacApplied = false;
-                for (int reparsePass = 0; reparsePass < 2; reparsePass++)
-                {
-                    if (reparsePass == 1)
-                    {
-                        if (appApi) break; //只有非APP接口需要免二压
-                        JsonDocument? newResp = null;
-                        try
-                        {
-                            var reparsePlayJson = await GetPlayJsonAsync(encoding, aidOri, aid, cid, epId, tvApi, intlApi, appApi, wantDrm, GetMaxQn(), token);
-                            newResp = JsonDocument.Parse(reparsePlayJson);
-                            var newRoot = newResp.RootElement;
-                            ThrowIfBizError(newRoot);
-                            ThrowIfPlayLimited(newRoot);
-                            var pickedRoot = newRoot.TryGetProperty("result", out var rr) && rr.ValueKind == JsonValueKind.Object && rr.TryGetProperty("video_info", out var vvii) ? vvii :
-                                   newRoot.TryGetProperty("result", out var rr2) && rr2.ValueKind == JsonValueKind.Object ? rr2 :
-                                   newRoot.TryGetProperty("data", out var dd) ? dd : newRoot;
-                            if (pickedRoot.TryGetProperty("dash", out var newDash) && newDash.TryGetProperty("video", out _))
-                            {
-                                var previousResp = respJson;
-                                respJson = newResp;
-                                newResp = null; // 文档所有权转交给主响应变量
-                                previousResp.Dispose();
-                                root = pickedRoot;
-                                parsedResult.WebJsonString = reparsePlayJson;
-                                video = newDash.TryGetProperty("video", out var newVidArr) ? newVidArr.EnumerateArray().ToList() : null;
-                                audio = newDash.TryGetProperty("audio", out var newAudArr) ? newAudArr.EnumerateArray().ToList() : null;
-                                // 新文档的 audio 是全新列表：dolby/flac 需要重新追加
-                                dolbyApplied = false;
-                                flacApplied = false;
-                            }
-                        }
-                        catch (OperationCanceledException) when (token.IsCancellationRequested)
-                        {
-                            // 用户取消（Ctrl+C/serve 关停）必须传播：SendAsync 在用户 token 取消时
-                            // 抛的正是 TaskCanceledException（OperationCanceledException 子类），
-                            // 若被下方过滤器吞掉会被误记为"降级沿用"继续走完解析（RF-17，
-                            // 原 :518 注释"真正的用户取消是 OperationCanceledException"的前提有误）。
-                            throw;
-                        }
-                        catch (Exception ex) when (ExceptionPolicies.IsParseDowngradeFailure(ex))
-                        {
-                            Logger.LogDebug("免二压重新请求失败（降级沿用第一轮结果）: {0}", ex.Message);
-                        }
-                        finally
-                        {
-                            newResp?.Dispose();
-                        }
-                    }
-                    // RF-45：列表重赋值仅在 pass 0 执行。pass 1 的新文档接管分支已自带
-                    // video/audio 重赋值；降级路径（重发失败被吞/新响应无 dash）必须保持
-                    // pass 0 的列表（含已追加的 dolby/flac 音轨）不动——否则会从旧文档重新
-                    // 生成不含 dolby/flac 的列表，而 dolbyApplied/flacApplied 标记仍为 true，
-                    // 追加块被跳过，最终音轨静默缺失杜比/Hi-Res。
-                    if (reparsePass == 0)
-                    {
-                        if (root.TryGetProperty("dash", out var dash) && dash.TryGetProperty("video", out var vidArr))
-                            video = vidArr.EnumerateArray().ToList();
-                        if (root.TryGetProperty("dash", out dash) && dash.TryGetProperty("audio", out var audArr))
-                            audio = audArr.EnumerateArray().ToList();
-                    }
-
-                    if (appApi && bangumi)
-                    {
-                        if (data.TryGetProperty("dubbing_info", out var dub) && dub.TryGetProperty("background_audio", out var bgArr))
-                            backgroundAudio = bgArr.EnumerateArray().ToList();
-                        if (data.TryGetProperty("dubbing_info", out dub) && dub.TryGetProperty("role_audio_list", out var roleArr))
-                            roleAudio = roleArr.EnumerateArray().ToList();
-                    }
-                    //处理杜比音频
-                    try
-                    {
-                        if (!dolbyApplied && !tvApi && root.GetPropertySafe("dash").TryGetProperty("dolby", out JsonElement dolby))
-                        {
-                            if (dolby.TryGetProperty("audio", out JsonElement db))
-                            {
-                                audio ??= new List<JsonElement>();
-                                audio.AddRange(db.EnumerateArray());
-                                dolbyApplied = true;
-                            }
-                        }
-                    }
-                    catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException)
-                    { Logger.LogDebug("杜比音频解析失败: {0}", e.Message); }
-
-                    //处理Hi-Res无损
-                    try
-                    {
-                        if (!flacApplied && !tvApi && root.GetPropertySafe("dash").TryGetProperty("flac", out JsonElement hiRes))
-                        {
-                            if (hiRes.TryGetProperty("audio", out JsonElement db))
-                            {
-                                if (db.ValueKind != JsonValueKind.Null)
-                                {
-                                    audio ??= new List<JsonElement>();
-                                    audio.Add(db);
-                                    flacApplied = true;
-                                }
-                            }
-                        }
-                    }
-                    catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException)
-                    { Logger.LogDebug("Hi-Res音频解析失败: {0}", e.Message); }
-
-                    if (video != null)
-                    {
-                        foreach (var node in video)
-                        {
-                            var urlList = new List<string>() { node.GetValueAsStringSafe("base_url") };
-                            urlList.AddRange(node.EnumerateArraySafe("backup_url").Select(i => i.ToString()));
-                            var videoId = node.GetValueAsStringSafe("id");
-                            Video v = new()
-                            {
-                                dur = pDur,
-                                id = videoId,
-                                dfn = AppSettings.QualityMap.GetValueOrDefault(videoId, $"未知({videoId})"),
-                                bandwidth = node.GetInt64Safe("bandwidth") / 1000,
-                                baseUrl = urlList.FirstOrDefault(i => !BaseUrlRegex().IsMatch(i), urlList.First()),
-                                codecs = GetVideoCodec(node.GetValueAsStringSafe("codecid")),
-                                size = node.GetDoubleSafe("size")
-                            };
-                            if (!tvApi && !appApi)
-                            {
-                                v.res = node.GetValueAsStringSafe("width") + "x" + node.GetValueAsStringSafe("height");
-                                v.fps = node.GetValueAsStringSafe("frame_rate");
-                            }
-                            if (!parsedResult.VideoTracks.Contains(v)) parsedResult.VideoTracks.Add(v);
-                        }
-
-                        if (parsedResult.IsDrm && string.IsNullOrEmpty(parsedResult.KidHex))
-                        {
-                            try
-                            {
-                                var firstVideo = video.FirstOrDefault();
-                                if (firstVideo.ValueKind == System.Text.Json.JsonValueKind.Undefined)
-                                    throw new InvalidOperationException("视频轨道为空，无法提取 DRM 信息");
-                                if (firstVideo.TryGetProperty("bilidrm_uri", out var drmUri))
-                                {
-                                    var uri = drmUri.GetString() ?? "";
-                                    var lastSlash = uri.LastIndexOf("//", StringComparison.Ordinal);
-                                    if (lastSlash >= 0)
-                                    {
-                                        // bilidrm://<kid> 的 kid 是 32 位 hex。无校验地提取会把
-                                        // 带 query/path 的畸形 URI（bilidrm://host/path?x=1）的混合体
-                                        // 一路带到 mp4decrypt 才失败；这里只接受纯 32 位 hex，
-                                        // 否则保持 KidHex 为空（下方会以"密钥缺失"明确报错）。
-                                        var candidate = uri[(lastSlash + 2)..];
-                                        if (candidate.Length == 32 && candidate.All(Uri.IsHexDigit))
-                                            parsedResult.KidHex = candidate;
-                                        else
-                                            Logger.LogWarn($"bilidrm_uri 的 kid 不是 32 位 hex，已忽略: {candidate}");
-                                    }
-                                }
-                                if (firstVideo.TryGetProperty("widevine_pssh", out var pssh) && pssh.GetString() is string ps && ps.Length > 0)
-                                    parsedResult.PsshBase64 = ps;
-                            }
-                            catch (Exception ex) when (ExceptionPolicies.IsMissingResponseNodeFailure(ex))
-                            { Logger.LogWarn($"DRM license info extraction error: {ex.Message}"); }
-                        }
-                    }
-
-                } // end for reparsePass
-
-                if (audio != null)
-                {
-                    foreach (var node in audio)
-                    {
-                        var urlList = new List<string>() { node.GetValueAsStringSafe("base_url") };
-                        urlList.AddRange(node.EnumerateArraySafe("backup_url").Select(i => i.ToString()));
-                        var audioId = node.GetValueAsStringSafe("id");
-                        var codecs = node.GetValueAsStringSafe("codecs");
-                        codecs = codecs switch
-                        {
-                            "mp4a.40.2" => "M4A",
-                            "mp4a.40.5" => "M4A",
-                            "ec-3" => "E-AC-3",
-                            "fLaC" => "FLAC",
-                            _ => codecs
-                        };
-
-                        parsedResult.AudioTracks.Add(new Audio()
-                        {
-                            id = audioId,
-                            dfn = audioId,
-                            dur = pDur,
-                            bandwidth = node.GetInt64Safe("bandwidth") / 1000,
-                            baseUrl = urlList.FirstOrDefault(i => !BaseUrlRegex().IsMatch(i), urlList.First()),
-                            codecs = codecs
-                        });
-                    }
-                }
-
-                if (backgroundAudio != null && roleAudio != null)
-                {
-                    foreach (var node in backgroundAudio)
-                    {
-                        var audioId = node.GetValueAsStringSafe("id");
-                        var urlList = new List<string> { node.GetValueAsStringSafe("base_url") };
-                        urlList.AddRange(node.EnumerateArraySafe("backup_url").Select(i => i.ToString()));
-                        parsedResult.BackgroundAudioTracks.Add(new Audio()
-                        {
-                            id = audioId,
-                            dfn = audioId,
-                            dur = pDur,
-                            bandwidth = node.GetInt64Safe("bandwidth") / 1000,
-                            baseUrl = urlList.FirstOrDefault(i => !BaseUrlRegex().IsMatch(i), urlList.First()),
-                            codecs = node.GetValueAsStringSafe("codecs")
-                        });
-                    }
-
-                    foreach (var role in roleAudio)
-                    {
-                        var roleAudioTracks = new List<Audio>();
-                        foreach (var node in role.EnumerateArraySafe("audio"))
-                        {
-                            var audioId = node.GetValueAsStringSafe("id");
-                            var urlList = new List<string> { node.GetValueAsStringSafe("base_url") };
-                            urlList.AddRange(node.EnumerateArraySafe("backup_url").Select(i => i.ToString()));
-                            roleAudioTracks.Add(new Audio()
-                            {
-                                id = audioId,
-                                dfn = audioId,
-                                dur = pDur,
-                                bandwidth = node.GetInt64Safe("bandwidth") / 1000,
-                                baseUrl = urlList.FirstOrDefault(i => !BaseUrlRegex().IsMatch(i), urlList.First()),
-                                codecs = node.GetValueAsStringSafe("codecs")
-                            });
-                        }
-                        parsedResult.RoleAudioList.Add(new AudioMaterialInfo()
-                        {
-                            title = role.GetValueAsStringSafe("title"),
-                            personName = role.GetValueAsStringSafe("person_name"),
-                            // audio_id 来自接口响应（外部输入）：净化后再拼路径，防 ..\/ 分隔符写出工作目录（RF-18，与 SubUtil lan 同款收口）
-                            path = PathUtil.ResolveWorkPath($"{aid}/{aid}.{cid}.{PathUtil.GetValidFileName(role.GetValueAsStringSafe("audio_id"))}.m4a"),
-                            audio = roleAudioTracks
-                        });
-                    }
-                }
-            }
-            else if (root.TryGetProperty("durl", out _)) //flv
-            {
-                // 默认以最高清晰度解析。重发响应与首次一样须经业务校验
-                //（ThrowIfPlayLimited/ThrowIfBizError）：风控/错误页未经校验会静默
-                // 产出零轨道，到下载阶段才失败——正是校验函数注释里自述要避免的场景。
-                // 重发失败（业务错误或无 durl）时沿用首次已校验的响应降级，不丢可用轨道。
-                string firstWebJson = parsedResult.WebJsonString;
-                var firstRoot = root;
-                // 重发可能抛网络/超时/解析异常（dash 分支同款过滤器）：重发失败但
-                // 首次响应已通过业务校验且完全可用，沿用首次响应降级，不把整个解析拖垮。
-                // 用户取消（Ctrl+C/serve 关停）不被过滤器捕获（SendAsync 用户取消抛的
-                // 正是 TaskCanceledException，须在下方先行重抛），向上传播走取消路径。
-                JsonDocument? retriedResp = null;
-                try
-                {
-                    parsedResult.WebJsonString = await GetPlayJsonAsync(encoding, aidOri, aid, cid, epId, tvApi, intlApi, appApi, wantDrm, GetMaxQn(), token);
-                    retriedResp = JsonDocument.Parse(parsedResult.WebJsonString);
-                }
-                catch (OperationCanceledException) when (token.IsCancellationRequested)
-                {
-                    // 同 dash 分支（RF-17）：真正的用户取消须传播，不能被记为"沿用首次结果"。
-                    throw;
-                }
-                catch (Exception ex) when (ExceptionPolicies.IsParseDowngradeFailure(ex))
-                {
-                    Logger.LogWarn($"最高清晰度重发失败（沿用首次解析结果）: {ex.Message}");
-                    parsedResult.WebJsonString = firstWebJson;
-                    root = firstRoot;
-                }
-                if (retriedResp is not null)
-                {
-                    try
-                    {
-                        var pickedRoot = retriedResp.RootElement;
-                        bool usable = true;
-                        try
-                        {
-                            ThrowIfPlayLimited(retriedResp.RootElement);
-                            ThrowIfBizError(retriedResp.RootElement);
-                        }
-                        catch (InvalidOperationException ex)
-                        {
-                            // 校验失败：沿用首次响应；下面的 finally 负责释放重发文档。
-                            // 只捕业务校验异常（两者仅抛 InvalidOperationException），不吞编程错误。
-                            usable = false;
-                            Logger.LogWarn($"最高清晰度重发被接口拒绝，沿用首次解析结果: {ex.Message}");
-                        }
-                        if (usable)
-                        {
-                            if (pickedRoot.TryGetProperty("result", out var r) && r.ValueKind == JsonValueKind.Object)
-                                pickedRoot = r.TryGetProperty("video_info", out var vi) ? vi : r;
-                            else if (pickedRoot.TryGetProperty("data", out var d))
-                                pickedRoot = d;
-                            // 只查键存在会放行 "durl": null/空数组 的退化响应（code=0 但零轨道）；
-                            // 要求非空数组才接管，否则沿用首次响应，封死静默零轨道路径。
-                            usable = pickedRoot.TryGetProperty("durl", out var durlElem)
-                                && durlElem.ValueKind == JsonValueKind.Array
-                                && durlElem.GetArrayLength() > 0;
-                        }
-                        if (usable)
-                        {
-                            var previousResp = respJson;
-                            respJson = retriedResp;
-                            retriedResp = null; // 文档所有权转交给主响应变量
-                            previousResp.Dispose();
-                            root = pickedRoot;
-                        }
-                        else
-                        {
-                            // 最高清晰度重发无可用 durl：沿用首次（已校验）响应
-                            parsedResult.WebJsonString = firstWebJson;
-                            root = firstRoot;
-                        }
-                    }
-                    finally
-                    {
-                        retriedResp?.Dispose();
-                    }
-                }
-                string quality = "";
-                string videoCodecid = "";
-                string url = "";
-                double size = 0;
-                double length = 0;
-
-                quality = root.GetValueAsStringSafe("quality");
-                videoCodecid = root.GetValueAsStringSafe("video_codecid");
-                //获取所有分段
-                foreach (var node in root.EnumerateArraySafe("durl"))
-                {
-                    parsedResult.Clips.Add(node.GetValueAsStringSafe("url"));
-                    size += node.GetDoubleSafe("size");
-                    length += node.GetDoubleSafe("length");
-                }
-                //TV模式可用清晰度
-                if (root.TryGetProperty("qn_extras", out JsonElement qnExtras))
-                {
-                    parsedResult.Dfns.AddRange(qnExtras.EnumerateArray().Select(node => node.GetValueAsStringSafe("qn")));
-                }
-                else if (root.TryGetProperty("accept_quality", out JsonElement acceptQuality)) //非tv模式可用清晰度
-                {
-                    parsedResult.Dfns.AddRange(acceptQuality.EnumerateArray()
-                        .Select(node => node.ToString())
-                        .Where(_qn => !string.IsNullOrEmpty(_qn)));
-                }
-
-                // 分段累加出的长度才是本次真正能拿到的内容长度；
-                // 充电试看片段正是在这里与 timelength 声称的完整时长产生分歧。
-                parsedResult.ActualDurationSec = (int)length / 1000;
-
-                Video v = new()
-                {
-                    id = quality,
-                    dfn = AppSettings.QualityMap.GetValueOrDefault(quality, $"未知({quality})"),
-                    baseUrl = url,
-                    codecs = GetVideoCodec(videoCodecid),
-                    dur = (int)length / 1000,
-                    size = size
-                };
-                if (!parsedResult.VideoTracks.Contains(v)) parsedResult.VideoTracks.Add(v);
-            }
+            if (response.Root.TryGetProperty("dash", out _)) //dash
+                await ExtractDashTracksAsync(request, parsedResult, response, data, bangumi, token);
+            else if (response.Root.TryGetProperty("durl", out _)) //flv
+                await ExtractDurlTracksAsync(request, parsedResult, response, token);
 
             // 番剧片头片尾转分段信息, 预计效果: 正片? -> 片头 -> 正片 -> 片尾
-            if (bangumi)
-            {
-                if (root.TryGetProperty("clip_info_list", out JsonElement clipList))
-                {
-                    parsedResult.ExtraPoints.AddRange(clipList.EnumerateArray().Select(clip => new ViewPoint()
-                    {
-                        title = clip.GetValueAsStringSafe("toastText").Replace("即将跳过", ""),
-                        start = clip.GetInt32Safe("start"),
-                        end = clip.GetInt32Safe("end")
-                    })
-                    );
-                    parsedResult.ExtraPoints.Sort((p1, p2) => p1.start.CompareTo(p2.start));
-                    var newPoints = new List<ViewPoint>();
-                    int lastEnd = 0;
-                    foreach (var point in parsedResult.ExtraPoints)
-                    {
-                        if (lastEnd < point.start)
-                            newPoints.Add(new ViewPoint() { title = "正片", start = lastEnd, end = point.start });
-                        newPoints.Add(point);
-                        lastEnd = point.end;
-                    }
-                    parsedResult.ExtraPoints = newPoints;
-                }
-
-            }
+            if (bangumi) ExtractClipInfoPoints(parsedResult, response.Root);
 
             return parsedResult;
         }
         finally
         {
-            respJson.Dispose();
+            response.Dispose();
         }
     }
+
+    /// <summary>走 INTL 接口（两次请求）的入参重载，避免各阶段反复展开长参数列表。</summary>
+    private static Task<string> GetPlayJsonAsync(PlayRequest request, string qn, CancellationToken token)
+        => GetPlayJsonAsync(request.Encoding, request.AidOri, request.Aid, request.Cid, request.EpId,
+            request.TvApi, request.IntlApi, request.AppApi, request.WantDrm, qn, token);
+
+    /// <summary>
+    /// 一次播放地址解析的入参（I2：从 532 行方法的参数列表提出，与原有形参一一对应）。
+    /// </summary>
+    private readonly record struct PlayRequest(
+        string AidOri, string Aid, string Cid, string EpId,
+        bool TvApi, bool IntlApi, bool AppApi, string Encoding, bool WantDrm, string Qn);
+
+    /// <summary>
+    /// 免二压重发的接管结果：<c>null</c> 表示沿用首轮文档（重发失败，或新响应没有可用的 dash.video）。
+    /// </summary>
+    private readonly record struct ReparseOutcome(List<JsonElement>? Video, List<JsonElement>? Audio);
+
+    /// <summary>
+    /// 播放响应文档的所有权载体：dash 的"免二压"重发与 durl 的"最高清晰度"重发都会用新文档
+    /// 替换旧文档（旧文档立即释放），当前根节点随之切换。把"文档 + 当前根节点"绑在一起传递，
+    /// 避免拆解前 respJson / root 两个变量在数百行里手工同步（I2）。
+    /// </summary>
+    private sealed class PlayResponse : IDisposable
+    {
+        public PlayResponse(JsonDocument document)
+        {
+            Document = document;
+            Root = PickDataRoot(document.RootElement);
+        }
+
+        public JsonDocument Document { get; private set; }
+
+        /// <summary>当前生效的数据根（<see cref="PickDataRoot"/> 的结果，接管后指向新文档）。</summary>
+        public JsonElement Root { get; private set; }
+
+        /// <summary>接管新文档：根节点切到 <paramref name="newRoot"/>，旧文档立即释放。</summary>
+        public void TakeOver(JsonDocument newDocument, JsonElement newRoot)
+        {
+            var previous = Document;
+            Document = newDocument;
+            Root = newRoot;
+            previous.Dispose();
+        }
+
+        public void Dispose() => Document.Dispose();
+    }
+
+    /// <summary>
+    /// 数据根定位（合并原先散在首次定位与 dash/durl 重发里的 3 份漂移变体，I2）：
+    /// result.video_info → result → data → 元素自身，覆盖 UGC/TV/番剧/课程四种响应形状。
+    /// </summary>
+    private static JsonElement PickDataRoot(JsonElement root)
+    {
+        if (root.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object)
+            return result.TryGetProperty("video_info", out var videoInfo) ? videoInfo : result;
+        if (root.TryGetProperty("data", out var data))
+            return data;
+        return root;
+    }
+
+    /// <summary>
+    /// 轨道地址选择（原实现逐轨重复 6 遍，I2 收敛）：优先 base_url，跳过 host:port 形式的
+    /// 备用地址（<see cref="BaseUrlRegex"/> 判定），列表为空时回落 base_url（即空串）。
+    /// </summary>
+    private static string PickTrackBaseUrl(JsonElement node)
+    {
+        var urlList = new List<string> { node.GetValueAsStringSafe("base_url") };
+        urlList.AddRange(node.EnumerateArraySafe("backup_url").Select(i => i.ToString()));
+        return urlList.FirstOrDefault(i => !BaseUrlRegex().IsMatch(i), urlList.First());
+    }
+
+    /// <summary>
+    /// 调试日志不记录完整播放 JSON：其中包含带签名的媒体地址（deadline/sign 参数），
+    /// 全文落盘会把可用的临时签名 URL 写进日志文件。只记录长度 + 前 1KB 摘要，
+    /// 排查问题足够，避免签名媒体地址泄漏到日志。
+    /// </summary>
+    private static void LogPlayJsonSummary(string webJsonString)
+    {
+        if (!Config.Current.DebugLog) return;
+        Logger.LogDebug("PlayJson {0} chars: {1}",
+            webJsonString.Length,
+            webJsonString.Length > LogJsonSummaryMaxChars ? webJsonString[..LogJsonSummaryMaxChars] + "…" : webJsonString);
+    }
+
+    /// <summary>
+    /// INTL 接口两个轮次（code=0 视频 / code=1 补充流）的轨道合并。
+    /// 某轮缺 video_info / stream_list 时跳过该轮（两轮返回结构不同，判空缺失即跳过，
+    /// 不能让它以 KeyNotFoundException 中断整次解析）。
+    /// </summary>
+    private static async Task<ParsedResult> ExtractIntlTracksAsync(PlayRequest request, ParsedResult parsedResult, CancellationToken token)
+    {
+        foreach (var code in new[] { "0", "1" })
+        {
+            if (code == "1")
+                parsedResult.WebJsonString = await GetPlayJsonAsync(request.Aid, request.Cid, request.EpId, request.Qn, code, token);
+
+            using var intlJson = JsonDocument.Parse(parsedResult.WebJsonString);
+            // intl 接口某次请求可能不返回 video_info / stream_list（code=0 与 code=1 返回结构不同），
+            // GetPropertySafe 遇到缺失会抛 KeyNotFoundException 直接中断整次解析，
+            // 这里逐级判空后跳过本次迭代，等待下一次请求
+            var intlData = intlJson.RootElement.TryGetPropertySafe("data");
+            if (intlData is not { ValueKind: JsonValueKind.Object }) continue;
+            var videoInfo = intlData.Value.TryGetPropertySafe("video_info");
+            if (videoInfo is not { ValueKind: JsonValueKind.Object }) continue;
+            var streamList = videoInfo.Value.TryGetPropertySafe("stream_list");
+            if (streamList is not { ValueKind: JsonValueKind.Array }) continue;
+            int pDur = videoInfo.Value.GetInt32Safe("timelength") / 1000;
+            var audioElements = videoInfo.Value.EnumerateArraySafe("dash_audio").ToList();
+
+            foreach (var stream in streamList.Value.EnumerateArray())
+            {
+                if (stream.TryGetProperty("dash_video", out JsonElement dashVideo))
+                {
+                    if (dashVideo.GetValueAsStringSafe("base_url") != "")
+                    {
+                        // 与上方 data/video_info/stream_list 的防御风格一致：某条流缺
+                        // stream_info 时跳过该流而不是抛 KeyNotFoundException 中断整次解析
+                        var streamInfo = stream.TryGetPropertySafe("stream_info");
+                        if (streamInfo is not { ValueKind: JsonValueKind.Object }) continue;
+                        var videoId = streamInfo.Value.GetValueAsStringSafe("quality");
+                        Video v = new()
+                        {
+                            dur = pDur,
+                            id = videoId,
+                            dfn = AppSettings.QualityMap.GetValueOrDefault(videoId, $"未知({videoId})"),
+                            bandwidth = dashVideo.GetInt64Safe("bandwidth") / 1000,
+                            baseUrl = PickTrackBaseUrl(dashVideo),
+                            codecs = GetVideoCodec(dashVideo.GetValueAsStringSafe("codecid")),
+                            size = dashVideo.GetDoubleSafe("size")
+                        };
+                        if (!parsedResult.VideoTracks.Contains(v)) parsedResult.VideoTracks.Add(v);
+                    }
+                }
+            }
+
+            foreach (var node in audioElements)
+            {
+                Audio a = new()
+                {
+                    id = node.GetValueAsStringSafe("id"),
+                    dfn = node.GetValueAsStringSafe("id"),
+                    dur = pDur,
+                    bandwidth = node.GetInt64Safe("bandwidth") / 1000,
+                    baseUrl = PickTrackBaseUrl(node),
+                    codecs = "M4A"
+                };
+                if (!parsedResult.AudioTracks.Contains(a)) parsedResult.AudioTracks.Add(a);
+            }
+        }
+        return parsedResult;
+    }
+
+    /// <summary>DASH 响应解析：时长/DRM 元数据 → 免二压重发（pass 0/1）→ 轨道映射。</summary>
+    private static async Task ExtractDashTracksAsync(
+        PlayRequest request, ParsedResult parsedResult, PlayResponse response, JsonElement data, bool bangumi, CancellationToken token)
+    {
+        List<JsonElement>? audio = null;
+        List<JsonElement>? video = null;
+        List<JsonElement>? backgroundAudio = null;
+        List<JsonElement>? roleAudio = null;
+        int pDur = 0;
+
+        if (response.Root.TryGetProperty("dash", out var dashElem))
+            pDur = dashElem.GetInt32Safe("duration");
+        if (pDur == 0)
+            pDur = response.Root.GetInt32Safe("timelength") / 1000;
+
+        parsedResult.ActualDurationSec = pDur;
+
+        // DRM metadata
+        parsedResult.IsDrm = response.Root.GetBooleanSafe("is_drm");
+        parsedResult.DrmTechType = response.Root.GetInt32Safe("drm_tech_type");
+        parsedResult.DrmType = response.Root.GetValueAsStringSafe("drm_type");
+        if (parsedResult.IsDrm) Logger.LogDebug("DRM detected: type={0}, tech={1}", parsedResult.DrmType, parsedResult.DrmTechType);
+
+        //免二压视频需要重新请求
+        // dolby/flac 追加标记（RF-26）：dash 可能完全没有 audio 键而仅有 dolby/flac 音频，
+        // 此时 pass 0 已把它们追加进 audio；pass 1 重发失败降级（沿用第一轮文档）时
+        // 若不跳过重追加会产生重复音轨。仅当重发的新文档接管（root 换新）时才重置标记重追加。
+        bool dolbyApplied = false;
+        bool flacApplied = false;
+        for (int reparsePass = 0; reparsePass < 2; reparsePass++)
+        {
+            if (reparsePass == 1)
+            {
+                if (request.AppApi) break; //只有非APP接口需要免二压
+                if (await TryReRequestForDashAsync(request, parsedResult, response, token) is { } takenOver)
+                {
+                    video = takenOver.Video;
+                    audio = takenOver.Audio;
+                    // 新文档的 audio 是全新列表：dolby/flac 需要重新追加
+                    dolbyApplied = false;
+                    flacApplied = false;
+                }
+            }
+            // RF-45：列表重赋值仅在 pass 0 执行。pass 1 的新文档接管分支已自带
+            // video/audio 重赋值；降级路径（重发失败被吞/新响应无 dash）必须保持
+            // pass 0 的列表（含已追加的 dolby/flac 音轨）不动——否则会从旧文档重新
+            // 生成不含 dolby/flac 的列表，而 dolbyApplied/flacApplied 标记仍为 true，
+            // 追加块被跳过，最终音轨静默缺失杜比/Hi-Res。
+            if (reparsePass == 0)
+            {
+                if (response.Root.TryGetProperty("dash", out var dash) && dash.TryGetProperty("video", out var vidArr))
+                    video = vidArr.EnumerateArray().ToList();
+                if (response.Root.TryGetProperty("dash", out dash) && dash.TryGetProperty("audio", out var audArr))
+                    audio = audArr.EnumerateArray().ToList();
+            }
+
+            if (request.AppApi && bangumi)
+            {
+                // data 是首轮文档的根。这里只读首轮文档是安全的：appApi 在 pass 1 开头即 break，
+                // 永不发生接管（data 不会被释放）。若将来放开 appApi 重发，此处须改用 response.Root。
+                if (data.TryGetProperty("dubbing_info", out var dub) && dub.TryGetProperty("background_audio", out var bgArr))
+                    backgroundAudio = bgArr.EnumerateArray().ToList();
+                if (data.TryGetProperty("dubbing_info", out dub) && dub.TryGetProperty("role_audio_list", out var roleArr))
+                    roleAudio = roleArr.EnumerateArray().ToList();
+            }
+
+            //处理杜比音频
+            if (!dolbyApplied)
+                dolbyApplied = TryAppendDolbyAudio(ref audio, response.Root, request.TvApi);
+
+            //处理Hi-Res无损
+            if (!flacApplied)
+                flacApplied = TryAppendFlacAudio(ref audio, response.Root, request.TvApi);
+
+            MapDashVideoTracks(parsedResult, video, pDur, request);
+        } // end for reparsePass
+
+        MapDashAudioTracks(parsedResult, audio, pDur);
+        MapDubbingTracks(parsedResult, backgroundAudio, roleAudio, pDur, request);
+    }
+
+    /// <summary>
+    /// 免二压重发（qn 取可用清晰度上界）。成功接管时：新文档释放旧文档、数据根切到新文档、
+    /// <c>WebJsonString</c> 同步为新响应，并返回新文档的 video/audio 列表；任何失败或新响应
+    /// 没有可用的 dash.video 时返回 <c>null</c>（调用方沿用首轮结果）。
+    /// 用户取消必须传播（RF-17：SendAsync 在用户 token 取消时抛的正是 TaskCanceledException）。
+    /// </summary>
+    private static async Task<ReparseOutcome?> TryReRequestForDashAsync(
+        PlayRequest request, ParsedResult parsedResult, PlayResponse response, CancellationToken token)
+    {
+        JsonDocument? newResp = null;
+        try
+        {
+            var reparsePlayJson = await GetPlayJsonAsync(request, GetMaxQn(), token);
+            newResp = JsonDocument.Parse(reparsePlayJson);
+            var newRoot = newResp.RootElement;
+            ThrowIfBizError(newRoot);
+            ThrowIfPlayLimited(newRoot);
+            var pickedRoot = PickDataRoot(newRoot);
+            if (!pickedRoot.TryGetProperty("dash", out var newDash) || !newDash.TryGetProperty("video", out _))
+                return null;
+
+            response.TakeOver(newResp, pickedRoot);
+            newResp = null; // 文档所有权已移交，finally 不再释放
+            parsedResult.WebJsonString = reparsePlayJson;
+            return new ReparseOutcome(
+                newDash.TryGetProperty("video", out var newVidArr) ? newVidArr.EnumerateArray().ToList() : null,
+                newDash.TryGetProperty("audio", out var newAudArr) ? newAudArr.EnumerateArray().ToList() : null);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // 用户取消（Ctrl+C/serve 关停）必须传播：SendAsync 在用户 token 取消时
+            // 抛的正是 TaskCanceledException（OperationCanceledException 子类），
+            // 若被下方过滤器吞掉会被误记为"降级沿用"继续走完解析（RF-17，
+            // 原 :518 注释"真正的用户取消是 OperationCanceledException"的前提有误）。
+            throw;
+        }
+        catch (Exception ex) when (ExceptionPolicies.IsParseDowngradeFailure(ex))
+        {
+            Logger.LogDebug("免二压重新请求失败（降级沿用第一轮结果）: {0}", ex.Message);
+            return null;
+        }
+        finally
+        {
+            newResp?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 追加杜比音轨（RF-26/RF-45：由调用方的 applied 标记守卫，接管新文档后重置）。
+    /// 返回是否真的追加成功。缺节点/形状异常只记 Debug，不影响主解析。
+    /// </summary>
+    private static bool TryAppendDolbyAudio(ref List<JsonElement>? audio, JsonElement root, bool tvApi)
+    {
+        if (tvApi) return false;
+        try
+        {
+            if (root.GetPropertySafe("dash").TryGetProperty("dolby", out JsonElement dolby)
+                && dolby.TryGetProperty("audio", out JsonElement dolbyAudio))
+            {
+                audio ??= new List<JsonElement>();
+                audio.AddRange(dolbyAudio.EnumerateArray());
+                return true;
+            }
+        }
+        catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException)
+        { Logger.LogDebug("杜比音频解析失败: {0}", e.Message); }
+        return false;
+    }
+
+    /// <summary>
+    /// 追加 Hi-Res 无损音轨（守卫与异常语义同 <see cref="TryAppendDolbyAudio"/>；
+    /// flac.audio 为 null 视为无此轨）。
+    /// </summary>
+    private static bool TryAppendFlacAudio(ref List<JsonElement>? audio, JsonElement root, bool tvApi)
+    {
+        if (tvApi) return false;
+        try
+        {
+            if (root.GetPropertySafe("dash").TryGetProperty("flac", out JsonElement hiRes)
+                && hiRes.TryGetProperty("audio", out JsonElement db)
+                && db.ValueKind != JsonValueKind.Null)
+            {
+                audio ??= new List<JsonElement>();
+                audio.Add(db);
+                return true;
+            }
+        }
+        catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException)
+        { Logger.LogDebug("Hi-Res音频解析失败: {0}", e.Message); }
+        return false;
+    }
+
+    /// <summary>DASH 视频轨映射（含 DRM 元数据提取）；TV/APP 接口不读 res/fps。</summary>
+    private static void MapDashVideoTracks(ParsedResult parsedResult, List<JsonElement>? video, int pDur, PlayRequest request)
+    {
+        if (video is null) return;
+
+        foreach (var node in video)
+        {
+            var videoId = node.GetValueAsStringSafe("id");
+            Video v = new()
+            {
+                dur = pDur,
+                id = videoId,
+                dfn = AppSettings.QualityMap.GetValueOrDefault(videoId, $"未知({videoId})"),
+                bandwidth = node.GetInt64Safe("bandwidth") / 1000,
+                baseUrl = PickTrackBaseUrl(node),
+                codecs = GetVideoCodec(node.GetValueAsStringSafe("codecid")),
+                size = node.GetDoubleSafe("size")
+            };
+            if (!request.TvApi && !request.AppApi)
+            {
+                v.res = node.GetValueAsStringSafe("width") + "x" + node.GetValueAsStringSafe("height");
+                v.fps = node.GetValueAsStringSafe("frame_rate");
+            }
+            if (!parsedResult.VideoTracks.Contains(v)) parsedResult.VideoTracks.Add(v);
+        }
+
+        if (parsedResult.IsDrm && string.IsNullOrEmpty(parsedResult.KidHex))
+            ExtractDrmInfo(parsedResult, video);
+    }
+
+    /// <summary>
+    /// 从首条视频轨提取 DRM 元数据（bilidrm_uri → kid、widevine_pssh）。
+    /// 失败只告警：DRM 信息缺失由下游解密阶段以"密钥缺失"明确报错。
+    /// </summary>
+    private static void ExtractDrmInfo(ParsedResult parsedResult, List<JsonElement> video)
+    {
+        try
+        {
+            var firstVideo = video.FirstOrDefault();
+            if (firstVideo.ValueKind == JsonValueKind.Undefined)
+                throw new InvalidOperationException("视频轨道为空，无法提取 DRM 信息");
+            if (firstVideo.TryGetProperty("bilidrm_uri", out var drmUri))
+            {
+                var uri = drmUri.GetString() ?? "";
+                var lastSlash = uri.LastIndexOf("//", StringComparison.Ordinal);
+                if (lastSlash >= 0)
+                {
+                    // bilidrm://<kid> 的 kid 是 32 位 hex。无校验地提取会把
+                    // 带 query/path 的畸形 URI（bilidrm://host/path?x=1）的混合体
+                    // 一路带到 mp4decrypt 才失败；这里只接受纯 32 位 hex，
+                    // 否则保持 KidHex 为空（下方会以"密钥缺失"明确报错）。
+                    var candidate = uri[(lastSlash + 2)..];
+                    if (candidate.Length == 32 && candidate.All(Uri.IsHexDigit))
+                        parsedResult.KidHex = candidate;
+                    else
+                        Logger.LogWarn($"bilidrm_uri 的 kid 不是 32 位 hex，已忽略: {candidate}");
+                }
+            }
+            if (firstVideo.TryGetProperty("widevine_pssh", out var pssh) && pssh.GetString() is string ps && ps.Length > 0)
+                parsedResult.PsshBase64 = ps;
+        }
+        catch (Exception ex) when (ExceptionPolicies.IsMissingResponseNodeFailure(ex))
+        { Logger.LogWarn($"DRM license info extraction error: {ex.Message}"); }
+    }
+
+    /// <summary>DASH 音轨映射（codecs 串按接口惯例归一：mp4a.40.x→M4A、ec-3→E-AC-3、fLaC→FLAC）。</summary>
+    private static void MapDashAudioTracks(ParsedResult parsedResult, List<JsonElement>? audio, int pDur)
+    {
+        if (audio is null) return;
+
+        foreach (var node in audio)
+        {
+            var audioId = node.GetValueAsStringSafe("id");
+            var codecs = node.GetValueAsStringSafe("codecs");
+            codecs = codecs switch
+            {
+                "mp4a.40.2" => "M4A",
+                "mp4a.40.5" => "M4A",
+                "ec-3" => "E-AC-3",
+                "fLaC" => "FLAC",
+                _ => codecs
+            };
+
+            parsedResult.AudioTracks.Add(new Audio()
+            {
+                id = audioId,
+                dfn = audioId,
+                dur = pDur,
+                bandwidth = node.GetInt64Safe("bandwidth") / 1000,
+                baseUrl = PickTrackBaseUrl(node),
+                codecs = codecs
+            });
+        }
+    }
+
+    /// <summary>背景音与角色配音轨（仅 APP 接口的番剧响应带 dubbing_info）。</summary>
+    private static void MapDubbingTracks(
+        ParsedResult parsedResult, List<JsonElement>? backgroundAudio, List<JsonElement>? roleAudio, int pDur, PlayRequest request)
+    {
+        if (backgroundAudio is null || roleAudio is null) return;
+
+        foreach (var node in backgroundAudio)
+            parsedResult.BackgroundAudioTracks.Add(MapRawAudioTrack(node, pDur));
+
+        foreach (var role in roleAudio)
+        {
+            var roleAudioTracks = new List<Audio>();
+            foreach (var node in role.EnumerateArraySafe("audio"))
+                roleAudioTracks.Add(MapRawAudioTrack(node, pDur));
+
+            parsedResult.RoleAudioList.Add(new AudioMaterialInfo()
+            {
+                title = role.GetValueAsStringSafe("title"),
+                personName = role.GetValueAsStringSafe("person_name"),
+                // audio_id 来自接口响应（外部输入）：净化后再拼路径，防 ../ 分隔符写出工作目录（RF-18，与 SubUtil lan 同款收口）
+                path = PathUtil.ResolveWorkPath($"{request.Aid}/{request.Aid}.{request.Cid}.{PathUtil.GetValidFileName(role.GetValueAsStringSafe("audio_id"))}.m4a"),
+                audio = roleAudioTracks
+            });
+        }
+    }
+
+    /// <summary>配音/背景音轨映射：codecs 原样保留（接口已给 E-AC-3/fLaC 等展示名）。</summary>
+    private static Audio MapRawAudioTrack(JsonElement node, int pDur)
+    {
+        var audioId = node.GetValueAsStringSafe("id");
+        return new Audio()
+        {
+            id = audioId,
+            dfn = audioId,
+            dur = pDur,
+            bandwidth = node.GetInt64Safe("bandwidth") / 1000,
+            baseUrl = PickTrackBaseUrl(node),
+            codecs = node.GetValueAsStringSafe("codecs")
+        };
+    }
+
+    /// <summary>FLV（durl）响应解析：最高清晰度重发 → 分段/清晰度映射。</summary>
+    private static async Task ExtractDurlTracksAsync(
+        PlayRequest request, ParsedResult parsedResult, PlayResponse response, CancellationToken token)
+    {
+        // 默认以最高清晰度解析。重发响应与首次一样须经业务校验
+        //（ThrowIfPlayLimited/ThrowIfBizError）：风控/错误页未经校验会静默
+        // 产出零轨道，到下载阶段才失败——正是校验函数注释里自述要避免的场景。
+        // 重发失败（业务错误或无 durl）时沿用首次已校验的响应降级，不丢可用轨道。
+        string firstWebJson = parsedResult.WebJsonString;
+        // 重发可能抛网络/超时/解析异常（dash 分支同款过滤器）：重发失败但
+        // 首次响应已通过业务校验且完全可用，沿用首次响应降级，不把整个解析拖垮。
+        // 用户取消（Ctrl+C/serve 关停）不被过滤器捕获（SendAsync 用户取消抛的
+        // 正是 TaskCanceledException，须在下方先行重抛），向上传播走取消路径。
+        JsonDocument? retriedResp = null;
+        try
+        {
+            parsedResult.WebJsonString = await GetPlayJsonAsync(request, GetMaxQn(), token);
+            retriedResp = JsonDocument.Parse(parsedResult.WebJsonString);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // 同 dash 分支（RF-17）：真正的用户取消须传播，不能被记为"沿用首次结果"。
+            throw;
+        }
+        catch (Exception ex) when (ExceptionPolicies.IsParseDowngradeFailure(ex))
+        {
+            Logger.LogWarn($"最高清晰度重发失败（沿用首次解析结果）: {ex.Message}");
+            parsedResult.WebJsonString = firstWebJson;
+        }
+        if (retriedResp is not null)
+        {
+            try
+            {
+                var pickedRoot = retriedResp.RootElement;
+                bool usable = true;
+                try
+                {
+                    ThrowIfPlayLimited(pickedRoot);
+                    ThrowIfBizError(pickedRoot);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    // 校验失败：沿用首次响应；下面的 finally 负责释放重发文档。
+                    // 只捕业务校验异常（两者仅抛 InvalidOperationException），不吞编程错误。
+                    usable = false;
+                    Logger.LogWarn($"最高清晰度重发被接口拒绝，沿用首次解析结果: {ex.Message}");
+                }
+                if (usable)
+                {
+                    pickedRoot = PickDataRoot(pickedRoot);
+                    // 只查键存在会放行 "durl": null/空数组 的退化响应（code=0 但零轨道）；
+                    // 要求非空数组才接管，否则沿用首次响应，封死静默零轨道路径。
+                    usable = pickedRoot.TryGetProperty("durl", out var durlElem)
+                        && durlElem.ValueKind == JsonValueKind.Array
+                        && durlElem.GetArrayLength() > 0;
+                }
+                if (usable)
+                {
+                    response.TakeOver(retriedResp, pickedRoot);
+                    retriedResp = null; // 文档所有权已移交，finally 不再释放
+                }
+                else
+                {
+                    // 最高清晰度重发无可用 durl：沿用首次（已校验）响应
+                    parsedResult.WebJsonString = firstWebJson;
+                }
+            }
+            finally
+            {
+                retriedResp?.Dispose();
+            }
+        }
+
+        var root = response.Root;
+        //获取所有分段
+        double size = 0;
+        double length = 0;
+        foreach (var node in root.EnumerateArraySafe("durl"))
+        {
+            parsedResult.Clips.Add(node.GetValueAsStringSafe("url"));
+            size += node.GetDoubleSafe("size");
+            length += node.GetDoubleSafe("length");
+        }
+        //TV模式可用清晰度
+        if (root.TryGetProperty("qn_extras", out JsonElement qnExtras))
+        {
+            parsedResult.Dfns.AddRange(qnExtras.EnumerateArray().Select(node => node.GetValueAsStringSafe("qn")));
+        }
+        else if (root.TryGetProperty("accept_quality", out JsonElement acceptQuality)) //非tv模式可用清晰度
+        {
+            parsedResult.Dfns.AddRange(acceptQuality.EnumerateArray()
+                .Select(node => node.ToString())
+                .Where(_qn => !string.IsNullOrEmpty(_qn)));
+        }
+
+        // 分段累加出的长度才是本次真正能拿到的内容长度；
+        // 充电试看片段正是在这里与 timelength 声称的完整时长产生分歧。
+        parsedResult.ActualDurationSec = (int)length / 1000;
+
+        var quality = root.GetValueAsStringSafe("quality");
+        Video v = new()
+        {
+            id = quality,
+            dfn = AppSettings.QualityMap.GetValueOrDefault(quality, $"未知({quality})"),
+            // FLV 分段由 Clips 承载，轨道自身没有单一媒体地址
+            baseUrl = "",
+            codecs = GetVideoCodec(root.GetValueAsStringSafe("video_codecid")),
+            dur = (int)length / 1000,
+            size = size
+        };
+        if (!parsedResult.VideoTracks.Contains(v)) parsedResult.VideoTracks.Add(v);
+    }
+
+    /// <summary>
+    /// 番剧片头片尾 → 分段信息，预计效果: 正片? -> 片头 -> 正片 -> 片尾。
+    /// </summary>
+    private static void ExtractClipInfoPoints(ParsedResult parsedResult, JsonElement root)
+    {
+        if (!root.TryGetProperty("clip_info_list", out JsonElement clipList)) return;
+
+        parsedResult.ExtraPoints.AddRange(clipList.EnumerateArray().Select(clip => new ViewPoint()
+        {
+            title = clip.GetValueAsStringSafe("toastText").Replace("即将跳过", ""),
+            start = clip.GetInt32Safe("start"),
+            end = clip.GetInt32Safe("end")
+        })
+        );
+        parsedResult.ExtraPoints.Sort((p1, p2) => p1.start.CompareTo(p2.start));
+        var newPoints = new List<ViewPoint>();
+        int lastEnd = 0;
+        foreach (var point in parsedResult.ExtraPoints)
+        {
+            if (lastEnd < point.start)
+                newPoints.Add(new ViewPoint() { title = "正片", start = lastEnd, end = point.start });
+            newPoints.Add(point);
+            lastEnd = point.end;
+        }
+        parsedResult.ExtraPoints = newPoints;
+    }
+
 
     /// <summary>
     /// 净化服务端可控文本后再拼入异常消息（B3-L3）：play_detail/message 来自 B 站响应，
