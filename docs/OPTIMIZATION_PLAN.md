@@ -4,6 +4,7 @@
 > 审查范围：`BBDown/`（CLI / Application / Infrastructure / Configuration / Utilities）+ `BBDown.Core/`（Parser / Fetcher / Util / DRM / Entity）+ `BBDown.Tests` + `.github/workflows` + `Directory.Build.props` / `global.json` / `.editorconfig`
 > 审查方式：全量源码精读（`bin/obj` 除外）+ 构建/CI 配置核验 + 测试覆盖盲区扫描
 > 基线：`dotnet build -c Release 0 警告 0 错误` / `dotnet test` PR 门禁过滤器全绿 / Native AOT `PublishAot=true` 生效
+> **锚点声明**：本文的行号/符号锚点以**撰写时点**（2026-08-31，最后一次修订 2026-09-24）为准；后续批次（REFACTOR_PLAN 批 1~7 与收口批）已改动多个文件，符号名可查、行号仅供参考。
 
 ---
 
@@ -105,6 +106,7 @@
 
 - **位置**：`pr.yml` 6 个 job 各自 `checkout + setup-dotnet + restore`；`build_latest.yml:93-96` 在 `ubuntu:18.04` 容器内（arm64 交叉构建同系镜像 `:122`）`wget` SDK 无缓存且 18.04 已 EOL；`pr.yml:102` `network-integration` `continue-on-error:true`
 - **建议**：抽 `composite action` 复用 `setup`；`build_latest.yml` 的 glibc 兼容构建改 `ubuntu:20.04` 或 `dotnet-buildtools/prereqs:ubuntu-22.04` 并加 `actions/cache` 缓存 SDK tarball；`network-integration` 改为仅 `schedule` 或 `workflow_dispatch` 跑，避免 PR 噪音
+- **与 J1 的关系（2026-10-01 收口批确认）**：镜像升级不只是 CI 优化，还会把 glibc 兼容下限从 2.27 抬高到 2.31——属兼容性决策，须与 `REFACTOR_PLAN` §5 的 J1 一并评估。当前早期预警已具备：`build_latest.yml` 每次 master push 都用同一 `ubuntu:18.04` 容器构建，apt 源失效会在合并后立即暴露（而非等到发版）
 - **工作量**：半天
 
 #### P1-4 重试参数双轨收敛
@@ -122,9 +124,9 @@
 |------|------|------|------|
 | P2-1 | `BBDown.Core/Util/SubUtil.cs:540-541`（`SubTagRegex` 定义）/ `BBDown/Utilities/BBDownUtil.cs:437,439` | `SubTagRegex` 的 BCP-47 规范化已充分，正则已全部 `GeneratedRegex` | 维持现状，无需优化 |
 | P2-2 | `BBDown.Core/Util/PathUtil.cs:26` | `ReservedNames` + `TrimEnd('.',' ')` + `maxBaseNameLength=100` 已覆盖 Windows 保留名/尾点空格/超长标题 | 维持现状 |
-| P2-3 | `BBDown.Core/DRM/WvdDevice.cs` / `WidevineCdm.cs` | 内存中私钥处理 | 现状（第 13 轮核实）：`WidevineCdm` 已用 `CryptographicOperations.ZeroMemory`（4 处），`WvdDevice`/`WidevineCrypto` 未用（`WvdDevice` 私钥字节从不清零，仅 RSA 释放）；`DrmDecryptor`（`CkcDecryptor.cs:3`，对 `WidevineCdm.GetKeysAsync` 的薄封装）零测试是盲区，补 1 个向量用例 |
+| P2-3 | `BBDown.Core/DRM/WvdDevice.cs` / `WidevineCdm.cs` | 内存中私钥处理 | **✅ 已消纳（2026-10-01 收口批，PR #82）**：`WvdDevice.Dispose` 清零 client_id 原始字节、`Create` 的 finally 清零私钥源字节（成功/失败路径均不留）、`WidevineCdm` 不再保留未使用的 `macKeyClient`；新增 `Dispose_ClearsClientIdBytes`（变异验证）。`DrmDecryptor` 向量用例仍缺（其取钥链需网络/固定夹具，留作后续） |
 | P2-4 | `BBDown/Infrastructure/ExternalProcessRunner.cs` | 进程执行边界已加 5s 管道兜底与 `Kill(entireProcessTree:true)` | 维持现状（RF-22 探针已修复为 `CheckFFmpegDOVIAsync`） |
-| P2-5 | `BBDown/Configuration/BBDownConfigParser.cs` | `BuildAliasMap` 反射扫描 `CommandOptionAttribute` | 可加静态缓存（已在 P0-1 拆分时一并处理），单独优化收益低 |
+| P2-5 | `BBDown/Configuration/BBDownConfigParser.cs` | `BuildAliasMap` 反射扫描 `CommandOptionAttribute` | **✅ 已消纳**：别名表由 PR #53 引入的 `CliOptionIndex` 单点构建（含静态缓存）；I16 的手工扫参亦随收口批（PR #82）收敛为 4 个 helper |
 | P2-6 | 日志 | `Logger.cs` 静态文本日志 + `SensitiveDataMasker` 已覆盖全面 | `serve` 长驻场景可选 `Microsoft.Extensions.Logging` + JSON 行，便于上游收集 |
 
 ---
