@@ -122,7 +122,7 @@ BBDown --help
 | `--skip-subtitle` / `--skip-cover` / `--skip-ai` | 跳过字幕 / 封面 / AI 字幕 |
 | `--debug` | 输出调试日志（排障时附上） |
 
-> DRM 解密相关选项（`--decrypt-drm` / `--key` / `--kid` / `--wvd-path` 等）见下方 [Widevine DRM 解密](#widevine-drm-解密)。完整选项请执行 `BBDown --help`。
+> DRM 解密**默认开启**（自动检测 + 自动解密）；相关选项 `--no-decrypt-drm` / `--key` / `--kid` / `--wvd-path` / `--mp4decrypt-path` 见下方 [Widevine DRM 解密](#widevine-drm-解密)。完整选项请执行 `BBDown --help`。
 
 ### 充电专属视频
 
@@ -362,22 +362,29 @@ API 详细说明请参考 [API.md](./API.md)。
 
 BBDown 目前以**原生 C#** 实现了 Widevine CDM，可自动获取解密密钥并解密 B 站 DRM 保护内容，**无需 Python / pywidevine**。
 
-**准备**
-1. 获取一个 `device.wvd` 文件（Widevine 设备文件，需自行提取或从可信来源获取）
-2. 将 `device.wvd` 放在以下任一位置：
-   - 程序所在目录
-   - 环境变量 `PATH` 中的目录
-   - macOS: `/opt/homebrew/bin` / Linux: `/usr/local/bin` / Windows: 程序目录
+**开箱即用**
+- 发布包**内置 `device.wvd`**（Widevine L3 设备文件），解压后与可执行文件同目录即可，无需自行提取设备文件；
+- **默认自动检测 + 自动解密**：解析携带 `drm_tech_type=2`，响应标记为 DRM 时自动取钥解密，无需任何额外开关；
+- 唯一需要自行准备的是 `mp4decrypt`（Bento4 的解密工具）：从 [Bento4 releases](https://github.com/axiomatic-systems/Bento4/releases) 下载后放入 `PATH` 或程序目录，或用 `--mp4decrypt-path` 指定。缺失时会在**下载流之前**报错并给出指引（不会下完整个视频才发现无法解密）。
 
 **使用**
 ```bash
-# 下载 DRM 保护的视频（自动解密）
-BBDown --decrypt-drm "https://www.bilibili.com/cheese/play/ep1243104"
+# 直接下载 DRM 保护的内容（默认自动检测 + 自动解密）
+BBDown "https://www.bilibili.com/cheese/play/ep1243104"
+
+# 关闭自动检测与解密（不请求 DRM 流，遇到受保护内容按普通失败处理）
+BBDown --no-decrypt-drm <URL>
+
+# 替换内置设备文件（内置证书被吊销/封禁时）
+BBDown --wvd-path /path/to/device.wvd <URL>
+
+# 手动提供密钥（离线或自备密钥场景）
+BBDown --key <16进制> --kid <16进制> <URL>
 ```
 
 **原理说明**
-- 使用 `drm_tech_type=2` 请求标准 Widevine 流
-- 从 B 站许可证服务器获取密钥（兼容性取决于 `device.wvd` 的 `security_level`）
+- 默认以 `drm_tech_type=2` 请求标准 Widevine 流（`--no-decrypt-drm` 时回到旧请求形态）
+- 解析结果 `is_drm=true` 时自动从 B 站许可证服务器获取密钥（兼容性取决于设备文件的 `security_level`）
 - 解密后与普通视频一样进行混流输出
 
 ## 开发构建

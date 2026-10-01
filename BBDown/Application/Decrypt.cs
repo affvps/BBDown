@@ -34,6 +34,66 @@ internal partial class Program
         }
     }
 
+    /// <summary>
+    /// 解析 device.wvd 路径：<c>--wvd-path</c> 显式指定优先（存在才采用），否则检索
+    /// PATH / 程序目录（<see cref="FindTool"/>），最后回落到程序目录的内置 device.wvd。
+    /// 内置文件随发布包分发（打包脚本把 device.wvd 与可执行文件放进同一 zip），
+    /// 因此默认无需用户准备任何设备文件。
+    /// </summary>
+    internal static string ResolveWvdPath(MyOption myOption)
+        => !string.IsNullOrEmpty(myOption.WvdPath) && File.Exists(myOption.WvdPath)
+            ? myOption.WvdPath
+            : FindTool("device.wvd") ?? Path.Combine(AppContext.BaseDirectory, "device.wvd");
+
+    /// <summary>
+    /// 解析 mp4decrypt 路径：<c>--mp4decrypt-path</c> 显式指定优先，其次 PATH / 程序目录（Bento4）。
+    /// 未找到返回 null。
+    /// </summary>
+    internal static string? ResolveMp4DecryptPath(MyOption myOption)
+        => !string.IsNullOrEmpty(myOption.Mp4decryptPath) && File.Exists(myOption.Mp4decryptPath)
+            ? myOption.Mp4decryptPath
+            : FindTool("mp4decrypt");
+
+    /// <summary>
+    /// DRM 预检：在**下载流之前**确认解密链路的两个外部条件（mp4decrypt、device.wvd/手动密钥），
+    /// 避免"下了几个 G 才发现缺工具"。返回 false 时已打印可操作指引，调用方按该分P失败处理。
+    /// 非 DRM 内容、或用户以 --no-decrypt-drm 关闭自动处理时恒为 true（不做任何检查）。
+    /// </summary>
+    internal static bool EnsureDrmToolsAvailable(ParsedResult parsed, MyOption myOption)
+    {
+        var problem = DrmToolchainProblem(parsed, myOption, ResolveMp4DecryptPath(myOption), ResolveWvdPath(myOption));
+        if (problem is null) return true;
+
+        foreach (var line in problem.Split('\n'))
+            Logger.LogError(line);
+        return false;
+    }
+
+    /// <summary>
+    /// 预检的**纯判定**（工具解析在调用方完成，便于单测对"缺 mp4decrypt"/"缺 device.wvd"
+    /// 两种场景拿到确定性结果）：返回 null = 解密链路可用；否则返回两行可操作错误说明
+    /// （第一行现状、第二行怎么办），以换行分隔。
+    /// </summary>
+    internal static string? DrmToolchainProblem(ParsedResult parsed, MyOption myOption, string? mp4decrypt, string wvdPath)
+    {
+        if (!parsed.IsDrm || !myOption.AutoDecryptDrm) return null;
+
+        if (string.IsNullOrEmpty(mp4decrypt))
+        {
+            return "此视频受 DRM 保护，需要 mp4decrypt（Bento4）才能解密，但未找到该工具。\n" +
+                "请从 https://github.com/axiomatic-systems/Bento4/releases 下载 mp4decrypt，" +
+                "放入 PATH 或程序目录，或用 --mp4decrypt-path 指定路径后重试。";
+        }
+
+        bool manualKeys = !string.IsNullOrEmpty(myOption.DrmKeyHex) && !string.IsNullOrEmpty(myOption.DrmKidHex);
+        if (!manualKeys && parsed.DrmTechType == 2 && !File.Exists(wvdPath))
+        {
+            return "此视频的 Widevine 密钥需要 device.wvd，但未找到该文件（发布包内置）。\n" +
+                "请确认下载解压完整，或用 --wvd-path 指定 device.wvd，或用 --key/--kid 手动提供密钥。";
+        }
+        return null;
+    }
+
     private static async Task DecryptDrmAsync(ParsedResult parsed, string videoPath, string audioPath, MyOption myOption, CancellationToken token = default)
     {
         Logger.Log("检测到DRM加密，正在获取解密密钥...");
@@ -58,9 +118,7 @@ internal partial class Program
                 {
                     if (!string.IsNullOrEmpty(parsed.PsshBase64))
                     {
-                        var wvd = !string.IsNullOrEmpty(myOption.WvdPath) && File.Exists(myOption.WvdPath)
-                            ? myOption.WvdPath
-                            : FindTool("device.wvd") ?? Path.Combine(AppContext.BaseDirectory, "device.wvd");
+                        var wvd = ResolveWvdPath(myOption);
                         if (File.Exists(wvd))
                         {
                             var keyResult = await DrmDecryptor.GetKeyWidevineAsync(parsed.PsshBase64, wvd, token);
@@ -72,7 +130,8 @@ internal partial class Program
                         }
                         else
                         {
-                            Logger.LogWarn("Widevine DRM 需要 device.wvd 文件，请放置到程序目录");
+                            Logger.LogWarn("Widevine DRM 需要 device.wvd（发布包内置），当前未找到；" +
+                                "请确认解压完整，或用 --wvd-path 指定文件");
                         }
                     }
                 }
@@ -97,23 +156,23 @@ internal partial class Program
                 // 而不是静默交付加密产物。
                 throw new InvalidOperationException(
                     "DRM 解密密钥获取失败（Key 或 Kid 缺失），无法解密。" +
-                    "请确保 device.wvd 位于程序目录（--wvd-path 可指定外部 WVD 文件）；" +
-                    "若此前可解密而当前突然失败，常见原因是 device.wvd 的设备证书已被 B 站吊销/封禁，" +
-                    "请更换新版 device.wvd 后重试，或使用 --key --kid 同时提供密钥。");
+                    "请确认 device.wvd 位于程序目录（发布包内置，--wvd-path 可指定外部 WVD 文件）；" +
+                    "若此前可解密而当前突然失败，常见原因是内置 device.wvd 的设备证书已被 B 站吊销/封禁，" +
+                    "请用 --wvd-path 更换新版 device.wvd 后重试，或使用 --key --kid 同时提供密钥。");
             }
         }
 
         Logger.Log($"密钥获取成功: kid={parsed.KidHex}, key 长度={parsed.KeyHex.Length} hex 字符");
 
-        var mp4decrypt = !string.IsNullOrEmpty(myOption.Mp4decryptPath) && File.Exists(myOption.Mp4decryptPath)
-            ? myOption.Mp4decryptPath
-            : FindTool("mp4decrypt");
+        var mp4decrypt = ResolveMp4DecryptPath(myOption);
         if (string.IsNullOrEmpty(mp4decrypt))
         {
             // 与取钥失败一致：用户显式请求解密但没有解密器，若只记录错误并 return，
             // 加密流会被当成功产物交付。抛异常让任务标记失败。
             throw new InvalidOperationException(
-                "未找到 mp4decrypt，无法解密 DRM 内容。请安装 Bento4 或通过 --mp4decrypt-path 指定路径。");
+                "未找到 mp4decrypt（Bento4 的解密工具），无法解密 DRM 内容。" +
+                "请从 https://github.com/axiomatic-systems/Bento4/releases 下载并放入 PATH 或程序目录，" +
+                "或用 --mp4decrypt-path 指定路径。");
         }
 
         if (!string.IsNullOrEmpty(videoPath) && File.Exists(videoPath))

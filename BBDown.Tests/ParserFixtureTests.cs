@@ -56,6 +56,40 @@ public class ParserFixtureTests
         Assert.Matches(@"w_rid=[0-9a-f]{32}", query);
     }
 
+    /// <summary>
+    /// 自动解密（默认开启）的**请求侧**：只有 wantDrm 时才携带 <c>drm_tech_type=2</c>。
+    /// 关闭自动解密的用户（--no-decrypt-drm）必须回到旧请求形态，不能被动收到 DRM 流。
+    /// </summary>
+    [Fact]
+    public async Task DashRequest_DrmTechType_OnlyWhenRequested()
+    {
+        using (var withDrm = new FakeBilibiliApiServer())
+        {
+            withDrm.Register("/x/player/wbi/playurl", LoadFixture("ugc-web-dash.json"));
+            await WithFakeApiAsync(withDrm, async () =>
+            {
+                await ExtractAsync("av170001", "170001", "999", wantDrm: true);
+
+                Assert.NotEmpty(withDrm.Requests);
+                Assert.All(withDrm.Requests,
+                    r => Assert.Equal("2", FakeBilibiliApiServer.GetQueryValue(r.Query, "drm_tech_type")));
+            });
+        }
+
+        using (var withoutDrm = new FakeBilibiliApiServer())
+        {
+            withoutDrm.Register("/x/player/wbi/playurl", LoadFixture("ugc-web-dash.json"));
+            await WithFakeApiAsync(withoutDrm, async () =>
+            {
+                await ExtractAsync("av170001", "170001", "999", wantDrm: false);
+
+                Assert.NotEmpty(withoutDrm.Requests);
+                Assert.All(withoutDrm.Requests,
+                    r => Assert.Equal("", FakeBilibiliApiServer.GetQueryValue(r.Query, "drm_tech_type")));
+            });
+        }
+    }
+
     // ── F01：UGC data 根 DASH（fnval=4048 标准形状）──
 
     [Fact]

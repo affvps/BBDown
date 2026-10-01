@@ -71,9 +71,9 @@ jobs:
       - name: Package [win]
         run: |
           cd artifact
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-x64.zip BBDown.exe
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-x64.zip BBDown.exe device.wvd
           cd ../artifact-arm64
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-arm64.zip BBDown.exe
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-arm64.zip BBDown.exe device.wvd
 
       - name: Upload Artifact [win-x64]
         uses: actions/upload-artifact@v5
@@ -147,9 +147,9 @@ jobs:
       - name: Package [linux]
         run: |
           cd artifact
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-x64.zip BBDown
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-x64.zip BBDown device.wvd
           cd ../artifact-arm64
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-arm64.zip BBDown
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-arm64.zip BBDown device.wvd
 
       - name: Upload Artifact [linux-x64]
         uses: actions/upload-artifact@v5
@@ -187,9 +187,9 @@ jobs:
       - name: Package [osx]
         run: |
           cd artifact
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-x64.zip BBDown
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-x64.zip BBDown device.wvd
           cd ../artifact-arm64
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-arm64.zip BBDown
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-arm64.zip BBDown device.wvd
 
       - name: Upload Artifact [osx-x64]
         uses: actions/upload-artifact@v5
