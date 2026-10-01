@@ -76,6 +76,20 @@ internal static class BBDownDownloadUtil
         => Path.GetExtension(path).EndsWith(".mp4", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// 媒体下载/探测请求的统一请求头（Referer / User-Agent / Cookie）。
+    /// TV 版接口（platform=android_tv_yst、platform=android）不能带 B 站网页 Referer，
+    /// 否则被 CDN 拒绝，故按 URL 判定是否加 Referer；User-Agent 与配置 Cookie 一律加上。
+    /// 此前三处（分片下载 / 权威大小复核 / 探测）各写一份，逐字重复。
+    /// </summary>
+    private static void ApplyMediaRequestHeaders(HttpRequestMessage request, string url)
+    {
+        if (!url.Contains("platform=android_tv_yst") && !url.Contains("platform=android"))
+            request.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com");
+        request.Headers.TryAddWithoutValidation("User-Agent", HTTPUtil.GetUserAgent(null));
+        request.Headers.TryAddWithoutValidation("Cookie", Core.Config.Current.Cookie);
+    }
+
+    /// <summary>
     /// 单次分片/整段下载的请求参数（H3：原 10 参方法的参数对象）。
     /// 字段与原形参一一对应；取消令牌仍作为独立参数（控制流不属数据）。
     /// </summary>
@@ -119,10 +133,7 @@ internal static class BBDownDownloadUtil
         var downloadedBytes = request.FromPosition + fileStream.Position;
 
         using var httpRequestMessage = new HttpRequestMessage();
-        if (!request.Url.Contains("platform=android_tv_yst") && !request.Url.Contains("platform=android"))
-            httpRequestMessage.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com");
-        httpRequestMessage.Headers.TryAddWithoutValidation("User-Agent", HTTPUtil.GetUserAgent(null));
-        httpRequestMessage.Headers.TryAddWithoutValidation("Cookie", Core.Config.Current.Cookie);
+        ApplyMediaRequestHeaders(httpRequestMessage, request.Url);
         // 只发 Range：续传正确性由 Range: bytes=N- 保证，服务器支持则回 206、不支持则回 200
         // （下方 200 分支已做降级处理）。不发送 If-Range——此前用本地临时文件的
         // LastWriteTimeUtc 当 If-Range，它不是服务器的 Last-Modified，符合协议的服务器
@@ -740,9 +751,7 @@ internal static class BBDownDownloadUtil
             }
             try
             {
-                string trackManifest = ResumeManifestPath(Path.Combine(Path.GetDirectoryName(path)!,
-                    "00000_" + Path.GetFileNameWithoutExtension(path)
-                    + (IsVideoClipPath(path) ? ".vclip" : ".aclip")));
+                string trackManifest = ResumeManifestPath(ClipPathFor(path, 0));
                 if (File.Exists(trackManifest)) File.Delete(trackManifest);
             }
             catch (IOException) { /* 清理失败不影响主流程 */ }
@@ -811,13 +820,10 @@ internal static class BBDownDownloadUtil
             // 轨道级资源身份清单：多线程分片（.vclip/.aclip）由同一 URL 切出，轨道清单记录
             // 整条轨道的资源身份。身份不符（1080P→720P / AVC→HEVC）时一次性删除该轨道
             // 全部分片，而不是逐片按长度判断——长度相同的前缀会被复用拼入新资源，内容混合。
-            string dir0 = Path.GetDirectoryName(path)!;
-            string stem0 = Path.GetFileNameWithoutExtension(path);
-            string clipExt0 = IsVideoClipPath(path) ? ".vclip" : ".aclip";
             // 该轨道的全部预期分片路径（与 allClips 一一对应）：用于检测"是否存在任意分片"，
             // 不要求首分片存在——中断可能只留下后续分片，只要任一存在就必须做身份校验。
             List<string> expectedClips = allClips
-                .Select(c => Path.Combine(dir0, c.index.ToString("00000") + "_" + stem0 + clipExt0))
+                .Select(c => ClipPathFor(path, c.index))
                 .ToList();
             string manifestClip = expectedClips[0]; // 轨道清单挂在首分片名下（00000_<stem>.vclip.manifest.json）
             // 存在任意旧分片 → 校验轨道 manifest；缺失/损坏/不匹配 → 清理全部分片和旧 manifest
@@ -895,11 +901,8 @@ internal static class BBDownDownloadUtil
         }
         // 返回本次产生的精确分片列表：与 allClips 的 index 一一对应。
         // 合并/清理调用方据此操作，不扫描目录（避免混入其它任务的残留分片）。
-        string dir = Path.GetDirectoryName(path)!;
-        string stem = Path.GetFileNameWithoutExtension(path);
-        string clipExt = IsVideoClipPath(path) ? ".vclip" : ".aclip";
         return (allClips!
-            .Select(c => Path.Combine(dir, c.index.ToString("00000") + "_" + stem + clipExt))
+            .Select(c => ClipPathFor(path, c.index))
             .OrderBy(p => p)
             .ToList(), fileSize);
     }
@@ -913,7 +916,7 @@ internal static class BBDownDownloadUtil
         int maxRetry, ProgressAggregator progressAggregator, ProgressBar progress, CancellationToken token)
     {
         int retry = 0;
-        string tmp = Path.Combine(Path.GetDirectoryName(path)!, clip.index.ToString("00000") + "_" + Path.GetFileNameWithoutExtension(path) + (IsVideoClipPath(path) ? ".vclip" : ".aclip"));
+        string tmp = ClipPathFor(path, clip.index);
         while (retry < maxRetry)
         {
             try
@@ -959,6 +962,15 @@ internal static class BBDownDownloadUtil
         // maxRetry <= 0 时上面的循环一次都不执行：与原实现的 lambda 正常结束语义一致
         return null;
     }
+
+    /// <summary>
+    /// 某条轨道第 <paramref name="index"/> 个分片的路径（<c>00000_&lt;stem&gt;.vclip/.aclip</c>）。
+    /// 序号 5 位对齐（目录内按名排序即分片顺序，合并顺序也依赖它），扩展名按轨类型区分：
+    /// 视频 xxx.mp4 与音频 xxx.m4a 的 stem 相同，必须靠 .vclip/.aclip 把两条轨的分片隔离，
+    /// 否则清理视频残留会连带删掉音频轨的可续传分片。轨道级续传清单挂在首分片名下（index = 0）。
+    /// </summary>
+    private static string ClipPathFor(string path, int index)
+        => Path.Combine(Path.GetDirectoryName(path)!, index.ToString("00000") + "_" + Path.GetFileNameWithoutExtension(path) + (IsVideoClipPath(path) ? ".vclip" : ".aclip"));
 
     /// <summary>
     /// 删除某个目标路径对应的历史分片文件（上次中断遗留）。
@@ -1042,10 +1054,7 @@ internal static class BBDownDownloadUtil
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            if (!url.Contains("platform=android_tv_yst") && !url.Contains("platform=android"))
-                request.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com");
-            request.Headers.TryAddWithoutValidation("User-Agent", HTTPUtil.GetUserAgent(null));
-            request.Headers.TryAddWithoutValidation("Cookie", Core.Config.Current.Cookie);
+            ApplyMediaRequestHeaders(request, url);
             request.Headers.Range = new(0, 0);
             // 复核只是单字节小请求，独立短超时兜底，避免卡死跳过路径（失败一律视为"无法确认"）
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -1084,10 +1093,7 @@ internal static class BBDownDownloadUtil
             try
             {
                 using var httpRequestMessage = new HttpRequestMessage(method, url);
-                if (!url.Contains("platform=android_tv_yst") && !url.Contains("platform=android"))
-                    httpRequestMessage.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com");
-                httpRequestMessage.Headers.TryAddWithoutValidation("User-Agent", HTTPUtil.GetUserAgent(null));
-                httpRequestMessage.Headers.TryAddWithoutValidation("Cookie", Core.Config.Current.Cookie);
+                ApplyMediaRequestHeaders(httpRequestMessage, url);
                 httpRequestMessage.RequestUri = new(url);
                 using var response = (await HTTPUtil.MediaDownloadClient.SendAsync(httpRequestMessage, HttpCompletionOption.ResponseHeadersRead, token)).EnsureSuccessStatusCode();
                 long totalSizeBytes = response.Content.Headers.ContentLength ?? 0;
