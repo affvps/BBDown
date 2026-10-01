@@ -625,6 +625,58 @@ public class MuxerArgsTests
             if (args[i] == token) n++;
         return n;
     }
+
+    /// <summary>
+    /// H2 等价性回归：参数对象入口（<see cref="BBDownMuxer.MuxRequest"/>）与旧签名兼容重载
+    /// 必须为两条分支各生成**完全相同**的 argv——兼容重载只是逐字转发，任何一侧漂移都会被钉住。
+    /// 顺带覆盖派生字段 <c>Url</c>（原 MuxAV 内的局部变量 → ffmpeg 的 comment 元数据）。
+    /// </summary>
+    [Theory]
+    [InlineData(false)] // ffmpeg 分支
+    [InlineData(true)]  // mp4box 分支
+    public async Task MuxAV_RequestObject_MatchesCompatOverloadArgs(bool useMp4box)
+    {
+        var original = BBDownMuxer.ProcessRunner;
+        var tempDir = NewTempDir();
+        try
+        {
+            var videoPath = Path.Combine(tempDir, "video.mp4");
+            var audioPath = Path.Combine(tempDir, "audio.m4a");
+            var rolePath = Path.Combine(tempDir, "role.m4a");
+            File.WriteAllText(videoPath, "v");
+            File.WriteAllText(audioPath, "a");
+            File.WriteAllText(rolePath, "r");
+            var outPath = Path.Combine(tempDir, "out.mp4");
+            var audioMaterial = new List<AudioMaterial> { new("配音", "演员", rolePath) };
+            var points = new List<ViewPoint> { new() { title = "开场", start = 0, end = 10 } };
+
+            var compat = new FakeProcessRunner(exitCode: 0);
+            BBDownMuxer.ProcessRunner = compat;
+            await BBDownMuxer.MuxAV(useMp4box, "BVtest", videoPath, audioPath, audioMaterial, outPath,
+                desc: "d", title: "t", author: "up", episodeId: "ep1", pic: "", lang: "zh",
+                subs: null, audioOnly: false, videoOnly: false, points: points,
+                pubTime: 1700000000, simplyMux: false, isHevc: true);
+
+            var viaRequest = new FakeProcessRunner(exitCode: 0);
+            BBDownMuxer.ProcessRunner = viaRequest;
+            await BBDownMuxer.MuxAV(useMp4box, new BBDownMuxer.MuxRequest(
+                Bvid: "BVtest", VideoPath: videoPath, AudioPath: audioPath, AudioMaterial: audioMaterial,
+                OutPath: outPath, Desc: "d", Title: "t", Author: "up", EpisodeId: "ep1", Pic: "", Lang: "zh",
+                Points: points, PubTime: 1700000000, IsHevc: true));
+
+            Assert.Single(compat.Specs);
+            Assert.Single(viaRequest.Specs);
+            Assert.Equal(compat.Specs[0].FileName, viaRequest.Specs[0].FileName);
+            Assert.Equal(compat.Specs[0].Arguments, viaRequest.Specs[0].Arguments);
+            if (!useMp4box)
+                Assert.Contains("comment=https://www.bilibili.com/video/BVtest/", viaRequest.Specs[0].Arguments);
+        }
+        finally
+        {
+            BBDownMuxer.ProcessRunner = original;
+            CleanupDir(tempDir);
+        }
+    }
 }
 
 /// <summary>

@@ -20,12 +20,12 @@
 | E 韧性 Core | 6 | 6 | 0 |
 | F 测试 Infra | 12 | 12 | 0 |
 | G 测试结构 | 10 | 10 | 0 |
-| H 可读性 Infra | 13 | 5 | **8**（H2~H6、H8、H9、H10；H1/H7/H11/H12/H13 已完成） |
+| H 可读性 Infra | 13 | 7 | **6**（H4~H6、H8、H9、H10；H1/H2/H3/H7/H11/H12/H13 已完成） |
 | I 可读性 App/Core | 22 | 13 | **9**（I1、I5~I7、I9、I10、I12、I13、I16；I2/I3/I4/I8/I11/I14/I15/I17~I22 已完成） |
 | J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
-| **合计** | **90** | **71** | **19** |
+| **合计** | **90** | **73** | **17** |
 
-> **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 + 批 6 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮）、H1 随批 6 落地（第 21 轮），I 组已完成 8 → 13、H 组 4 → 5；剩余项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余按该计划 §6 批次序推进，下一批为批 3）。
+> **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 + 批 6 + 批 3a 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮）、H1 随批 6 落地（第 21 轮）、H2/H3 随批 3a 落地（第 22 轮），I 组已完成 8 → 13、H 组 4 → 7；剩余项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余按该计划 §6 批次序推进，下一批为批 3b：I5/I13）。
 
 > 回填前的历史快照为 `90 / 44 / 46`（2026-08）；本次补记的 21 项完成度分布为 F +6、G +6、B +1（B3）、H +3（H7/H11/H12/H13 中除 H11 外新补）、I +5（I8 与 I17~I20）。
 
@@ -542,3 +542,20 @@
 | AOT 纪律 | ✅ `[JsonSerializable]` 源生成上下文与它们序列化的类型**同文件迁移**（`ServeApiModels.cs`），CI 的 Native AOT smoke 通过 |
 | 基线（收批） | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**；`dotnet format --verify-no-changes` exit 0；7 个文件字节卫生（无 BOM / 纯 LF / 末尾换行） |
 | Info 级观察（不登记 RF） | ① 端点处理器仍是内联 lambda（`SetupServer` 时代遗留）：抽成具名 `internal` 处理器即可直接单测，但需把任务注册表状态以参数/门面显式传入，属独立议题；② 第 5 轮 H1 提出的"四个拆分文件"名称与本次落地形态不同（`BBDownApiServer.<职责>.cs` 而非四个独立类），勘误链在此闭环：**文件结构上 god 类已拆分，功能层面维持原先已验证的实现** |
+
+---
+
+## 第 22 轮：REFACTOR_PLAN 批 3a 落地（H2/H3 参数对象，2026-10-01）
+
+> 批 3 按依赖拆为 **3a（H2/H3 参数对象）** 与 **3b（I5/I13 结构收敛）**（沿批 1a/1b 先例，各自独立可回滚）。本轮完成 3a：`MuxAV` 20 参 / `MuxByMp4box` 16 参 → `MuxRequest`；`RangeDownloadToTmpAsync` 10 参 → `RangeDownloadRequest`。**无新发现登记**；两处口径修正（H3 调用点 4 → 实测 2、H2 第二方法 15 → 实测 16 参）记入计划 §1。用户可见行为零变化。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**；`dotnet format --verify-no-changes` exit 0 |
+| H2 | ✅ `MuxRequest`（18 字段 + 由 `Bvid` 派生的 `Url`）：`MuxAV(bool, MuxRequest, CancellationToken)` 为唯一实现，`MuxByMp4box(MuxRequest, CancellationToken)`；**保留旧 20 参兼容重载**（逐字转发），13 处调用点中 12 处测试**零改动**，生产调用点 `Download.cs` 迁到参数对象 |
+| H2 细节 | ✅ 原"就地改写入参"改为显式形态：`audioOnly/videoOnly` → 局部归一化 + `request with { VideoPath, AudioPath }` 传 mp4box 分支；mp4box 的 5 个转义值 → 转义后本地副本（`EscapeString(request.X)`），语义等价 |
+| H3 | ✅ `RangeDownloadRequest`（9 字段，`CancellationToken` 仍独立）：方法体改 `request.X` 命名访问，2 处调用点改命名构造 |
+| 等价性验证 | ✅ 新增 `MuxAV_RequestObject_MatchesCompatOverloadArgs`（Theory ×2 分支）：同一组输入下**参数对象入口与兼容重载生成的 argv 逐项相等**——兼容重载若漂移、或记录字段映射写错，立即失败；另断言派生 `Url` 确实进入 `comment=` 元数据 |
+| 机械改写兜底 | ✅ **字面量多重集比对**（元数据键名 `title=`/`comment=`/`album=`/`artist=`… 在改写前后逐条一致）：该比对当场抓出机械改写的 3 处字符串键名误伤（`"title=…"` → `"request.Title=…"`）与 5 行重复转义，均已修复；修复后比对为 0 差异 |
+| 基线（收批） | ✅ build 0 警告 0 错误；单测 **786/786 全绿**（+2）；`dotnet format --verify-no-changes` exit 0 |
+| Info 级观察（不登记 RF） | ① 兼容重载使同一能力有两个入口（旧 20 参 + `MuxRequest`）——按计划决策保留，待所有调用点迁移后再评估删除；② 参数对象化的**真正收益在调用点**（命名构造），方法体内为 `request.X` 形式，diff 较大但语义等价性已由 argv 等价测试与字面量比对双重钉住 |

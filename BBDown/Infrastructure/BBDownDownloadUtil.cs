@@ -73,10 +73,25 @@ internal static class BBDownDownloadUtil
     private static bool IsVideoClipPath(string path)
         => Path.GetExtension(path).EndsWith(".mp4", StringComparison.OrdinalIgnoreCase);
 
-    private static async Task<long> RangeDownloadToTmpAsync(int id, string url, string tmpName, long fromPosition, long? toPosition, Action<int, long, long> onProgress, bool failOnRangeNotSupported = false, string? ifRange = null, long expectedTotalSize = -1, CancellationToken token = default)
+    /// <summary>
+    /// 单次分片/整段下载的请求参数（H3：原 10 参方法的参数对象）。
+    /// 字段与原形参一一对应；取消令牌仍作为独立参数（控制流不属数据）。
+    /// </summary>
+    private readonly record struct RangeDownloadRequest(
+        int ClipIndex,
+        string Url,
+        string TmpName,
+        long FromPosition,
+        long? ToPosition,
+        Action<int, long, long> OnProgress,
+        bool FailOnRangeNotSupported = false,
+        string? IfRange = null,
+        long ExpectedTotalSize = -1);
+
+    private static async Task<long> RangeDownloadToTmpAsync(RangeDownloadRequest request, CancellationToken token = default)
     {
-        using var fileStream = new FileStream(tmpName, FileMode.OpenOrCreate);
-        long clipLength = toPosition is > 0 ? toPosition.Value - fromPosition + 1 : long.MaxValue;
+        using var fileStream = new FileStream(request.TmpName, FileMode.OpenOrCreate);
+        long clipLength = request.ToPosition is > 0 ? request.ToPosition.Value - request.FromPosition + 1 : long.MaxValue;
 
         // 超长旧分片：上次中断可能留下超出目标分片范围的尾部（内容异常变大）。
         // 此时既有字节不可信——它可能是另一版本/另一资源在相同偏移留下的残留。
@@ -93,16 +108,16 @@ internal static class BBDownDownloadUtil
             fileStream.Seek(0, SeekOrigin.End);
         }
 
-        if (toPosition > 0 && fileStream.Length == clipLength)
+        if (request.ToPosition > 0 && fileStream.Length == clipLength)
         {
             // 已下载完成 直接汇报进度并跳过下载
-            onProgress(id, clipLength, clipLength);
+            request.OnProgress(request.ClipIndex, clipLength, clipLength);
             return fileStream.Length;
         }
-        var downloadedBytes = fromPosition + fileStream.Position;
+        var downloadedBytes = request.FromPosition + fileStream.Position;
 
         using var httpRequestMessage = new HttpRequestMessage();
-        if (!url.Contains("platform=android_tv_yst") && !url.Contains("platform=android"))
+        if (!request.Url.Contains("platform=android_tv_yst") && !request.Url.Contains("platform=android"))
             httpRequestMessage.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com");
         httpRequestMessage.Headers.TryAddWithoutValidation("User-Agent", HTTPUtil.GetUserAgent(null));
         httpRequestMessage.Headers.TryAddWithoutValidation("Cookie", Core.Config.Current.Cookie);
@@ -110,19 +125,19 @@ internal static class BBDownDownloadUtil
         // （下方 200 分支已做降级处理）。不发送 If-Range——此前用本地临时文件的
         // LastWriteTimeUtc 当 If-Range，它不是服务器的 Last-Modified，符合协议的服务器
         // 会因不匹配返回完整 200，导致续传被误判为"服务器不支持多线程"。
-        httpRequestMessage.Headers.Range = new(downloadedBytes, toPosition);
+        httpRequestMessage.Headers.Range = new(downloadedBytes, request.ToPosition);
         // 续传时带 If-Range：有 ETag/Last-Modified 时让服务器校验本地前缀仍属于当前对象。
         // 若对象已变化（ETag 不符），服务器返回完整 200，下方 200 分支清空重下，
         // 不会把旧前缀与新后缀拼成损坏文件。
-        if (!string.IsNullOrEmpty(ifRange))
-            httpRequestMessage.Headers.TryAddWithoutValidation("If-Range", ifRange);
-        httpRequestMessage.RequestUri = new(url);
+        if (!string.IsNullOrEmpty(request.IfRange))
+            httpRequestMessage.Headers.TryAddWithoutValidation("If-Range", request.IfRange);
+        httpRequestMessage.RequestUri = new(request.Url);
 
         using var response = (await HTTPUtil.MediaDownloadClient.SendAsync(httpRequestMessage, HttpCompletionOption.ResponseHeadersRead, token)).EnsureSuccessStatusCode();
 
         if (response.StatusCode == HttpStatusCode.OK) // server doesn't response a partial content
         {
-            if (failOnRangeNotSupported && (downloadedBytes > 0 || toPosition != null)) throw new NotSupportedException("Range request is not supported.");
+            if (request.FailOnRangeNotSupported && (downloadedBytes > 0 || request.ToPosition != null)) throw new NotSupportedException("Range request is not supported.");
             downloadedBytes = 0;
             // 完整重下必须清空旧内容：只 Seek(0) 而没 SetLength(0) 会留下旧文件尾部，
             // 与新的短内容拼接成损坏文件。
@@ -157,11 +172,11 @@ internal static class BBDownDownloadUtil
             // total != 探测 size 即丢弃本地内容并抛 RemoteSizeMismatchException（携带权威
             // 总长），上层据此按权威总长重新切分/重试，而不是产出"长度正确但内容截断"
             // 的成品，也不是用错误大小空转重试。
-            if (expectedTotalSize > 0 && contentRange.Length is { } total && total != expectedTotalSize)
+            if (request.ExpectedTotalSize > 0 && contentRange.Length is { } total && total != request.ExpectedTotalSize)
             {
                 fileStream.SetLength(0);
                 fileStream.Seek(0, SeekOrigin.Begin);
-                throw new RemoteSizeMismatchException(expectedTotalSize, total);
+                throw new RemoteSizeMismatchException(request.ExpectedTotalSize, total);
             }
         }
 
@@ -212,7 +227,7 @@ internal static class BBDownDownloadUtil
                 // 分片结束时统一 flush 一次，保证数据落盘后调用方（合并）可读到完整内容。
                 await fileStream.WriteAsync(buffer.AsMemory(0, received), token);
                 downloadedBytes += received;
-                onProgress(id, downloadedBytes - fromPosition, totalBytes);
+                request.OnProgress(request.ClipIndex, downloadedBytes - request.FromPosition, totalBytes);
             }
             // 分片写完后落盘：合并/删除等后续操作依赖磁盘上已有完整数据
             await fileStream.FlushAsync(token);
@@ -478,7 +493,10 @@ internal static class BBDownDownloadUtil
             try
             {
                 using var progress = new ProgressBar(config.RelatedTask);
-                long written = await RangeDownloadToTmpAsync(0, url, tmpName, 0, null, (_, downloaded, total) => progress.Report((double)downloaded / total, downloaded), ifRange: resumeIfRange, expectedTotalSize: fileSize, token: token);
+                long written = await RangeDownloadToTmpAsync(new RangeDownloadRequest(
+                    0, url, tmpName, 0, null,
+                    (_, downloaded, total) => progress.Report((double)downloaded / total, downloaded),
+                    IfRange: resumeIfRange, ExpectedTotalSize: fileSize), token);
                 // 移动最终路径前验证总长度：探测到的远端大小 > 0 时，临时文件必须与之一致。
                 // 若响应 Content-Range 错位被上方拒绝重试后仍拿到错误内容，长度校验能拦住
                 // 假成功——此前直接 File.Move 把未校验内容当作成品。
@@ -813,13 +831,16 @@ internal static class BBDownDownloadUtil
                     {
                         try
                         {
-                            await RangeDownloadToTmpAsync(clip.index, url, tmp, clip.from, clip.to == -1 ? null : clip.to, (index, downloaded, _) =>
-                            {
-                                // 同一分片的回调只在它自己的任务里串行发生，
-                                // 因此这里只需保证跨分片累加的原子性
-                                var current = progressAggregator.Report(index, downloaded);
-                                progress.Report(fileSize > 0 ? (double)current / fileSize : 0, current);
-                            }, true, expectedTotalSize: fileSize, token: _);
+                            await RangeDownloadToTmpAsync(new RangeDownloadRequest(
+                                clip.index, url, tmp, clip.from, clip.to == -1 ? null : clip.to,
+                                (index, downloaded, _) =>
+                                {
+                                    // 同一分片的回调只在它自己的任务里串行发生，
+                                    // 因此这里只需保证跨分片累加的原子性
+                                    var current = progressAggregator.Report(index, downloaded);
+                                    progress.Report(fileSize > 0 ? (double)current / fileSize : 0, current);
+                                },
+                                FailOnRangeNotSupported: true, ExpectedTotalSize: fileSize), _);
                             break;
                         }
                         catch (RemoteSizeMismatchException ex)
