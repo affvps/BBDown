@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）已完成并验收；批 3 按依赖拆为 **3a（H2/H3 参数对象）** 与 **3b（I5/I13 结构收敛）**，两者均已完成；剩余批次按 §6 顺序推进，**下一批为批 5**（下载管线拆解：I1/H4/H5）。批 3 收尾后剩余（参数对象与结构收敛：H2/H3/I13/I5）。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）已完成并验收。批 5 按依赖拆为 5a/5b/5c，**下一批为批 5c**（H5 重复簇收敛；其中"权威大小复核 ×3"一簇已由批 5b 的 H4-c 消化，开批前须重测）。批 2b 收尾（H8 余 2 项 + H10）与批 7 在其后。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -148,9 +148,11 @@
 
 ### 批 5 — 下载管线拆解（`refactor/download-pipeline`，R3）
 
-- **I1**：`DownloadPageAsync` 192 行 → 4 个 helper（弹幕块 ~55 行重复、CoverOnly 分支、已有产物跳过）
-- **H4**：`BBDownDownloadUtil` 两处 170/200 行、6~7 层嵌套 → 预检决策方法 + `DownloadClipWithRetryAsync`
-- **H5**：重复簇抽 6 个辅助（任务收尾四元组 ×4、`IsLoopback`、SSRF 字面 IP ×2、DNS + 逐地址校验 ×3、头块复用）
+> 按依赖拆为 **5a（I1，PR #67）/ 5b（H4，PR #70）/ 5c（H5）**，各自独立可回滚。
+
+- **I1** ✅ **已完成（5a）**：`DownloadPageAsync` 182 → 141 行 → `BuildPageExecutionContext` + `ReportNoTrackFailure`（登记所述三个重复块已被更早批次消化，见 §1）
+- **H4** ✅ **已完成（5b）**：`DownloadFileCoreAsync` 163 → 91 行（预检四段决策树 → `PrepareSingleThreadTargetAsync` + `SingleThreadPrecheck` 决策记录）、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层（分片重试 → `DownloadClipWithRetryAsync`）；“目标等长 → 权威总长复核”的 **3 处副本 → `VerifyExistingTargetAsync`**
+- **H5** ⏳ 待开工（5c）：重复簇抽辅助——任务收尾四元组 ×4、`IsLoopback`、SSRF 字面 IP ×2、DNS + 逐地址校验 ×3、头块 ×3、clip 路径推导 ×4。⚠️ 其中 **“权威大小复核 ×3”已由 5b 的 H4-c 消化**，开批前须实测校正
 
 ### 批 6 — serve 拆解（`refactor/serve-decomposition`，R3）
 
@@ -210,9 +212,10 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 3a（H2/H3 参数对象）— PR #65
   → ✅ 批 3b（I5 DownloadContext / I13 Page 初始化器）— PR #66
   → ✅ 批 5a（I1 拆解：上下文装配 + 失败诊断）— PR #67
-  → 批 5b（H4 深层嵌套：预检决策 + DownloadClipWithRetry）  ← 下一批
+  → ✅ 批 5b（H4 深层嵌套：预检决策 + DownloadClipWithRetry + 目标复核收敛）— PR #70
   → ✅ 批 2a（H9 魔法数具名）— PR #68
-  → 批 5b → 批 5c → 批 2b（H8/H10）→ 批 7
+  → 批 5c（H5 重复簇：6 簇辅助收敛）  ← 下一批
+  → 批 5c → 批 2b（H8/H10）→ 批 7
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
@@ -225,8 +228,8 @@ dotnet format BBDown.sln --verify-no-changes
 | 3a | `refactor/parameter-objects` | #65 | ✅ 已完成（2026-10-01；`MuxRequest`/`RangeDownloadRequest` + 兼容重载等价性测试） |
 | 3b | `refactor/context-and-page` | #66 | ✅ 已完成（2026-10-01；9 元组 → `DownloadContext`，`Page` 初始化器） |
 | 5a | `refactor/download-pipeline` | #67 | ✅ 已完成（2026-10-01；主方法 182 → 141 行） |
-| 5b | `refactor/download-pipeline`（续） | — | ⏳ 待开工（**下一批**：H4） |
-| 5c | `refactor/download-pipeline`（续） | — | ⏳ 待开工（H5） |
+| 5b | `refactor/download-pipeline-nesting` | #70 | ✅ 已完成（2026-10-01；`DownloadFileCoreAsync` 163 → 91 行、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层、目标复核 3 处副本 → `VerifyExistingTargetAsync`；logger 30 → 28 / catch 22 = 22） |
+| 5c | `refactor/download-pipeline`（续） | — | ⏳ 待开工（**下一批**：H5 重复簇） |
 | 2a | `refactor/naming-and-constants` | #68 | ✅ 已完成（2026-10-01；8 个具名常量 / 约 15 处内联值） |
 | 2b | `refactor/naming-h8`（增量） | #69 | 🔶 进行中（H8 **3/5 项**已落地：`_savePathLock`→`_taskStateLock`、`MyOptionBindingResult`→`RequestBodyBindingResult`、`nowId`→`inputTrackId`；余 `ReadLinesThrottled` 改名与 `QualityName` 档位映射注释 + H10） |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
@@ -297,8 +300,16 @@ dotnet format BBDown.sln --verify-no-changes
 | 口径修正 | 登记所述的"弹幕块 ~55 行重复 / CoverOnly 分支 / 已有产物跳过"三块**已在早前批次拆入** `DownloadPageExecutor`（`DownloadPageExecution.cs:84-111`）与 `DownloadPageAssets`——本批只拆剩余两块（见 §1） | — |
 | 验证 | ✅ build 0 警告 0 错误；单测 **789/789**（无新增用例：两块均为纯搬运，行为由既有 34 例管线测试兜底）；`dotnet format --verify-no-changes` exit 0 | — |
 
+**批 5b（H4）· PR #70**（合并提交 `7d648cd`）：
 
-
+| 项 | 落地内容 | 安全网 |
+|---|---|---|
+| H4-a 预检决策 | `DownloadFileCoreAsync` **163 → 91 行**：目标/临时文件预检的四段决策树（① 目标已完整 → 权威总长复核 ② 临时文件完整且身份一致 → 直接移动 ③ 部分临时文件续传 + If-Range ④ 临时文件越界删除）收口为 `PrepareSingleThreadTargetAsync`（74 行），决策以 `SingleThreadPrecheck(TmpName, FileSize, ResumeIfRange, AlreadyComplete)` 返回——**权威总长修正随决策返回**，调用方不再持有可变的探测值 | `SingleThreadDownload_ExistingCompleteFile_IsSkippedWithoutRedownload` / `_UnknownAuthoritativeSize_DoesNotDeleteExistingFile` / `_PlaceholderHead_DeletesStaleFile_AndRedownloadsCorrectSize` / `_HeadSizeMismatchStaleFile_IsRedownloaded` / `_AudioDoesNotReuseStaleSharedTempFromVideo` + `CanResumeFrom_*` 4 例 |
+| H4-b 分片重试 | `MultiThreadDownloadCoreAsync` **196 → 152 行、嵌套 7 → 4 层**：lambda 内的 `while` 重试、退避、五路 catch 归一化收口为 `DownloadClipWithRetryAsync`（50 行），**以返回值代替闭包变量**：`null` = 分片完成，非 null = 权威总长（尺寸错位 → 调用方整轨重切分） | `MultipleClips_AssembledInOrderByteExact` / `HeadSizeMismatch_RepairedViaContentRangeTotal` / `ContentRangeMismatch_ThrowsAndDoesNotProduceCorruptFile` / `ProbesOnce_NotPerLayer`（RangeCount == 1） / `OversizedStaleClip_IsTruncatedNotMerged` |
+| H4-c 检查块收敛 | 「目标已存在且长度匹配 → GET 权威总长复核 → 不符则删除重下」原有 **3 处副本**（单线程 Core / 多线程 Core / 多线程 Merge 外层）收敛为 `VerifyExistingTargetAsync`（11 行，返回 `(Trustworthy, KnownSize)`）；各调用点保留自身差异（多线程清分片、外层还清 `.merging`、单线程返回 `AlreadyComplete`） | `SingleThreadDownload_PlaceholderHead_...` / `MultiThreadDownloadAndMerge_HeadSizeMismatchStaleFile_IsRedownloaded` / `..._RepairedViaContentRangeTotal`（单线程 + 多线程） |
+| 机械等价对账 | `catch` 子句 **22 = 22（零差异）**；`Logger` 调用 **30 → 28**（唯一差异即收敛掉的那条重复，其余 28 条逐字未变）；显著代码行 855 → 877 增删逐条一一对应（`return;`×3 → 决策返回×2 + `return ex.ActualTotal`×1；`break;`×1 → `return null;`×1；复核 5 行 ×3 → ×1；`{/}` +3/+3 = 3 个新方法体） | 27 例管线测试 + 全量单测 |
+| 语义等价差异 | 资源身份字符串改为调用点算一次后传参（原为两处各算一次），`"R"` 字面量 5 → 4（纯表达式，值相同）；三个新方法均 `private`（不新增可测 API 面，需要时再按 `PrepareAria2cTargetAsync` 的 `internal` 先例开放） | — |
+| 验证 | ✅ build 0 警告 0 错误；单测 **789/789**（与开批基线一致，无新增用例——三项均逐字搬运，由既有 27 例 `DownloadPipelineTests`（HTTP 假服务器逐字节 + 请求计数断言）兜底）；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿 | — |
 
 ---
 
