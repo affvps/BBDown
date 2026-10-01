@@ -228,7 +228,7 @@ dotnet format BBDown.sln --verify-no-changes
 | 5b | `refactor/download-pipeline`（续） | — | ⏳ 待开工（**下一批**：H4） |
 | 5c | `refactor/download-pipeline`（续） | — | ⏳ 待开工（H5） |
 | 2a | `refactor/naming-and-constants` | #68 | ✅ 已完成（2026-10-01；8 个具名常量 / 约 15 处内联值） |
-| 2b | `refactor/naming-and-constants`（续） | — | ⏳ 待开工（H8 命名 + H10 `ReadHistoryLocked`） |
+| 2b | `refactor/naming-h8`（增量） | #69 | 🔶 进行中（H8 **3/5 项**已落地：`_savePathLock`→`_taskStateLock`、`MyOptionBindingResult`→`RequestBodyBindingResult`、`nowId`→`inputTrackId`；余 `ReadLinesThrottled` 改名与 `QualityName` 档位映射注释 + H10） |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
 | 7 | `refactor/remaining-structure` | — | ⏳ 待开工 |
 
@@ -257,6 +257,8 @@ dotnet format BBDown.sln --verify-no-changes
 | 偏差 | ① **不引入 `ApiMode` 枚举**（三 bool 组合语义不可归一，见 §1）；② **I16 未并入**（跨子系统）；③ 顺带清理 FLV 分支冗余局部变量（`url` 恒为空串 → `baseUrl = ""`；`quality`/`videoCodecid`/`size`/`length` 改为声明即赋值） | — |
 | 验证 | ① 拆解前转储 18 夹具 / 15 场景的回放结果（轨道全字段 + 分段 + 清晰度 + DRM + 请求序列，query 中 `wts`/`w_rid`/`sign`/`ts` 归一为 `<v>`），两次运行 **SHA-256 一致**（`75FE2843…`，确认转储可复现）；② 拆解后同一转储 **SHA-256 完全相同**（逐字节）；③ 9 条日志文案、`throw` 1 处、`catch` 8 处计数逐字不变；④ 单测 **784/784**（拆解期间含临时转储用例为 785，删除后 784）；⑤ build 0 警告 0 错误；⑥ format exit 0 | — |
 | 规模 | `Parser.cs` 784 → 885 行（新增 XML 文档与所有权助手），主方法净减 **493 行** | — |
+
+**批 2b 增量（H8 部分）· PR #69**：三项编译器可验证的改名——`_savePathLock` → `_taskStateLock`（原名只提 SavePaths，实际同时保护 SavePaths / Status / IsSuccessful / Aid，并补注释）、`MyOptionBindingResult<T>` → `RequestBodyBindingResult<T>`（它绑定的是 `ServeRequestOptions` 请求体，与 `MyOption` 无关）、`nowId` → `inputTrackId`（mp4box `-udta` 的 1-based 输入轨序号）。H8 余 2 项（`ReadLinesThrottled` 名实不符需先读实现再定名、`QualityName` 档位映射顺序补注释）与 H10 留待批 2b 收尾。
 
 **批 6（H1）· PR #64**：
 

@@ -589,3 +589,16 @@
 | 验证 | ✅ 纯搬运（无标识符改名、无字面量改动）；build 0 警告 0 错误；单测 **789/789**；format exit 0 |
 | 基线（收批） | ✅ 同上；`Download.cs` 387 → 417 行（新增两个带 XML 文档的 helper） |
 | Info 级观察（不登记 RF） | ① I1 登记描述与现状偏差较大（三个重复块早已消化），说明"审查条目描述会随批次推进而过时"——每批开批前实测已成惯例；② 主方法剩余 141 行中约 40 行是重试/catch 样板，进一步拆解需引入"重试策略"抽象，收益低于风险，暂不排期 |
+
+
+---
+
+## 第 25 轮：批 2b 增量（H8 命名一致性 3/5 项，2026-10-01）
+
+> 批 2 的 2b 尚未收口；本轮先落地 H8 中**编译器可验证的三项改名**（零风险、无行为变化），其余两项（`ReadLinesThrottled` 名实不符、`QualityName` 档位映射顺序）需先读实现再定名/补注释，与 H10 一并留待 2b 收尾。**状态总览计数不变**（H8 作为一个条目尚未完成）。
+
+| 项 | 结果 |
+|----|------|
+| 改名 | ✅ `_savePathLock` → `_taskStateLock`（并补"保护 SavePaths/Status/IsSuccessful/Aid"注释）；`MyOptionBindingResult<T>` → `RequestBodyBindingResult<T>`；`nowId` → `inputTrackId` |
+| 验证 | ✅ build 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0（改名由编译器全程护航） |
+| 余项 | ⏳ H8：`ReadLinesThrottled` 改名、`QualityName` 档位映射注释；H10：`SubscriptionStore.ReadHistoryLocked()` 单入口 |

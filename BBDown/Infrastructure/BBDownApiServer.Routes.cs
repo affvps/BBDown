@@ -83,7 +83,7 @@ public partial class BBDownApiServer
     /// <summary>入队端点（/add-task）：绑定 → 净化 → 接受队列限流 → 入队并登记在途任务。</summary>
     private void MapAddTaskRoute(WebApplication app)
     {
-        app.MapPost("/add-task", (MyOptionBindingResult<ServeRequestOptions> bindingResult, HttpContext httpContext) =>
+        app.MapPost("/add-task", (RequestBodyBindingResult<ServeRequestOptions> bindingResult, HttpContext httpContext) =>
         {
             if (bindingResult.Exception is RequestBodyTooLargeException)
             {
