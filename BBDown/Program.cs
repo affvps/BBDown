@@ -118,6 +118,9 @@ partial class Program
     [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(ArticleCommand))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(WatchLaterSettings))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(WatchLaterCommand))]
+    // I9：watchlater / sub check 共用的抽象选项基类——派生类型被 root 时其**继承**属性
+    // 也须可反射（CliOptionIndex / Spectre 绑定走 GetProperties），这里显式 root 一次。
+    [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(BBDown.Commands.DownloadOptionSettings))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(SubSettings))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(SubAddSettings))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(SubListSettings))]

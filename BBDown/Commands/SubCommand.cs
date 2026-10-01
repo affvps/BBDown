@@ -41,40 +41,8 @@ public class SubRemoveSettings : SubSettings
 }
 
 [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicConstructors)]
-public class SubCheckSettings : SubSettings
+public class SubCheckSettings : DownloadOptionSettings
 {
-    [CommandOption("-c|--cookie")]
-    [Description("Cookie 字符串")]
-    public string Cookie { get; set; } = "";
-
-    [CommandOption("--access-token")]
-    [Description("access token")]
-    public string AccessToken { get; set; } = "";
-
-    [CommandOption("-e|--encoding-priority")]
-    [Description("视频编码优先级, 如 hevc,avc,av1")]
-    public string? EncodingPriority { get; set; }
-
-    [CommandOption("-q|--dfn-priority")]
-    [Description("视频清晰度优先级, 如 8K 4K 1080P 高清 720P 高清")]
-    public string? DfnPriority { get; set; }
-
-    [CommandOption("-a|--use-app-api")]
-    [Description("使用APP端解析模式")]
-    public bool UseAppApi { get; set; }
-
-    [CommandOption("-t|--use-tv-api")]
-    [Description("使用TV端解析模式")]
-    public bool UseTvApi { get; set; }
-
-    [CommandOption("--use-intl-api")]
-    [Description("使用国际版解析模式")]
-    public bool UseIntlApi { get; set; }
-
-    [CommandOption("-w|--work-dir")]
-    [Description("设置工作目录(所有相对路径的根目录)")]
-    public string WorkDir { get; set; } = "";
-
     [CommandOption("--per-sub-dir")]
     [Description("每个订阅下载到 <work-dir>/<订阅名>/ 子目录(订阅名取 sub add --name, 缺省为 target, 经路径净化)")]
     public bool PerSubDir { get; set; }
@@ -273,7 +241,7 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
                 {
                     try
                     {
-                        var opt = BuildOption($"av{aid}", settings,
+                        var opt = settings.ToMyOption($"av{aid}",
                             settings.PerSubDir ? subWorkDir : settings.WorkDir);
                         await Program.DoWorkAsync(opt, cancellationToken);
                         await SubscriptionStore.RecordDownloadedAsync(sub.Target, aid, cancellationToken);
@@ -350,17 +318,4 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
             candidate = $"{name}-{seq++}";
         return candidate;
     }
-
-    private static MyOption BuildOption(string url, SubCheckSettings s, string workDir) => new()
-    {
-        Url = url,
-        Cookie = s.Cookie,
-        AccessToken = s.AccessToken,
-        EncodingPriority = s.EncodingPriority,
-        DfnPriority = s.DfnPriority,
-        UseAppApi = s.UseAppApi,
-        UseTvApi = s.UseTvApi,
-        UseIntlApi = s.UseIntlApi,
-        WorkDir = workDir,
-    };
 }
