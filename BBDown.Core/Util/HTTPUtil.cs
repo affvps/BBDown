@@ -160,7 +160,7 @@ public static partial class HTTPUtil
 
     /// <summary>
     /// 从响应头 Date 校准服务器时钟偏移（秒），写入 Config（流内 + 全局双写，
-    /// 见 <see cref="Config.SET_CLOCK_OFFSET"/>）。RFC 7231 要求所有 HTTP 响应携带
+    /// 见 <see cref="Config.SetClockOffset"/>）。RFC 7231 要求所有 HTTP 响应携带
     /// Date（GMT），读不到时直接跳过。仅当偏移在 ±1h 内才写入：畸形/恶意 Date 头
     /// 不污染时钟。只对 WBI 签名权威主机 api.bilibili.com 校准：其它主机（番剧/国际版
     /// 等边缘服务器）的 Date 是各自时钟，写入全局偏移会抖动签名基准。偏移为 0 时不写。
@@ -192,7 +192,7 @@ public static partial class HTTPUtil
         // 超过 1h 的 Date 头只可能是畸形/恶意值或系统时钟被大幅改动，写入反而有害。
         if (Math.Abs(offset) > 3600) return;
         if (offset != Config.Current.ServerClockOffsetSeconds)
-            Config.SET_CLOCK_OFFSET(offset);
+            Config.SetClockOffset(offset);
     }
 
     /// <summary>

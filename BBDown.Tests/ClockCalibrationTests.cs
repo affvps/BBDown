@@ -111,7 +111,7 @@ public class ClockCalibrationTests
         try
         {
             Config.Apply(Config.Current with { ServerClockOffsetSeconds = 3600 });
-            long ts = long.Parse(BBDownUtil.GetTimeStamp(true));
+            long ts = long.Parse(BiliApiKeys.GetTimeStamp(true));
             long expected = DateTimeOffset.UtcNow.AddSeconds(3600).ToUnixTimeSeconds();
             Assert.InRange(ts, expected - 3, expected + 3);
         }
@@ -125,7 +125,7 @@ public class ClockCalibrationTests
         try
         {
             Config.Apply(Config.Current with { ServerClockOffsetSeconds = 0 });
-            long ts = long.Parse(BBDownUtil.GetTimeStamp(true));
+            long ts = long.Parse(BiliApiKeys.GetTimeStamp(true));
             long expected = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             Assert.InRange(ts, expected - 3, expected + 3);
         }

@@ -13,6 +13,23 @@ namespace BBDown;
 
 internal partial class Program
 {
+    /// <summary>
+    /// 组装轨道展示行：字段为空时整段不显示（等价于历史 `.Replace("[] ", "")` 写法，
+    /// 但不会误伤内容本身含 "[] " 的字段）。<paramref name="prefix"/> 形如 "0. " 或 "[视频] "。
+    /// internal 供 TrackLineFormatTests 直接验证与旧写法的等价性（I15 收敛点）。
+    /// </summary>
+    internal static string BuildTrackLine(string prefix, params string?[] fields)
+        => prefix + string.Join(" ", fields.Where(f => !string.IsNullOrEmpty(f)).Select(f => $"[{f}]"));
+
+    /// <summary>
+    /// 按码率估算时长对应的字节数：Entity.bandwidth 的单位是 kbps
+    /// （Parser 取接口的 bps 值 / 1000），故 bytes = 秒 × kbps × 1024 / 8。
+    /// 只在接口未给出 size 时用作展示估算（音频轨恒走此路）。
+    /// internal 供 TrackLineFormatTests 直接验证算式（I15 收敛点）。
+    /// </summary>
+    internal static long EstimatedBytes(long bandwidthKbps, int seconds)
+        => seconds * bandwidthKbps * 1024 / 8;
+
     private static void PrintAllTracksInfo(ParsedResult parsedResult, int pageDur, bool onlyShowInfo)
     {
         if (parsedResult.BackgroundAudioTracks.Any() && parsedResult.RoleAudioList.Any())
@@ -22,7 +39,8 @@ internal partial class Program
             foreach (var a in parsedResult.BackgroundAudioTracks)
             {
                 int pDur = pageDur == 0 ? a.dur : pageDur;
-                Logger.LogColor($"{index++}. [{a.codecs}] [{a.bandwidth} kbps] [~{BBDownUtil.FormatFileSize(pDur * a.bandwidth * 1024 / 8)}]", false);
+                Logger.LogColor(BuildTrackLine($"{index++}. ", a.codecs, $"{a.bandwidth} kbps",
+                    $"~{BBDownUtil.FormatFileSize(EstimatedBytes(a.bandwidth, pDur))}"), false);
             }
             var firstRoleAudio = parsedResult.RoleAudioList[0].audio;
             if (firstRoleAudio != null && firstRoleAudio.Any())
@@ -32,7 +50,8 @@ internal partial class Program
                 foreach (var a in firstRoleAudio)
                 {
                     int pDur = pageDur == 0 ? a.dur : pageDur;
-                    Logger.LogColor($"{index++}. [{a.codecs}] [{a.bandwidth} kbps] [~{BBDownUtil.FormatFileSize(pDur * a.bandwidth * 1024 / 8)}]", false);
+                    Logger.LogColor(BuildTrackLine($"{index++}. ", a.codecs, $"{a.bandwidth} kbps",
+                        $"~{BBDownUtil.FormatFileSize(EstimatedBytes(a.bandwidth, pDur))}"), false);
                 }
             }
         }
@@ -44,8 +63,9 @@ internal partial class Program
             foreach (var v in parsedResult.VideoTracks)
             {
                 int pDur = pageDur == 0 ? v.dur : pageDur;
-                var size = v.size > 0 ? v.size : pDur * v.bandwidth * 1024 / 8;
-                Logger.LogColor($"{index++}. [{v.dfn}] [{v.res}] [{v.codecs}] [{v.fps}] [{v.bandwidth} kbps] [~{BBDownUtil.FormatFileSize(size)}]".Replace("[] ", ""), false);
+                var size = v.size > 0 ? v.size : EstimatedBytes(v.bandwidth, pDur);
+                Logger.LogColor(BuildTrackLine($"{index++}. ", v.dfn, v.res, v.codecs, v.fps,
+                    $"{v.bandwidth} kbps", $"~{BBDownUtil.FormatFileSize(size)}"), false);
                 if (onlyShowInfo) Console.WriteLine(v.baseUrl);
             }
         }
@@ -56,7 +76,8 @@ internal partial class Program
             foreach (var a in parsedResult.AudioTracks)
             {
                 int pDur = pageDur == 0 ? a.dur : pageDur;
-                Logger.LogColor($"{index++}. [{a.codecs}] [{a.bandwidth} kbps] [~{BBDownUtil.FormatFileSize(pDur * a.bandwidth * 1024 / 8)}]", false);
+                Logger.LogColor(BuildTrackLine($"{index++}. ", a.codecs, $"{a.bandwidth} kbps",
+                    $"~{BBDownUtil.FormatFileSize(EstimatedBytes(a.bandwidth, pDur))}"), false);
                 if (onlyShowInfo) Console.WriteLine(a.baseUrl);
             }
         }
@@ -67,22 +88,19 @@ internal partial class Program
         if (selectedVideo != null)
         {
             int pDur = pageDur == 0 ? selectedVideo.dur : pageDur;
-            var size = selectedVideo.size > 0 ? selectedVideo.size : pDur * selectedVideo.bandwidth * 1024 / 8;
-            Logger.LogColor($"[视频] [{selectedVideo.dfn}] [{selectedVideo.res}] [{selectedVideo.codecs}] [{selectedVideo.fps}] [{selectedVideo.bandwidth} kbps] [~{BBDownUtil.FormatFileSize(size)}]".Replace("[] ", ""), false);
+            var size = selectedVideo.size > 0 ? selectedVideo.size : EstimatedBytes(selectedVideo.bandwidth, pDur);
+            Logger.LogColor(BuildTrackLine("[视频] ", selectedVideo.dfn, selectedVideo.res, selectedVideo.codecs,
+                selectedVideo.fps, $"{selectedVideo.bandwidth} kbps", $"~{BBDownUtil.FormatFileSize(size)}"), false);
         }
         if (selectedAudio != null)
         {
             int pDur = pageDur == 0 ? selectedAudio.dur : pageDur;
-            Logger.LogColor($"[音频] [{selectedAudio.codecs}] [{selectedAudio.bandwidth} kbps] [~{BBDownUtil.FormatFileSize(pDur * selectedAudio.bandwidth * 1024 / 8)}]", false);
+            Logger.LogColor(BuildTrackLine("[音频] ", selectedAudio.codecs, $"{selectedAudio.bandwidth} kbps",
+                $"~{BBDownUtil.FormatFileSize(EstimatedBytes(selectedAudio.bandwidth, pDur))}"), false);
         }
     }
 
-    /// <summary>
-    /// 引导用户进行手动选择轨道
-    /// </summary>
-    /// <param name="parsedResult"></param>
-    /// <param name="vIndex"></param>
-    /// <param name="aIndex"></param>
+    /// <summary>读一行输入并解析为轨道序号；非法输入按 0（首条轨道）处理，不抛异常。</summary>
     private static int ReadIntSafe()
     {
         if (!int.TryParse(Console.ReadLine(), out var val))
@@ -90,6 +108,12 @@ internal partial class Program
         return val;
     }
 
+    /// <summary>
+    /// 引导用户手动选择轨道：依次提示输入视频/音频流序号，非法或越界回落首条。
+    /// </summary>
+    /// <param name="parsedResult">已解析出的轨道集合。</param>
+    /// <param name="vIndex">输入并回写的视频轨下标。</param>
+    /// <param name="aIndex">输入并回写的音频轨下标。</param>
     private static void SelectTrackManually(ParsedResult parsedResult, ref int vIndex, ref int aIndex)
     {
         if (parsedResult.VideoTracks.Any())
@@ -112,11 +136,8 @@ internal partial class Program
         }
     }
 
-    /// <summary>
-    /// 下载轨道
-    /// </summary>
-    /// <returns></returns>
-    private static async Task DownloadTrackAsync(string url, string destPath, BBDownDownloadUtil.DownloadConfig downloadConfig, bool video, CancellationToken token = default)
+    /// <summary>下载单条轨道（视频/音频/配音/背景音共用此路径，不需要轨道类型参数）。</summary>
+    private static async Task DownloadTrackAsync(string url, string destPath, BBDownDownloadUtil.DownloadConfig downloadConfig, CancellationToken token = default)
     {
         if (downloadConfig.MultiThread && !url.Contains("-cmcc-"))
         {

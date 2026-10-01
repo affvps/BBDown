@@ -10,6 +10,8 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3）已完成并验收；剩余批次按 §6 顺序推进，**下一批为批 4**（Parser 巨方法拆解，需先跑夹具回放基线）。
+
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
 | 批次 | 包含项 | 主题 | 风险 | 主要安全网 | 估算 |
@@ -44,6 +46,9 @@
 | I16 | MergeWithConfig 4 次手工扫参 | **7 处**扫参循环（`:31/:58/:89/:149/:163/:181/:191`）；别名表已由 `CliOptionIndex` 收口 | 范围缩小 |
 | I14 | `AudioMaterial` 同名冲突 | ✅ 确认：`AppHelper.cs:497 internal` vs `Entity.cs:240 public` | 真实冲突 |
 | I12 | `ResolveAsync` 200 行 13 分支 | `UrlResolver.cs:15` → `:225`，**≈210 行** | 与描述一致 |
+| **I11 补充**（2026-10-01） | "门面双命名体系，12 个成员" | **13 个成员中 9 个全库零引用**（`COOKIE`/`TOKEN`/`DEBUG_LOG`/`HOST`/`EPHOST`/`TVHOST`/`AREA`/`SKIP_SSL_CHECK`/`qualitys`）；存活 4 个：`WBI`(4 引用)/`COOKIE_FLOW`(2)/`SET_CLOCK_OFFSET`(2)/`WBI_FLOW`(1) | **改口径**：无可统一的"第二套命名体系"，实际动作是**删死代码 + 存活项改名**（H7/I17 先例），见 §6.2 |
+| **I15 补充**（2026-10-01） | `.Replace("[] ", "")` ×4 | **实测 3 处**（`Display.cs:48`/`:71`、`DownloadTrackPreparation.cs:109`） | 范围 -1；带宽估算公式实测 **6 处**，与描述一致 |
+| **I3 补充**（2026-10-01） | appkey/盐"散落" | **实测：2 份 `GetSign` + 2 份 `GetTimeStamp` + 5 处字面量**（盐 ×3：`Parser.cs:775` 两把、`BBDownUtil.cs:160` 一把；appkey ×2：`Parser.cs:58`/`:138`）| 收敛为 `BiliApiKeys` 单实现；`ParserFixtureTests.cs:169` 的 `appkey=4409e2ce8ffd12b8` 断言即现成安全网 |
 
 **测量方法**（可复现）：`wc -l` 逐文件；方法规模用相邻方法定义行号差；调用点用 `grep -rn` 排除 `obj/`；"是否落地"用重构产物符号存在性核验（见 `REVIEW_PLAN.md` 状态总览说明）。
 
@@ -76,6 +81,8 @@
 
 #### 批 1a — I7 异常过滤策略（`refactor/exception-policies`）
 
+> ✅ **已完成**（PR #60）；验收记录见 §6。
+
 **开工前审计实测（2026-09-30）**：全库 `catch (Exception ex) when (…)` 共 **94 处 / 40 种类型集合**（计划原述"30 处"口径不准），分为：
 
 | 层 | 站点数 | 处置 |
@@ -91,6 +98,8 @@
 > **待决策（本批不做）**：长链"单条目可跳过"族沿 4 个集合漂移（`SubCommand` 10 型 / `WatchLater` 9 型 / 下载页 11 型 / `DownloadPageExecution` 10 型），代码注释自称"与下载页过滤器同步扩充"——**合并为一个集合会改变 4 个站点的捕获面**（行为变更），登记为后续决策项，本批保留现状。
 
 #### 批 1b — 命名/重复/常量一致化（`refactor/consistency-cleanup`）
+
+> ✅ **已完成**（2026-10-01）；落地内容与两处偏差（I11 改为"删死代码 + 存活项改名"、I15 的 `.Replace` 实测 3 处）见 §6.2。
 
 | 项 | 实测现状 | 做法 | 注意 |
 |---|---|---|---|
@@ -175,9 +184,9 @@ dotnet format BBDown.sln --verify-no-changes
 ## 6. 执行顺序与进度追踪
 
 ```
-批 1a（I7 异常策略：64 处收口，真值表钉住）
-  → 批 1b（命名/常量）
-  → 批 4（存量最大：532 行，护栏最强）
+✅ 批 1a（I7 异常策略：64 处收口，真值表钉住）— PR #60
+  → ✅ 批 1b（命名/常量/重复收敛）— 本批
+  → 批 4（存量最大：532 行，护栏最强）      ← 下一批（先跑夹具回放基线）
   → 批 6（文件最大：1683 行，护栏 51 例）
   → 批 3 → 批 5 → 批 2 → 批 7
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
@@ -185,14 +194,29 @@ dotnet format BBDown.sln --verify-no-changes
 
 | 批次 | 分支 | PR | 状态 |
 |:---:|---|---|---|
-| 1a | `refactor/exception-policies` | — | 🔄 实施中 |
-| 1b | `refactor/consistency-cleanup` | — | ⏳ 待开工 |
-| 4 | `refactor/parser-extract-tracks` | — | ⏳ 待开工 |
+| 1a | `refactor/exception-policies` | #60 | ✅ 已完成（2026-10-01 验收：9 条策略 / 生产 64 处站点 + 真值表 9 引用） |
+| 1b | `refactor/consistency-cleanup` | 本批 | ✅ 已完成（2026-10-01；基线 775 → 收批 784 全绿） |
+| 4 | `refactor/parser-extract-tracks` | — | ⏳ 待开工（**下一批**） |
 | 6 | `refactor/serve-decomposition` | — | ⏳ 待开工 |
 | 3 | `refactor/parameter-objects` | — | ⏳ 待开工 |
 | 5 | `refactor/download-pipeline` | — | ⏳ 待开工 |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
 | 7 | `refactor/remaining-structure` | — | ⏳ 待开工 |
+
+#### 已完成批次记录
+
+**批 1a（I7）· PR #60**：`BBDown.Core/Util/ExceptionPolicies.cs` 9 条具名策略；生产代码 64 处站点全部改用具名谓词（Core 9 + App 55），`ExceptionPolicyTests` 以真值表逐类型钉住各策略集合（+9 引用）。站点自有守卫（`ct.IsCancellationRequested` 等 2 处）与 28 种唯一集合按要求保留原地。
+
+**批 1b（I11/I14/I15/I3）· 本批**：
+
+| 项 | 落地内容 | 安全网 |
+|---|---|---|
+| I11 | 删 9 个零引用门面成员；存活 4 个改 PascalCase：`WBI`→`Wbi`、`WBI_FLOW`→`WbiFlow`、`COOKIE_FLOW`→`CookieFlow`、`SET_CLOCK_OFFSET`→`SetClockOffset`（调用点 4 文件 9 处同步）；类级文档写明"读写配置直接用 `Config.Current`，不再新增门面成员" | 编译期（重命名）+ 全量单测 |
+| I14 | `AppHelper` 的 `internal AudioMaterial` → `AppRoleAudioDto`；JSON 字段名（`audio_id`/`title`/`person_name`/`audio`）与 `[JsonSerializable]` 同步 | 编译期；AOT 源生成上下文随类型迁移 |
+| I15 | 新增 `Display.BuildTrackLine`（展示行组装，取代 3 处 `.Replace("[] ", "")`）与 `Display.EstimatedBytes`（6 处带宽估算公式）；去掉 `DownloadTrackAsync` 未用的 `bool video` 形参（`Func<>` 契约 + 5 调用点）；挂错方法的 XML 文档归位 | 新增 `TrackLineFormatTests` 9 例：与旧写法逐字符等价 + 算式/长整型钉住 |
+| I3 | 新增 `BBDown.Core/Util/BiliApiKeys.cs`（TV/BiliPlus appkey ×2 + 盐 ×2 + 唯一 `GetSign`/`GetTimeStamp`）；删除 4 份重复实现；3 处 appkey 字面量改常量 | `ParserFixtureTests` 的 `appkey=4409e2ce8ffd12b8` 断言 + 全量单测 |
+
+> 纪律遵守：**无用户可见行为变化**（组装/估算与旧写法逐字符、逐算式等价；签名算法与常量值一字未改），故不写 CHANGELOG、不动 wiki 与 README（`AGENTS.md` 只要求用户可见变更更新文档）。
 
 ---
 

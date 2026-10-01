@@ -40,7 +40,7 @@
 1. **FakeBilibiliApiServer**（测试项目内，仿 ScriptedServer）：按请求 path 分发登记的夹具内容、记录收到的 query 供断言 WBI 参数存在性、Dispose 收口。端口一律 `TestPort.Allocate()` 动态分配（防连接池串扰，DownloadPipelineTests.cs:19-31 先例）。
 2. **夹具目录**：`BBDown.Tests/Fixtures/parser/*.json`，csproj 加 `<Content Include="Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />`（xunit.runner.json 有同款先例）。仓库当前无任何夹具 json，这是首套。
 3. **测试类 `ParserFixtureTests`**：无 Category Trait（离线可重复，随 PR 单测 job 跑）。**严禁**标 `NetworkIntegration`（那是 CI 真网兜底通道）。
-4. 卫生约定：每用例 `try/finally` 恢复 `Config.Current` 快照（G8 约定）；WBI 用例临时设 `Config.WBI` 并恢复（ParserTests.cs:63-78 先例）。
+4. 卫生约定：每用例 `try/finally` 恢复 `Config.Current` 快照（G8 约定）；WBI 用例临时设 `Config.Wbi` 并恢复（ParserTests.cs:63-78 先例）。
 
 ### 夹具集（锁住 ExtractTracksAsync 全部主干行为的 14 个场景）
 

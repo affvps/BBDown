@@ -63,17 +63,17 @@ public class ParserTests
     [Fact]
     public void WbiSign_ReturnsStringContainingWrid()
     {
-        var originalWbi = Config.WBI;
+        var originalWbi = Config.Wbi;
         try
         {
-            Config.WBI = "test_wbi_key";
+            Config.Wbi = "test_wbi_key";
             var result = Parser.WbiSign("api.bilibili.com/x/test?param=1");
             Assert.Contains("&w_rid=", result);
             Assert.StartsWith("api.bilibili.com/x/test?param=1&w_rid=", result);
         }
         finally
         {
-            Config.WBI = originalWbi;
+            Config.Wbi = originalWbi;
         }
     }
 

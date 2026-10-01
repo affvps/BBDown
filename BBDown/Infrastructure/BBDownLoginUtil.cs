@@ -241,9 +241,9 @@ internal static class BBDownLoginUtil
             var consoleQRCode = new ConsoleQRCode(qrCodeData);
             consoleQRCode.GetGraphic();
             parameters.Set("auth_code", authCode);
-            parameters.Set("ts", BBDownUtil.GetTimeStamp(true));
+            parameters.Set("ts", BiliApiKeys.GetTimeStamp(true));
             parameters.Remove("sign");
-            parameters.Add("sign", BBDownUtil.GetSign(BBDownUtil.ToQueryString(parameters)));
+            parameters.Add("sign", BiliApiKeys.GetSign(BBDownUtil.ToQueryString(parameters), BiliApiKeys.TvSignSalt));
             while (true)
             {
                 await Task.Delay(1000, cancellationToken);

@@ -50,7 +50,7 @@ internal sealed class DownloadPageExecutionServices
     internal required Func<string, string, string, List<Subtitle>, DownloadTask?, bool, bool> TrySkipExistingOutput { get; init; }
     internal required Action<Video?, Audio?, int> PrintSelectedTrackInfo { get; init; }
     internal required Action<MyOption, Video?, Audio?> HandlePcdn { get; init; }
-    internal required Func<string, string, BBDownDownloadUtil.DownloadConfig, bool, CancellationToken, Task> DownloadTrackAsync { get; init; }
+    internal required Func<string, string, BBDownDownloadUtil.DownloadConfig, CancellationToken, Task> DownloadTrackAsync { get; init; }
     internal required Func<ParsedResult, string, string, MyOption, CancellationToken, Task> DecryptDrmAsync { get; init; }
 }
 
@@ -124,7 +124,7 @@ internal sealed class DownloadPageExecutor
             Logger.Log($"开始下载P{page.index}视频...");
             await _services.DownloadTrackAsync(
                 selectedVideo.baseUrl, videoPath, context.DownloadConfig,
-                true, context.CancellationToken);
+                context.CancellationToken);
         }
 
         if (selectedAudio is not null)
@@ -132,7 +132,7 @@ internal sealed class DownloadPageExecutor
             Logger.Log($"开始下载P{page.index}音频...");
             await _services.DownloadTrackAsync(
                 selectedAudio.baseUrl, audioPath, context.DownloadConfig,
-                false, context.CancellationToken);
+                context.CancellationToken);
         }
 
         var audioMaterial = context.AudioMaterial;
@@ -143,7 +143,7 @@ internal sealed class DownloadPageExecutor
             Logger.Log($"开始下载P{page.index}背景配音...");
             await _services.DownloadTrackAsync(
                 selectedBackgroundAudio.baseUrl, backgroundPath, context.DownloadConfig,
-                false, context.CancellationToken);
+                context.CancellationToken);
             audioMaterial.Add(new AudioMaterial("背景音频", "", backgroundPath));
         }
 
@@ -157,7 +157,7 @@ internal sealed class DownloadPageExecutor
                 Logger.Log($"开始下载P{page.index}配音[{role.title}]...");
                 await _services.DownloadTrackAsync(
                     roleAudio.baseUrl, role.path, context.DownloadConfig,
-                    false, context.CancellationToken);
+                    context.CancellationToken);
                 audioMaterial.Add(new AudioMaterial(role));
             }
         }
@@ -290,7 +290,7 @@ internal sealed class DownloadPageExecutor
             Logger.Log($"开始下载P{page.index}视频, 片段({(i + 1).ToString(pad)}/{clips.Count})...");
             await _services.DownloadTrackAsync(
                 clips[i], videoPath, context.DownloadConfig,
-                true, context.CancellationToken);
+                context.CancellationToken);
             segmentFiles.Add(videoPath);
         }
 
