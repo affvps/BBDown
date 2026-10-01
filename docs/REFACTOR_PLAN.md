@@ -10,7 +10,7 @@
 
 **7 批 / 8 个 PR / 约 6.5~9.5 人日**（批 1 按依赖拆为 1a/1b：I7 属行为邻近面，与纯改名的 1b 分开以便独立回滚）。
 
-**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）、批 5c 增量二（H5 serve 侧四簇，PR #74）已完成并验收——**批 5（I1/H4/H5）全部收口**。**批 2b-1（H8 余 2 项，PR #76）已完成并验收——H8 全部 5 项收口**。**下一批为批 2b-2**（H10：`SubscriptionStore` 历史读取单入口），随后批 7（H6/I6/I9/I12）。剩余 H 组 2 项（H6/H10）、I 组 5 项（I6/I9/I10/I12/I16，其中 I10 已定案不做）。
+**进度（2026-10-01）**：批 1a（I7，PR #60）、批 1b（I11/I14/I15/I3，PR #61）、批 4（I2，PR #63）、批 6（H1，PR #64）、批 3a（H2/H3）、批 3b（I5/I13）、批 5a（I1，PR #67）、批 5b（H4，PR #70）、批 2a（H9，PR #68）、批 2b 增量（H8 3/5 项，PR #69）、批 5c 增量一（H5 下载侧簇，PR #72）、批 5c 增量二（H5 serve 侧四簇，PR #74）已完成并验收——**批 5（I1/H4/H5）全部收口**。**批 2b-1（H8 余 2 项，PR #76）与批 2b-2（H10 历史读取单入口，PR #78）已完成并验收**——批 2（H8/H9/H10）全部收口。**下一批为批 7**（H6 `LiveRoomClosedException`、I6 登录去重、I9 Settings 基类、I12 `UrlResolver` 拆分）。剩余 H 组 1 项（H6）、I 组 5 项（I6/I9/I10/I12/I16，其中 I10 已定案不做）。
 
 风险分级：**R1** 纯机械（编译器全程护航，无行为变化）· **R2** 结构改动（无逻辑变化）· **R3** 复杂逻辑拆解（需拆前/拆后对照验证）。
 
@@ -121,11 +121,11 @@
 
 ### 批 2 — 命名 / 魔法数 / 持久化（`refactor/naming-and-constants`，R1~R2）
 
-> **拆为 2a（H9）/ 2b（H8 + H10）**：2a 已完成（PR #68）；2b 待开工。
+> **拆为 2a（H9）/ 2b（H8 + H10）**：2a 已完成（PR #68）；2b 再拆为 **2b-1（H8，PR #76）** 与 **2b-2（H10，PR #78）**，均已收口。
 
 - **H8**：`ReadLinesThrottled`（名实不符）、`_savePathLock`、`MyOptionBindingResult<T>`、`QualityName` 档位映射顺序、`nowId` 逐项改名或补注释说明
 - **H9**：剩余 **6 处**内联魔法数具名（`FromSeconds(30)`、`FromMinutes(2)` ×2、`1048576/4`、`3000·2^n` 退避、`0.8` 完整性阈值）；已具名的同族常量（`MaxQueuedPerConcurrent` / `MaxConcurrentQueryHandlers` / `MinCompleteFlvHeaderBytes`）不动
-- **H10**：`SubscriptionStore` 抽 `ReadHistoryLocked()` 单入口，统一"损坏 → 隔离 + 抛 `SubscriptionDataCorruptException`"语义
+- **H10** ✅ **已完成（2b-2）**：`SubscriptionStore` 抽出 `ReadHistoryLockedAsync()` 单入口（按 async 命名约定，登记名为 `ReadHistoryLocked()`），统一"损坏 → 隔离 `.corrupt-*` + 抛 `SubscriptionDataCorruptException`"语义；顺带修复写路径只 catch `JsonException` 致读取 IO 失败裸奔、以及只校验被请求 target 的分歧。3 处行为变化已补变异验证用例（测试 789 → 792）
 
 ### 批 3 — 参数对象与结构收敛（`refactor/parameter-objects`，R2）
 
@@ -220,8 +220,8 @@ dotnet format BBDown.sln --verify-no-changes
   → ✅ 批 5c 增量一（H5 下载侧：clip 路径推导 + 头块）— PR #72
   → ✅ 批 5c-2（H5 serve 侧：IsLoopback / SSRF 字面 IP / DNS 逐地址校验 / 任务收尾）— PR #74
   → ✅ 批 2b-1（H8 余 2 项：ReadLinesThrottled 改名 + QualityName 顺序文档）— PR #76
-  → 批 2b-2（H10：SubscriptionStore 历史读取单入口）  ← 下一批
-  → 批 2b-2 → 批 7（H6 / I6 / I9 / I12）
+  → ✅ 批 2b-2（H10：SubscriptionStore 历史读取单入口）— PR #78
+  → 批 7（H6 / I6 / I9 / I12）  ← 下一批
 理由：纯命名收尾（批 2）放后，避免与批 3/5/6 触碰同一批文件产生冲突
 ```
 
@@ -239,9 +239,9 @@ dotnet format BBDown.sln --verify-no-changes
 | 5c-2 | `refactor/serve-dedup` | #74 | ✅ 已完成（2026-10-01；loopback 判定 4 → 1、字面 IP ×2 + 归一化 ×5、DNS 逐地址校验 ×2 → verdict、任务收尾四元组 ×4 → `FinishTask`；**H5 7 簇全部收口**） |
 | 2a | `refactor/naming-and-constants` | #68 | ✅ 已完成（2026-10-01；8 个具名常量 / 约 15 处内联值） |
 | 2b-1 | `refactor/naming-h10` | #69 / #76 | ✅ 已完成（2026-10-01；**H8 5/5 项收口**——3 项随 #69（`_savePathLock`→`_taskStateLock`、`MyOptionBindingResult`→`RequestBodyBindingResult`、`nowId`→`inputTrackId`），余 2 项随 #76（`ReadLinesThrottled`→`ReadLinesDedupedAndCapped`、`QualityName` 补分支顺序文档）） |
-| 2b-2 | `refactor/subscription-history`（拟） | — | ⏳ 待开工（**下一批**：H10 `SubscriptionStore` 历史读取单入口） |
+| 2b-2 | `refactor/subscription-history` | #78 | ✅ 已完成（2026-10-01；`ReadHistoryLockedAsync` 单入口统一损坏语义，顺带修复写路径 IO 失败裸奔 + 校验范围分歧；+3 变异验证用例，测试 789 → 792） |
 | 2 | `refactor/naming-and-constants` | — | ⏳ 待开工 |
-| 7 | `refactor/remaining-structure` | — | ⏳ 待开工 |
+| 7 | `refactor/remaining-structure` | — | ⏳ 待开工（**下一批**：H6/I6/I9/I12） |
 
 #### 已完成批次记录
 
@@ -347,6 +347,18 @@ dotnet format BBDown.sln --verify-no-changes
 | `QualityName` 补**分支顺序**文档 | 点明 switch 表达式自上而下匹配、阈值臂必须**降序**且整体排在精确值臂之前，并给出反例（`>= 20000` 挪到 `>= 30000` 之前会让杜比被标成 4K）与新增档位的插入约定 | 该 switch 的风险不在命名而在**顺序即语义**，读者容易按"从特殊到一般"重排而引入静默错误 |
 | 机械等价对账 | `ExternalProcessRunner.cs` 显著代码行 **190 = 190**、`LiveStreamUtil.cs` **466 = 466**（纯注释）；两文件 `Logger`/`catch` 零差异；字面量差异仅来自改名的 `<see cref>` 与新注释 | — |
 | 验证 | ✅ build 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿 | — |
+
+**批 2b-2（H10）· PR #78**（合并提交 `2cc7848`）：
+
+| 项 | 落地内容 |
+|---|---|
+| 单入口 | 新增 `ReadHistoryLockedAsync`（调用方须持 `_ioLock`）：返回 `{"target":[avid,...]}` 可变副本；**损坏 → 隔离 `.corrupt-*` + 抛 `SubscriptionDataCorruptException`** 的语义只此一处，读（`LoadHistoryAsync`）写（`RecordDownloadedAsync`）两条路径共用 |
+| 真实分歧修复 | 写路径此前**只 catch `JsonException`**——读取时的 IO 失败以原始异常穿透（既不隔离也不告警）；现两路径共用 `IsJsonOrIoFailure` 过滤器（`catch` 5 → 4） |
+| 校验范围统一 | 旧读路径只校验被请求的 target（别的条目坏掉照样返回结果），写路径却会把整份文件重写回盘；现两侧都校验整个文件 |
+| 行为变化（刻意的，已补变异验证） | ① 字面量 `null` 历史文件：写路径此前静默当空并重写 → 现按损坏处理；② `{"mid:1":null}`：写路径此前在 `list.Remove` 处 NRE → 现按损坏处理；③ 别的订阅条目损坏：读健康订阅也中止（与写路径结论一致）。测试 **789 → 792**（`SubscriptionStoreTests` 11 → 14） |
+| 机械等价对账 | `SubscriptionStore.cs` 显著代码行 **209 → 199**、`catch` **5 → 4**、`Logger` **4 → 3**；逐 target 诊断由 `{target}` 改为 `{prop.Name}`（校验改为逐属性遍历，等价） |
+| 验证 | ✅ build 0 警告 0 错误；单测 **792/792**；`dotnet format --verify-no-changes` exit 0；CI 9 项全绿 |
+| Info 观察 | `LoadCoreAsync`（订阅**清单**文件）仍容忍字面量 `null`（当"没有订阅"）——与历史文件刻意不同：历史当空 = "全部内容被当新增重下"，清单当空只是"没有订阅"；若要对齐需另开评估 |
 
 ---
 
