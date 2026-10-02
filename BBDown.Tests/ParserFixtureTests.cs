@@ -463,4 +463,25 @@ public class ParserFixtureTests
             Assert.Single(result.AudioTracks);
         });
     }
+
+    // ── F15：code=0 风控人机验证（data.v_voucher，既无 dash 也无 durl）──
+
+    [Fact]
+    public async Task RiskControlVoucher_Code0NoTracks_ThrowsRetryableRiskError()
+    {
+        using var server = new FakeBilibiliApiServer();
+        server.Register("/x/player/wbi/playurl", LoadFixture("risk-control-voucher.json"));
+        await WithFakeApiAsync(server, async () =>
+        {
+            // 此前该响应是合法 JSON 且 code=0，静默解析出零轨道，落到"解析此分P失败"
+            // 的不透明分支且不参与页面级重试；现在必须以可读的风控错误抛出
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => ExtractAsync("av170001", "170001", "999"));
+
+            Assert.Contains("v_voucher", ex.Message);
+            Assert.Contains("风控", ex.Message);
+            // 没有可重发的轨道：首请求即抛，不进入免二压 qn=127 重发
+            Assert.Single(server.Requests);
+        });
+    }
 }
