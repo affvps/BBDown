@@ -484,4 +484,67 @@ public class ParserFixtureTests
             Assert.Single(server.Requests);
         });
     }
+
+    // ── F16：INTL 次轮风控（round0 已产出轨道时不得整次解析失败）──
+
+    [Fact]
+    public async Task Intl_SecondRoundVoucher_KeepsFirstRoundTracks()
+    {
+        using var server = new FakeBilibiliApiServer();
+        var path = "/intl/gateway/v2/ogv/playurl";
+        server.Register(path, "prefer_code_type", "0", LoadFixture("intl-code0.json"));
+        server.Register(path, "prefer_code_type", "1", LoadFixture("risk-control-voucher.json"));
+        await WithFakeApiAsync(server, async () =>
+        {
+            var result = await ExtractAsync("av170001", "170001", "999", intlApi: true);
+
+            // round1 紧随 round0 发出，风控按请求量累积，其命中率反而高于 round0：
+            // 若整次抛出，手里已拿到的可用轨道会被丢弃，且重试时同样形状必然复现。
+            var v = Assert.Single(result.VideoTracks);
+            Assert.Equal("80", v.id);
+            Assert.Single(result.AudioTracks);
+            // 两轮请求都发出过（次轮被风控后不再追加请求）
+            Assert.Equal(2, server.Requests.Count);
+        });
+    }
+
+    // ── F17：INTL 首轮风控（两轮都无可用轨道 → 仍须抛可重试错误）──
+
+    [Fact]
+    public async Task Intl_FirstRoundVoucher_NoTracks_ThrowsRetryableRiskError()
+    {
+        using var server = new FakeBilibiliApiServer();
+        var path = "/intl/gateway/v2/ogv/playurl";
+        server.Register(path, "prefer_code_type", "0", LoadFixture("risk-control-voucher.json"));
+        server.Register(path, "prefer_code_type", "1", LoadFixture("intl-code1.json"));
+        await WithFakeApiAsync(server, async () =>
+        {
+            // 降级不得退化为静默空轨道：一轮轨道都没有时必须抛出，交由页面级重试
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => ExtractAsync("av170001", "170001", "999", intlApi: true));
+
+            Assert.Contains("风控", ex.Message);
+            // round0 即抛，第二轮的请求根本不会发出
+            Assert.Single(server.Requests);
+        });
+    }
+
+    // ── F18：pgc/番剧 result.v_voucher 形状（数据根 result 下的风控凭据）──
+
+    [Fact]
+    public async Task PgcResultVoucher_NoTracks_ThrowsRetryableRiskError()
+    {
+        using var server = new FakeBilibiliApiServer();
+        server.Register("/pgc/player/web/v2/playurl", LoadFixture("pgc-risk-control-voucher.json"));
+        await WithFakeApiAsync(server, async () =>
+        {
+            // 番剧/课程类接口用 result 承载数据根，同名风控字段挂在 result 下；
+            // 顶层与 data 都没有 v_voucher，只有 result 分支能兜住
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => ExtractAsync("ep:307930", "170001", "999", epId: "307930"));
+
+            Assert.Contains("v_voucher", ex.Message);
+            Assert.Contains("风控", ex.Message);
+        });
+    }
 }

@@ -330,9 +330,18 @@ public static partial class Parser
                 parsedResult.WebJsonString = await GetPlayJsonAsync(request.Aid, request.Cid, request.EpId, request.Qn, code, token);
 
             using var intlJson = JsonDocument.Parse(parsedResult.WebJsonString);
-            // 风控人机验证（v_voucher）优先于结构判空：code=0 但没有播放数据，
-            // 逐级判空会把它静默跳过、最终产出空轨道，报成不透明的"解析此分P失败"
-            ThrowIfRiskControlVoucher(intlJson.RootElement);
+            // 风控人机验证（v_voucher）：本轮被风控时不能一律抛出——两轮共用同一个
+            // parsedResult，round0 已累积的可用轨道会随异常一并丢弃；而 round1 紧随
+            // round0 发出，风控按请求量累积，round1 的命中率反而更高（逼近阈值时是常态）。
+            // 因此已有可用轨道时降级跳过本轮（与免二压 qn=127 重发同策略：不因重发
+            // 被风控而拖垮整页），只有一轮轨道都没拿到时才抛出、交由页面级重试。
+            if (HasRiskControlVoucher(intlJson.RootElement))
+            {
+                if (parsedResult.VideoTracks.Count == 0 && parsedResult.AudioTracks.Count == 0)
+                    throw RiskControlVoucherException();
+                Logger.LogWarn("INTL 分轮请求触发B站风控人机验证（v_voucher），沿用已解析轨道并跳过本轮");
+                continue;
+            }
             // intl 接口某次请求可能不返回 video_info / stream_list（code=0 与 code=1 返回结构不同），
             // GetPropertySafe 遇到缺失会抛 KeyNotFoundException 直接中断整次解析，
             // 这里逐级判空后跳过本次迭代，等待下一次请求
@@ -896,33 +905,50 @@ public static partial class Parser
     }
 
     /// <summary>
-    /// 对 playurl 的"人机验证"风控响应兜底：HTTP 200、<c>code=0</c>，但 <c>data</c>（或
+    /// 识别 playurl 的"人机验证"风控响应：HTTP 200、<c>code=0</c>，但 <c>data</c>（或
     /// <c>result</c> / 顶层）里只有 <c>v_voucher</c> 验证码凭据，既无 dash 也无 durl。
-    /// 这类响应是合法 JSON，不会触发业务错误或风控页识别，此前会静默落入"无可用轨道"
-    /// 分支，只报一句不透明的"解析此分P失败(建议--debug查看详细信息)"，且因为不是异常
-    /// 而完全不参与页面级重试——风控窗口内 sub check 会整批投稿瞬间全部失败且无任何线索。
-    /// 抛 <see cref="InvalidOperationException"/>（页面级重试白名单成员）使其与 code=-412/-352
-    /// 等业务风控错误同待遇：按 --retry-count/--retry-delay 退避重试并打印可读原因。
+    /// 这类响应是合法 JSON，不会触发业务错误或风控页识别。
+    /// 单独抽出谓词供"已累积轨道的多轮请求"降级判定（<see cref="ExtractIntlTracksAsync"/>）：
+    /// 那里不能一律抛出，否则会把上一轮已拿到的可用轨道一并丢弃。
     /// </summary>
-    internal static void ThrowIfRiskControlVoucher(JsonElement root)
+    internal static bool HasRiskControlVoucher(JsonElement root)
     {
-        if (root.ValueKind != JsonValueKind.Object) return;
-        if (HasVoucher(root)) throw VoucherException();
+        if (root.ValueKind != JsonValueKind.Object) return false;
+        if (HasVoucher(root)) return true;
         // data 是常规响应的数据根；番剧/课程类接口用 result 承载数据根，同名字段可能挂在其下
         if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object && HasVoucher(data))
-            throw VoucherException();
+            return true;
         if (root.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object && HasVoucher(result))
-            throw VoucherException();
+            return true;
+        return false;
 
         static bool HasVoucher(JsonElement holder)
             => holder.TryGetProperty("v_voucher", out var voucher)
                && voucher.ValueKind == JsonValueKind.String
                && !string.IsNullOrEmpty(voucher.GetString());
+    }
 
-        static InvalidOperationException VoucherException() => new(
-            "接口触发B站风控人机验证：playurl 返回 v_voucher 凭据，没有可用播放地址。"
-            + "通常为短时风控，已按重试设置自动退避重试；若持续出现，请稍后重试"
-            + "或在浏览器打开该视频完成人机验证后再运行。");
+    /// <summary>
+    /// 风控人机验证的可读错误。<see cref="InvalidOperationException"/> 是页面级重试
+    /// （<c>IsRetryablePageFailure</c>）与 sub check 逐 aid 跳过（<c>IsSkippableItemFailure</c>）
+    /// 的成员，因此与 code=-412/-352 等业务风控错误同待遇：按 --retry-count/--retry-delay
+    /// 退避重试并打印可读原因。
+    /// </summary>
+    internal static InvalidOperationException RiskControlVoucherException() => new(
+        "接口触发B站风控人机验证：playurl 返回 v_voucher 凭据，没有可用播放地址。"
+        + "通常为短时风控，已按重试设置自动退避重试；若持续出现，请稍后重试"
+        + "或在浏览器打开该视频完成人机验证后再运行。");
+
+    /// <summary>
+    /// 无可用播放数据时的风控兜底：此前会静默落入"无可用轨道"分支，只报一句不透明的
+    /// "解析此分P失败(建议--debug查看详细信息)"，且因为不是异常而完全不参与页面级重试——
+    /// 风控窗口内 sub check 会整批投稿瞬间全部失败且无任何线索。
+    /// <para>仅适用于单次请求（无已累积轨道可保留）的解析入口；多轮请求请改用
+    /// <see cref="HasRiskControlVoucher"/> 自行判定降级还是抛出。</para>
+    /// </summary>
+    internal static void ThrowIfRiskControlVoucher(JsonElement root)
+    {
+        if (HasRiskControlVoucher(root)) throw RiskControlVoucherException();
     }
 
     /// <summary>
