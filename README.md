@@ -260,7 +260,7 @@ BBDown -a --access-token "******" "https://www.bilibili.com/video/BV1qt4y1X7TW"
 ```
 </details>
 
-若解析错误包含 B 站 API 返回的 `code` / `message`，可先按提示检查登录状态、内容权限或区域限制；若提示风控，稍后重试。
+若解析错误包含 B 站 API 返回的 `code` / `message`，可先按提示检查登录状态、内容权限或区域限制；若提示风控（含 `data.v_voucher` 人机验证），BBDown 会按重试设置自动退避重试，持续出现时稍后重试或在浏览器完成人机验证后再运行。
 
 ![配置与 API](assets/readme/section-config-api.svg)
 

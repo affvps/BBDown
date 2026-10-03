@@ -209,6 +209,7 @@ public static partial class Parser
         {
             // data 在任何接管发生前就是原始根：业务校验针对原始响应（与拆解前一致）
             JsonElement data = response.Document.RootElement;
+            ThrowIfRiskControlVoucher(data);
             ThrowIfPlayLimited(data);
             // UGC 的播放限制通过顶层业务 code 表达（区域限制 -86038、风控 -412、视频失效 -404 等），
             // 而 play_check 只在 pgc 响应的 result 节点出现、对 UGC 不可达，这里统一兜底。
@@ -329,6 +330,9 @@ public static partial class Parser
                 parsedResult.WebJsonString = await GetPlayJsonAsync(request.Aid, request.Cid, request.EpId, request.Qn, code, token);
 
             using var intlJson = JsonDocument.Parse(parsedResult.WebJsonString);
+            // 风控人机验证（v_voucher）优先于结构判空：code=0 但没有播放数据，
+            // 逐级判空会把它静默跳过、最终产出空轨道，报成不透明的"解析此分P失败"
+            ThrowIfRiskControlVoucher(intlJson.RootElement);
             // intl 接口某次请求可能不返回 video_info / stream_list（code=0 与 code=1 返回结构不同），
             // GetPropertySafe 遇到缺失会抛 KeyNotFoundException 直接中断整次解析，
             // 这里逐级判空后跳过本次迭代，等待下一次请求
@@ -889,6 +893,36 @@ public static partial class Parser
         if (!code.TryGetInt64(out var codeValue) || codeValue == 0) return;
         var message = root.GetValueAsStringSafe("message", $"接口返回错误码 {codeValue}");
         throw new InvalidOperationException($"接口返回错误: {SanitizeServerText(message)} (code={codeValue})");
+    }
+
+    /// <summary>
+    /// 对 playurl 的"人机验证"风控响应兜底：HTTP 200、<c>code=0</c>，但 <c>data</c>（或
+    /// <c>result</c> / 顶层）里只有 <c>v_voucher</c> 验证码凭据，既无 dash 也无 durl。
+    /// 这类响应是合法 JSON，不会触发业务错误或风控页识别，此前会静默落入"无可用轨道"
+    /// 分支，只报一句不透明的"解析此分P失败(建议--debug查看详细信息)"，且因为不是异常
+    /// 而完全不参与页面级重试——风控窗口内 sub check 会整批投稿瞬间全部失败且无任何线索。
+    /// 抛 <see cref="InvalidOperationException"/>（页面级重试白名单成员）使其与 code=-412/-352
+    /// 等业务风控错误同待遇：按 --retry-count/--retry-delay 退避重试并打印可读原因。
+    /// </summary>
+    internal static void ThrowIfRiskControlVoucher(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return;
+        if (HasVoucher(root)) throw VoucherException();
+        // data 是常规响应的数据根；番剧/课程类接口用 result 承载数据根，同名字段可能挂在其下
+        if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object && HasVoucher(data))
+            throw VoucherException();
+        if (root.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object && HasVoucher(result))
+            throw VoucherException();
+
+        static bool HasVoucher(JsonElement holder)
+            => holder.TryGetProperty("v_voucher", out var voucher)
+               && voucher.ValueKind == JsonValueKind.String
+               && !string.IsNullOrEmpty(voucher.GetString());
+
+        static InvalidOperationException VoucherException() => new(
+            "接口触发B站风控人机验证：playurl 返回 v_voucher 凭据，没有可用播放地址。"
+            + "通常为短时风控，已按重试设置自动退避重试；若持续出现，请稍后重试"
+            + "或在浏览器打开该视频完成人机验证后再运行。");
     }
 
     /// <summary>
