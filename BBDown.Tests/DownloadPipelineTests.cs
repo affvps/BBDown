@@ -664,7 +664,7 @@ public class DownloadPipelineTests
         }
     }
 
-    /// <summary>同资源完整文件：返回 true（跳过 aria2c），残留控制文件被清理、身份清单保留。</summary>
+    /// <summary>同资源完整文件且无控制文件：返回 true（跳过 aria2c），身份清单保留。</summary>
     [Fact]
     public async Task PrepareAria2cTarget_CompleteSameResource_SkipsAria2c()
     {
@@ -675,7 +675,6 @@ public class DownloadPipelineTests
             var path = Path.Combine(dir, "video.mp4");
             File.WriteAllText(path, "complete-10-byte"); // 16 字节
             var control = path + ".aria2";
-            File.WriteAllText(control, "ctrl");
             var manifest = new BBDownDownloadUtil.ResumeManifest(
                 BBDownDownloadUtil.StableResourceIdentity("https://cdn.example.com/1080p.mp4?qn=80"),
                 16, null, null);
@@ -687,7 +686,7 @@ public class DownloadPipelineTests
 
             Assert.True(skip, "同资源完整文件应跳过 aria2c");
             Assert.True(File.Exists(path));
-            Assert.False(File.Exists(control), "残留 .aria2 控制文件应被清理");
+            Assert.False(File.Exists(control));
             // 身份清单保留为"完成证书"，供下次重跑经 CanResumeFrom 确认身份后跳过
             Assert.True(File.Exists(path + ".manifest.json"), "完成下载后身份清单应保留");
         }
@@ -941,7 +940,7 @@ public class DownloadPipelineTests
     }
 
     /// <summary>本地 HTTP 服务，返回固定长度的字节流（用于多线程下载测试）。</summary>
-    private sealed class LocalByteServer : IDisposable
+    internal sealed class LocalByteServer : IDisposable
     {
         private readonly HttpListener _listener = new();
         private readonly CancellationTokenSource _cts = new();
@@ -951,6 +950,8 @@ public class DownloadPipelineTests
 
         /// <summary>服务端载荷的 SHA-256 十六进制串。测试用它校验下载产物内容一致（而非仅长度）。</summary>
         public string PayloadHash { get; }
+
+        public ReadOnlyMemory<byte> Payload => _payload;
 
         /// <summary>已服务的 Range 请求区间（G7 验证多分片覆盖时用）。锁保护。</summary>
         public List<string> RangeHeaders { get; } = [];

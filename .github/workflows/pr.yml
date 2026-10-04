@@ -8,9 +8,30 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DOTNET_SDK_VERSION: "10.0.300"
+  DOTNET_SDK_VERSION: "10.0.302"
 
 jobs:
+  locked-restore:
+    name: Locked restore (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      # 六 RID 依赖图一次锁定还原；带 -r 的 restore 会把图缩成单 RID。
+      - run: dotnet restore BBDown.sln --locked-mode
+      - name: Verify all publish targets were restored
+        shell: pwsh
+        run: ./scripts/check-locked-restore.ps1
+      - run: git diff --exit-code -- '*/packages.lock.json'
+
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
@@ -25,7 +46,7 @@ jobs:
           cache-dependency-path: '**/packages.lock.json'
 
       - name: Restore
-        run: dotnet restore BBDown.sln
+        run: dotnet restore BBDown.sln --locked-mode
 
       - name: Build (Release, includes AOT-compat compile via Directory.Build.props)
         run: dotnet build BBDown.sln -c Release --no-restore
@@ -48,7 +69,7 @@ jobs:
           cache-dependency-path: '**/packages.lock.json'
 
       - name: Restore
-        run: dotnet restore BBDown.sln
+        run: dotnet restore BBDown.sln --locked-mode
 
       - name: Audit packages
         # RF-67：`dotnet list package --vulnerable` 无论是否发现漏洞退出码恒为 0
@@ -82,15 +103,15 @@ jobs:
           cache-dependency-path: '**/packages.lock.json'
 
       - name: Restore
-        run: dotnet restore BBDown.sln
+        run: dotnet restore BBDown.sln --locked-mode
 
       - name: Verify formatting
         run: dotnet format BBDown.sln --verify-no-changes --no-restore
 
-  # 本地可重复的集成测试（无需外部网络）：真实 ffmpeg 混流冒烟。本机 ffmpeg
-  # 不可用时测试内部直接跳过（不产生失败），因此该 job 可以作为硬性门禁阻断 PR。
+  # 本地可重复的集成测试：回环 aria2c 续传、Bento4 解密和 ffmpeg 混流。
+  # 显式安装/检查工具，且新工具测试禁止缺工具时空跑。
   local-integration:
-    name: Integration Tests (local ffmpeg)
+    name: Integration Tests (local tools)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -102,8 +123,8 @@ jobs:
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install local integration tools
+        run: bash scripts/install-local-test-tools.sh
 
       - name: Verify ffmpeg is on PATH
         # RF-77：LocalIntegration 测试在找不到 ffmpeg 时内部 early-return（不产生断言），
@@ -111,11 +132,13 @@ jobs:
         run: command -v ffmpeg
 
       - name: Restore
-        run: dotnet restore BBDown.sln
+        run: dotnet restore BBDown.sln --locked-mode
 
       - name: Test (local integration)
         # 独立 runner 无其他 job 的构建产物，必须显式构建（dotnet test 自带 build）
-        run: dotnet test BBDown.sln -c Release --filter "Category=LocalIntegration"
+        run: dotnet test BBDown.sln -c Release --no-restore --filter "Category=LocalIntegration"
+        env:
+          BBDOWN_REQUIRE_LOCAL_TOOLS: "1"
 
   # 外部网络集成测试：真实访问 B 站 API，验证解析/重定向/登录检测等端到端路径。
   # 不阻断 PR（网络抖动/API 变更易误报），但必须运行并报告结果；失败时收集
@@ -135,13 +158,13 @@ jobs:
           cache-dependency-path: '**/packages.lock.json'
 
       - name: Restore
-        run: dotnet restore BBDown.sln
+        run: dotnet restore BBDown.sln --locked-mode
 
       - name: Test (network integration)
         # 独立 runner 无其他 job 的构建产物，必须显式构建（dotnet test 自带 build）。
         # --logger trx 产出 TRX 测试结果供失败分析：此前无 logger 时通常没有 .trx 可上传，
         # 失败时只能靠 console 输出人工判断，网络 job 的"报告结果"形同虚设。
-        run: dotnet test BBDown.sln -c Release --filter "Category=NetworkIntegration" --logger "trx;LogFileName=network.trx"
+        run: dotnet test BBDown.sln -c Release --no-restore --filter "Category=NetworkIntegration" --logger "trx;LogFileName=network.trx"
 
       - name: Upload test results
         if: always()
@@ -170,10 +193,26 @@ jobs:
           cache-dependency-path: '**/packages.lock.json'
 
       - name: Restore
-        run: dotnet restore BBDown/BBDown.csproj -r linux-x64
+        run: dotnet restore BBDown/BBDown.csproj --locked-mode
 
       - name: Publish Native AOT (linux-x64)
-        run: dotnet publish BBDown/BBDown.csproj -c Release -r linux-x64 --no-restore
+        env:
+          DOTNET_CLI_UI_LANGUAGE: en
+        run: |
+          set -euo pipefail
+          dotnet publish BBDown/BBDown.csproj -c Release -r linux-x64 --no-restore 2>&1 | tee aot-publish.log
+
+      - name: Check reviewed AOT warning baseline
+        shell: pwsh
+        run: ./scripts/check-aot-warnings.ps1 -LogPath aot-publish.log
+
+      - name: Upload AOT audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aot-publish-audit
+          path: aot-publish.log
+          if-no-files-found: error
 
       - name: Verify binary
         run: |

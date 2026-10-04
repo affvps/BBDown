@@ -54,7 +54,10 @@ static partial class AppHelper
     /// <param name="qn"></param>
     /// <param name="appkey"></param>
     /// <returns></returns>
-    public static async Task<string> DoReqAsync(string aid, string cid, string epId, string qn, bool bangumi, string encoding, string appkey = "", CancellationToken token = default)
+    public static Task<string> DoReqAsync(string aid, string cid, string epId, string qn, bool bangumi, string encoding, string appkey = "", CancellationToken token = default)
+        => DoReqAsync(HttpApiTransport.Instance, aid, cid, epId, qn, bangumi, encoding, appkey, token);
+
+    internal static async Task<string> DoReqAsync(IApiTransport transport, string aid, string cid, string epId, string qn, bool bangumi, string encoding, string appkey = "", CancellationToken token = default)
     {
         // RF-47：业务性确定性失败用 InvalidOperationException（在下载页两级 catch 过滤器内，
         // 按"单 P 失败"隔离），不用 ArgumentException——后者不在过滤器内，会穿透中止整批多 P。
@@ -80,12 +83,12 @@ static partial class AppHelper
             if (!(string.IsNullOrEmpty(encoding) || encoding == "HEVC"))
                 Logger.LogWarn("APP的番剧不支持 HEVC 以外的编码");
             var body = GetPayload(ParseId(epId, nameof(epId), allowEmpty: true), ParseId(cid, nameof(cid), allowEmpty: false), ParseId(qn, nameof(qn), allowEmpty: true), PlayViewReq.Types.CodeType.Code265);
-            data = await HTTPUtil.GetPostResponseAsync(API2, body, headers, token);
+            data = await transport.PostAsync(API2, body, headers, token);
         }
         else
         {
             var body = GetPayload(ParseId(aid, nameof(aid), allowEmpty: false), ParseId(cid, nameof(cid), allowEmpty: false), ParseId(qn, nameof(qn), allowEmpty: true), GetVideoCodeType(encoding));
-            data = await HTTPUtil.GetPostResponseAsync(API, body, headers, token);
+            data = await transport.PostAsync(API, body, headers, token);
         }
         // RF-47：服务器（或 --insecure 中间人）下发帧头合法但帧体为垃圾字节的 200 响应时，
         // ParseFrom 抛 InvalidProtocolBufferException（直接继承 Exception，不在两级过滤器内，
@@ -125,9 +128,8 @@ static partial class AppHelper
     /// </summary>
     /// <param name="data"></param>
     /// <returns></returns>
-    private static string ConvertToDashJson(object data)
+    private static string ConvertToDashJson(PlayViewReply resp)
     {
-        var resp = (PlayViewReply)data;
         if (resp.VideoInfo == null)
         {
             throw new InvalidOperationException("APP接口未返回视频流信息（可能需要大会员登录或存在区域/播放限制）");

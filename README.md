@@ -114,6 +114,10 @@ BBDown --help
 | `--work-dir` | 指定下载工作目录 |
 | `--insecure` | 跳过 SSL 证书校验 |
 
+断点续传会校验资源身份与分片布局。修改 `--thread-segment-size` 后，旧布局的分片会重新下载；旧版缺少布局信息的多线程续传清单也会触发一次重新下载。使用 aria2c 时，仍有 `.aria2` 控制文件的目标会交给 aria2c 恢复，即使预分配后的文件长度已经等于远端总长。
+
+DRM 解密会先验证临时输出，再替换原媒体。失败、取消或文件被占用时保留原文件，并报告失败；APP 接口的 `grpc-status` 错误也会明确报告。
+
 跳过与排障：
 
 | 长选项 | 说明 |
@@ -399,7 +403,7 @@ git clone https://github.com/AliverAnme/BBDown.git
 cd BBDown
 
 # 还原依赖并编译
-dotnet restore
+dotnet restore BBDown.sln --locked-mode
 dotnet build
 
 # 运行

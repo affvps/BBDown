@@ -9,7 +9,7 @@
 - **.NET SDK**：[.NET 10.0 SDK](https://dotnet.microsoft.com/download) 或更高版本
 - **IDE 与工具**：Visual Studio 2022+ / JetBrains Rider / VS Code (配合 C# Dev Kit)
 - **支持的操作系统**：Windows 10/11、macOS (Intel/Apple Silicon) 或 Linux (x64/arm64)
-- **外部依赖**：[FFmpeg](https://ffmpeg.org/)（测试混流流程时需要）
+- **外部依赖**：[FFmpeg](https://ffmpeg.org/)、aria2c 与 Bento4 的 mp4encrypt/mp4decrypt（本地工具集成测试需要）。当前 CI SDK 为 10.0.302，满足 `global.json` 的 10.0.300/latestPatch 约束。
 
 ---
 
@@ -33,13 +33,17 @@ BBDown/
 ### 3.1 还原依赖与常规构建
 ```bash
 # 还原 NuGet 依赖
-dotnet restore
+dotnet restore BBDown.sln --locked-mode
 
 # Debug 编译构建
 dotnet build
 
-# 运行全套单元测试
-dotnet test
+# Release 构建后运行单元门禁
+dotnet build BBDown.sln -c Release --no-restore
+dotnet test BBDown.sln -c Release --no-build --filter "Category!=Integration&Category!=NetworkIntegration&Category!=LocalIntegration"
+
+# 工具已安装时运行离线、本地集成
+dotnet test BBDown.sln -c Release --no-build --filter "Category=LocalIntegration"
 ```
 
 ### 3.2 本地运行与调试
@@ -62,21 +66,28 @@ BBDown 深度适配了 .NET 的 **Native AOT (Ahead-Of-Time 提前编译)** 技�
 ### 4.1 各平台发布命令
 
 ```bash
+# 一次性还原完整六 RID 图；restore 不传 -r
+dotnet restore BBDown/BBDown.csproj --locked-mode
+
 # 1. Windows (x64)
-dotnet publish BBDown -c Release -r win-x64 -o ./dist/win-x64
+dotnet publish BBDown -c Release -r win-x64 -o ./dist/win-x64 --no-restore
 
 # 2. Linux (x64)
-dotnet publish BBDown -c Release -r linux-x64 -o ./dist/linux-x64
+dotnet publish BBDown -c Release -r linux-x64 -o ./dist/linux-x64 --no-restore
 
 # 3. Linux (ARM64 - 如树莓派 / 苹果 M 系列 Linux 容器)
-dotnet publish BBDown -c Release -r linux-arm64 -o ./dist/linux-arm64
+dotnet publish BBDown -c Release -r linux-arm64 -o ./dist/linux-arm64 --no-restore
 
 # 4. macOS (Apple Silicon M1/M2/M3/M4)
-dotnet publish BBDown -c Release -r osx-arm64 -o ./dist/osx-arm64
+dotnet publish BBDown -c Release -r osx-arm64 -o ./dist/osx-arm64 --no-restore
 
 # 5. macOS (Intel x64)
-dotnet publish BBDown -c Release -r osx-x64 -o ./dist/osx-x64
+dotnet publish BBDown -c Release -r osx-x64 -o ./dist/osx-x64 --no-restore
 ```
+
+这些命令分别在对应平台及其 Native AOT 工具链上运行。locked restore 失败时，应检查 SDK 补丁与锁文件中的隐式 AOT 工具版本；有意升级依赖使用 `--force-evaluate -p:RestoreLockedMode=false` 重新生成并审查锁文件。CI 的 Windows/Linux/macOS 还原矩阵还会验证六 RID 资产齐全，且锁文件未被改写。
+
+AOT 警告全部展开。PR 发布保存英文日志，由 `scripts/check-aot-warnings.ps1` 与 `scripts/aot-warnings-baseline.txt` 比对；新诊断触发失败，具体证据随 CI artifact 保留。当前基线来自 Spectre.Console.Cli 0.55.0 的反射绑定路径，不能把基线通过当成该库已完全消除 AOT 风险。
 
 > [!WARNING]
 > **Native AOT 开发约束**：
@@ -103,7 +114,7 @@ docker run --rm bbdown:latest --help
 欢迎提交 Issue 与 Pull Request！提交前请确保：
 1. 本地执行 `dotnet test` 确保所有测试用例均通过。
 2. 代码格式符合根目录 `.editorconfig` 规范。
-3. 任何新增的 CLI 选项或功能改动请同步更新 [docs/wiki/](file:///F:/Projects/BBDown/docs/wiki) 中的相关 Wiki 文档。
+3. 任何新增的 CLI 选项或功能改动请同步更新 [Wiki 文档](Home)。
 
 ---
 

@@ -12,13 +12,14 @@ namespace BBDown.Tests;
 /// </summary>
 internal sealed class FakeBilibiliApiServer : IDisposable
 {
-    public sealed record RecordedRequest(string Path, string Query);
+    public sealed record RecordedRequest(string Path, string Query, string Method, byte[] Body);
 
     private readonly HttpListener _listener = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
     private readonly object _gate = new();
     private readonly Dictionary<string, string> _fixturesByPath = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (byte[] Body, string? GrpcStatus)> _binaryFixtures = new(StringComparer.Ordinal);
     private readonly List<(string Path, string ParamName, string ParamValue, string Json)> _exactFixtures = new();
     private readonly List<RecordedRequest> _requests = new();
 
@@ -40,9 +41,25 @@ internal sealed class FakeBilibiliApiServer : IDisposable
                     {
                         var path = ctx.Request.Url?.AbsolutePath ?? "/";
                         var query = ctx.Request.Url?.Query ?? "";
-                        lock (_gate) { _requests.Add(new RecordedRequest(path, query)); }
+                        using var requestBody = new MemoryStream();
+                        await ctx.Request.InputStream.CopyToAsync(requestBody, _cts.Token);
+                        (byte[] Body, string? GrpcStatus)? binary;
+                        lock (_gate)
+                        {
+                            _requests.Add(new RecordedRequest(path, query, ctx.Request.HttpMethod, requestBody.ToArray()));
+                            binary = _binaryFixtures.TryGetValue(path, out var fixture) ? fixture : null;
+                        }
                         var body = Resolve(path, query);
-                        if (body is null)
+                        if (binary is { } response)
+                        {
+                            ctx.Response.StatusCode = 200;
+                            ctx.Response.ContentType = "application/grpc";
+                            if (response.GrpcStatus is not null)
+                                ctx.Response.Headers.Add("grpc-status", response.GrpcStatus);
+                            ctx.Response.ContentLength64 = response.Body.Length;
+                            await ctx.Response.OutputStream.WriteAsync(response.Body, _cts.Token);
+                        }
+                        else if (body is null)
                         {
                             // 404：夹具未登记。4xx 不触发 HTTPUtil 的 5xx 重试，让断言失败快速直达
                             var miss = Encoding.UTF8.GetBytes($"no fixture registered for {path}");
@@ -74,6 +91,11 @@ internal sealed class FakeBilibiliApiServer : IDisposable
     public void Register(string path, string json)
     {
         lock (_gate) _fixturesByPath[path] = json;
+    }
+
+    public void Register(string path, byte[] body, string? grpcStatus = null)
+    {
+        lock (_gate) _binaryFixtures[path] = (body, grpcStatus);
     }
 
     /// <summary>登记 path+参数 精确夹具：优先于 path 级，用于按 qn / prefer_code_type 区分分轮响应。</summary>

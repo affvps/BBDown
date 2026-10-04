@@ -408,6 +408,30 @@ public class HttpUtilRetryTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UserCancellation_DuringStalledResponseBody_DoesNotRetry(bool post)
+    {
+        using var server = new StallingServer();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var original = Config.Current;
+        try
+        {
+            Config.ApplyToCurrentAsyncFlow(original with { ApiTimeoutMs = 60000, MaxRetryCount = 3, RetryDelayMs = 1 });
+            Task request = post
+                ? HTTPUtil.GetPostResponseAsync($"http://127.0.0.1:{server.Port}/grpc", [0], token: cts.Token)
+                : HTTPUtil.GetWebSourceAsync($"http://127.0.0.1:{server.Port}/api", token: cts.Token);
+            await server.BodyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cts.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request.WaitAsync(TimeSpan.FromSeconds(5)));
+
+            Assert.Equal(1, server.RequestCount);
+        }
+        finally { Config.ApplyToCurrentAsyncFlow(original); }
+    }
+
     /// <summary>返回响应头后让响应体停滞的本地服务：用于验证超时被纳入 API 层有界重试。</summary>
     private sealed class StallingServer : IDisposable
     {
@@ -417,6 +441,8 @@ public class HttpUtilRetryTests
         private int _requestCount;
         public int Port { get; }
         public int RequestCount => Volatile.Read(ref _requestCount);
+
+        public TaskCompletionSource BodyStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public StallingServer()
         {
@@ -442,6 +468,7 @@ public class HttpUtilRetryTests
                                 // ReadAsStringAsync 会一直等剩余字节直到 ApiTimeoutMs 超时
                                 resp.ContentLength64 = 100;
                                 await resp.OutputStream.WriteAsync(new byte[1], _cts.Token);
+                                BodyStarted.TrySetResult();
                                 await Task.Delay(Timeout.Infinite, _cts.Token);
                             }
                             catch { /* 客户端中止：忽略 */ }

@@ -71,21 +71,21 @@ public static partial class Parser
             ? hostAndPath
             : $"https://{hostAndPath}";
 
-    private static async Task<string> GetPlayJsonAsync(string encoding, string aidOri, string aid, string cid, string epId, bool tvApi, bool intl, bool appApi, bool wantDrm, string qn = "0", CancellationToken token = default)
+    private static async Task<string> GetPlayJsonAsync(string encoding, string aidOri, string aid, string cid, string epId, bool tvApi, bool intl, bool appApi, bool wantDrm, string qn, CancellationToken token, IApiTransport transport)
     {
         Logger.LogDebug("aid={0},cid={1},epId={2},tvApi={3},IntlApi={4},appApi={5},qn={6}", aid, cid, epId, tvApi, intl, appApi, qn);
 
         // 接口模式由 ResolveApiMode 单点决定（优先级 INTL > APP > TV > WEB）；展示用的
         // <apiType> 占位符读同一个枚举，两者不可能再漂移。
         var apiMode = ResolveApiMode(tvApi, intl, appApi);
-        if (apiMode == PlayApiMode.Intl) return await GetPlayJsonAsync(aid, cid, epId, qn, token: token);
+        if (apiMode == PlayApiMode.Intl) return await GetPlayJsonAsync(aid, cid, epId, qn, "0", token, transport);
 
 
         bool cheese = aidOri.StartsWith("cheese:");
         bool bangumi = cheese || aidOri.StartsWith("ep:");
         Logger.LogDebug("bangumi={0},cheese={1}", bangumi, cheese);
 
-        if (apiMode == PlayApiMode.App) return await AppHelper.DoReqAsync(aid, cid, epId, qn, bangumi, encoding, Config.Current.Token, token);
+        if (apiMode == PlayApiMode.App) return await AppHelper.DoReqAsync(transport, aid, cid, epId, qn, bangumi, encoding, Config.Current.Token, token);
 
         string prefix = apiMode == PlayApiMode.Tv ? bangumi ? $"{Config.Current.TvHost}/pgc/player/api/playurltv" : $"{Config.Current.TvHost}/x/tv/playurl"
             : bangumi ? $"{Config.Current.Host}/pgc/player/web/v2/playurl" : $"{Config.Current.Host}/x/player/wbi/playurl";
@@ -120,7 +120,7 @@ public static partial class Parser
         if (cheese) api = api.Replace("/pgc/player/web/v2/playurl", "/pugv/player/web/playurl");
 
         //Console.WriteLine(api);
-        string webJson = await HTTPUtil.GetWebSourceAsync(api, token: token);
+        string webJson = await transport.GetStringAsync(api, token);
         //以下情况从网页源代码尝试解析
         if (IsVipRestrictedResponse(webJson))
         {
@@ -134,7 +134,7 @@ public static partial class Parser
                 // 默认配置 EpHost 即官方 api 主机，直接替换即可；非默认时用配置的镜像主机。
                 string webHost = Config.Current.EpHost == "api.bilibili.com" ? "www.bilibili.com" : Config.Current.EpHost;
                 string webUrl = $"{WithApiScheme(webHost)}/bangumi/play/ep{epId}";
-                string webSource = await HTTPUtil.GetWebSourceAsync(webUrl, token: token, rejectHtml: false);
+                string webSource = await transport.GetStringAsync(webUrl, token, rejectHtml: false);
                 var match = PlayerJsonRegex().Match(webSource);
                 // 页面不含 window.__playinfo__（登录墙/错误页/风控页）时 Groups[1] 为空串，
                 // 下游 JsonDocument.Parse("") 会抛与真实原因无关的裸 JsonException
@@ -168,7 +168,7 @@ public static partial class Parser
         }
     }
 
-    private static async Task<string> GetPlayJsonAsync(string aid, string cid, string epId, string qn, string code = "0", CancellationToken token = default)
+    private static async Task<string> GetPlayJsonAsync(string aid, string cid, string epId, string qn, string code, CancellationToken token, IApiTransport transport)
     {
         bool isBiliPlus = Config.Current.Host != "api.bilibili.com";
         string api = $"{WithApiScheme(isBiliPlus ? Config.Current.Host : "api.biliintl.com")}/intl/gateway/v2/ogv/playurl?";
@@ -184,7 +184,7 @@ public static partial class Parser
         string param = paramBuilder.ToString();
         api += (isBiliPlus ? $"{param}&sign={GetSign(param, BiliPlusSignSalt)}" : param);
 
-        string webJson = await HTTPUtil.GetWebSourceAsync(api, token: token);
+        string webJson = await transport.GetStringAsync(api, token);
         return webJson;
     }
 
@@ -192,9 +192,12 @@ public static partial class Parser
     /// 解析播放地址并映射轨道。I2 拆解：原 532 行巨方法按"取文档 → 数据根定位 → dash/durl/intl
     /// 分派 → 轨道映射"分段，重发接管的所有权收敛到 <see cref="PlayResponse"/>；公开签名与行为不变。
     /// </summary>
-    public static async Task<ParsedResult> ExtractTracksAsync(string aidOri, string aid, string cid, string epId, bool tvApi, bool intlApi, bool appApi, string encoding, bool wantDrm = false, string qn = "0", CancellationToken token = default)
+    public static Task<ParsedResult> ExtractTracksAsync(string aidOri, string aid, string cid, string epId, bool tvApi, bool intlApi, bool appApi, string encoding, bool wantDrm = false, string qn = "0", CancellationToken token = default)
+        => ExtractTracksAsync(HttpApiTransport.Instance, aidOri, aid, cid, epId, tvApi, intlApi, appApi, encoding, wantDrm, qn, token);
+
+    internal static async Task<ParsedResult> ExtractTracksAsync(IApiTransport transport, string aidOri, string aid, string cid, string epId, bool tvApi, bool intlApi, bool appApi, string encoding, bool wantDrm = false, string qn = "0", CancellationToken token = default)
     {
-        var request = new PlayRequest(aidOri, aid, cid, epId, tvApi, intlApi, appApi, encoding, wantDrm, qn);
+        var request = new PlayRequest(aidOri, aid, cid, epId, tvApi, intlApi, appApi, encoding, wantDrm, qn, transport);
         ParsedResult parsedResult = new();
 
         //调用解析
@@ -236,14 +239,14 @@ public static partial class Parser
     /// <summary>走 INTL 接口（两次请求）的入参重载，避免各阶段反复展开长参数列表。</summary>
     private static Task<string> GetPlayJsonAsync(PlayRequest request, string qn, CancellationToken token)
         => GetPlayJsonAsync(request.Encoding, request.AidOri, request.Aid, request.Cid, request.EpId,
-            request.TvApi, request.IntlApi, request.AppApi, request.WantDrm, qn, token);
+            request.TvApi, request.IntlApi, request.AppApi, request.WantDrm, qn, token, request.Transport);
 
     /// <summary>
     /// 一次播放地址解析的入参（I2：从 532 行方法的参数列表提出，与原有形参一一对应）。
     /// </summary>
     private readonly record struct PlayRequest(
         string AidOri, string Aid, string Cid, string EpId,
-        bool TvApi, bool IntlApi, bool AppApi, string Encoding, bool WantDrm, string Qn);
+        bool TvApi, bool IntlApi, bool AppApi, string Encoding, bool WantDrm, string Qn, IApiTransport Transport);
 
     /// <summary>
     /// 免二压重发的接管结果：<c>null</c> 表示沿用首轮文档（重发失败，或新响应没有可用的 dash.video）。
@@ -327,7 +330,7 @@ public static partial class Parser
         foreach (var code in new[] { "0", "1" })
         {
             if (code == "1")
-                parsedResult.WebJsonString = await GetPlayJsonAsync(request.Aid, request.Cid, request.EpId, request.Qn, code, token);
+                parsedResult.WebJsonString = await GetPlayJsonAsync(request.Aid, request.Cid, request.EpId, request.Qn, code, token, request.Transport);
 
             using var intlJson = JsonDocument.Parse(parsedResult.WebJsonString);
             // 风控人机验证（v_voucher）：本轮被风控时不能一律抛出——两轮共用同一个

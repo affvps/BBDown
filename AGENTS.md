@@ -12,6 +12,8 @@ BBDown — command-line Bilibili downloader (C#, .NET 10). Projects:
 ```bash
 dotnet build BBDown.sln -c Release          # CI builds Release
 
+dotnet restore BBDown.sln --locked-mode    # Full six-RID graph; do not pass -r to restore
+
 # Unit tests (what PR CI gates on):
 dotnet test BBDown.sln -c Release --no-build --filter "Category!=Integration&Category!=NetworkIntegration&Category!=LocalIntegration"
 
@@ -26,7 +28,7 @@ dotnet test --filter "FullyQualifiedName~MuxerArgsTests"
 
 dotnet format BBDown.sln                    # MUST pass --verify-no-changes in CI; run before committing
 
-dotnet publish BBDown -c Release -r win-x64 # Native AOT single-file binary
+dotnet publish BBDown -c Release -r win-x64 --no-restore # After full locked restore
 
 dotnet run --project BBDown -- --help       # quick manual run
 ```
@@ -34,7 +36,7 @@ dotnet run --project BBDown -- --help       # quick manual run
 ## Hard constraints
 
 - SDK pinned by `global.json` (.NET 10.0.300, rollForward latestPatch).
-- **Native AOT everywhere**: `BBDown/Directory.Build.props` sets `PublishAot=true`. No dynamic reflection; JSON serialization must use source-generator contexts (see `MyOptionJsonContext` in `Program.cs`). Trim/AOT warnings are suppressed via `NoWarn` — do not add reflection casually.
+- **Native AOT everywhere**: `BBDown/Directory.Build.props` sets `PublishAot=true`. No dynamic reflection; JSON serialization must use source-generator contexts (see `MyOptionJsonContext` in `Program.cs`). Trim/AOT warnings are expanded and checked against `scripts/aot-warnings-baseline.txt`; do not add reflection or warning suppressions casually. CI uses SDK 10.0.302 within the pinned latestPatch policy, matching implicit AOT dependencies in the lock files.
 - **Format gate is hard CI**: UTF-8, LF line endings, 4-space indent, final newline (`.editorconfig`). On Windows, keep new files LF.
 - **`failSkips: true`** in `BBDown.Tests/xunit.runner.json` — `[Fact(Skip = "...")]` fails CI. Guard conditional tests with an early `return` in the body instead (pattern used by ffmpeg tests in `MuxerArgsTests.cs`).
 - Protobuf C# in `BBDown.Core` is generated at build time by Grpc.Tools from `APP/**/*.proto` and `DRM/Proto/*.proto`; edit the `.proto` sources, never generated output.

@@ -878,6 +878,16 @@ public static partial class HTTPUtil
                     throw new HttpRequestException($"服务器返回 {(int)response.StatusCode} {response.ReasonPhrase}", null, response.StatusCode);
                 response.EnsureSuccessStatusCode();
                 byte[] bytes = await ReadContentBoundedAsync(response.Content, timeoutCts.Token);
+                // gRPC 的业务状态在 headers（仅尾部响应）或 trailers 中；HTTP 200 并不代表成功。
+                // 必须读完响应体后再检查 trailers，避免把权限拒绝等错误当成损坏的 protobuf。
+                var grpcHeaders = response.TrailingHeaders.Contains("grpc-status") ? response.TrailingHeaders : response.Headers;
+                if (grpcHeaders.TryGetValues("grpc-status", out var statuses))
+                {
+                    var values = statuses.ToArray();
+                    if (values.Length != 1 || !int.TryParse(values[0], System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out int status) || status != 0)
+                        throw new InvalidOperationException($"gRPC 接口请求失败（grpc-status={string.Join(",", values)}）");
+                }
                 // HTML 风控/错误页首字节是 '<'（0x3C），不可能是合法 grpc 帧头 → 明确报错
                 if (bytes.Length > 0 && bytes[0] == (byte)'<')
                     throw new RiskControlResponseException(Url);

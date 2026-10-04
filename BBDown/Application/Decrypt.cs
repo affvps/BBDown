@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using static BBDown.Core.Entity.Entity;
 using BBDown.Core.DRM;
 using BBDown.Core.Entity;
-using System.Diagnostics;
 
 using BBDown.Core.Util;
 using static BBDown.BBDownUtil;
@@ -16,24 +15,6 @@ namespace BBDown;
 
 internal partial class Program
 {
-    /// <summary>
-    /// 启动外部进程并把"已解析但不可启动"的 Win32Exception 规范化为 InvalidOperationException（RF-43）：
-    /// Unix 显式路径无执行位 / Windows 损坏或错误架构二进制（ERROR_BAD_EXE_FORMAT）抛出的
-    /// Win32Exception 不在下载页两级 catch 过滤器白名单内，会穿透中止整批。
-    /// 与 SystemProcessRunner 启动点同构。
-    /// </summary>
-    private static Process StartProcessSafe(ProcessStartInfo psi, string toolName)
-    {
-        try
-        {
-            return Process.Start(psi) ?? throw new InvalidOperationException($"{toolName} 无法启动: {psi.FileName}（进程启动失败）");
-        }
-        catch (System.ComponentModel.Win32Exception ex)
-        {
-            throw new InvalidOperationException($"{toolName} 无法启动: {psi.FileName}（{ex.Message}）", ex);
-        }
-    }
-
     /// <summary>
     /// 解析 device.wvd 路径：<c>--wvd-path</c> 显式指定优先（存在才采用），否则检索
     /// PATH / 程序目录（<see cref="FindTool"/>），最后回落到程序目录的内置 device.wvd。
@@ -175,30 +156,20 @@ internal partial class Program
                 "或用 --mp4decrypt-path 指定路径。");
         }
 
+        var decryptor = new DrmMediaDecryptor(new SystemProcessRunner());
+        int timeoutMs = checked(Math.Max(1, Core.Config.Current.MuxerTimeoutMinutes) * 60 * 1000);
         if (!string.IsNullOrEmpty(videoPath) && File.Exists(videoPath))
         {
             Logger.Log("解密视频流...");
-            var tmpVideo = videoPath + ".dec";
-            await RunDecryptAsync(mp4decrypt, parsed.KidHex, parsed.KeyHex, videoPath, tmpVideo, token);
-            if (File.Exists(tmpVideo) && new FileInfo(tmpVideo).Length > 0)
-            {
-                File.Delete(videoPath);
-                File.Move(tmpVideo, videoPath);
-                Logger.Log("视频解密完成");
-            }
+            await decryptor.DecryptAsync(mp4decrypt, parsed.KidHex, parsed.KeyHex, videoPath, timeoutMs, token);
+            Logger.Log("视频解密完成");
         }
 
         if (!string.IsNullOrEmpty(audioPath) && File.Exists(audioPath))
         {
             Logger.Log("解密音频流...");
-            var tmpAudio = audioPath + ".dec";
-            await RunDecryptAsync(mp4decrypt, parsed.KidHex, parsed.KeyHex, audioPath, tmpAudio, token);
-            if (File.Exists(tmpAudio) && new FileInfo(tmpAudio).Length > 0)
-            {
-                File.Delete(audioPath);
-                File.Move(tmpAudio, audioPath);
-                Logger.Log("音频解密完成");
-            }
+            await decryptor.DecryptAsync(mp4decrypt, parsed.KidHex, parsed.KeyHex, audioPath, timeoutMs, token);
+            Logger.Log("音频解密完成");
         }
     }
 
@@ -210,58 +181,5 @@ internal partial class Program
     /// </summary>
     internal static IReadOnlyList<string> BuildDecryptArguments(string kid, string key, string input, string output)
         => ["--key", $"{kid}:{key}", input, output];
-
-    private static async Task RunDecryptAsync(string mp4decrypt, string kid, string key, string input, string output, CancellationToken token = default)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = mp4decrypt,
-            RedirectStandardOutput = false,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        // 权衡：mp4decrypt 无法从 stdin/文件读密钥，只能走命令行——密钥会在本机进程命令行里
-        // 短暂可见（同机同用户可读 /proc/<pid>/cmdline 或 Win32_Process 查询）。相比旧实现：
-        // 不再把密钥写进磁盘临时文件（旧路径既不被 mp4decrypt 支持，又在临时目录留下过密钥），
-        // 暴露窗口从"文件常驻"缩到"单次解密进程存活期"（秒级）。
-        foreach (var arg in BuildDecryptArguments(kid, key, input, output))
-            psi.ArgumentList.Add(arg);
-
-        using var proc = StartProcessSafe(psi, "mp4decrypt");
-        var stderrTask = proc.StandardError.ReadToEndAsync();
-        try
-        {
-            // 解密无超时兜底会让进程无限挂起：用混流超时配置作上限（与外部进程执行器一致）。
-            // 达到超时同样 Kill 进程树并抛错，不留下孤儿 mp4decrypt。
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-            timeoutCts.CancelAfter(TimeSpan.FromMinutes(Math.Max(1, Core.Config.Current.MuxerTimeoutMinutes)));
-            await proc.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            // 用户取消或超时：进程仍在运行，必须 Kill 掉，避免留下孤儿 mp4decrypt。
-            try { proc.Kill(true); } catch { /* 进程可能已自行退出 */ }
-            // Kill 后 stderr 管道断裂，ReadToEndAsync 会结束；带超时兜底地等待并观察
-            // stderrTask，避免它成为未观察的 faulted Task（旧实现直接 throw 跳过等待，
-            // Kill 产生的 IOException 会在终结器/后续 GC 时以 UnobservedTaskException 泄漏）。
-            // 清理路径的任何异常都不应掩盖主路径的取消异常，一律忽略。
-            try { await stderrTask.WaitAsync(TimeSpan.FromSeconds(5)); } catch (Exception) { }
-            throw;
-        }
-
-        if (proc.ExitCode != 0)
-        {
-            var err = await stderrTask;
-            try { if (File.Exists(output)) File.Delete(output); } catch (IOException) { }
-            throw new InvalidOperationException($"mp4decrypt 解密失败 (code={proc.ExitCode}): {err}");
-        }
-        // 进程退出 0 但未产出有效文件：静默忽略会让调用方保留原加密文件、
-        // 任务却继续"解密成功"。这里把缺失输出当作失败抛出。
-        if (!File.Exists(output) || new FileInfo(output).Length == 0)
-        {
-            throw new InvalidOperationException("mp4decrypt 退出码为 0 但未产出有效的解密文件");
-        }
-    }
 
 }
