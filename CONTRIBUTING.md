@@ -4,14 +4,14 @@
 
 ## 开发环境
 
-- [.NET 10.0 SDK](https://dotnet.microsoft.com/download)
+- [.NET 10.0 SDK](https://dotnet.microsoft.com/download)：`global.json` 固定 10.0.300 功能带并允许最新补丁；当前 CI / AOT 锁文件验证版本为 10.0.302。
 - 支持的操作系统：Windows / Linux / macOS
 
 ## 构建
 
 ```bash
 # 还原依赖
-dotnet restore
+dotnet restore BBDown.sln --locked-mode
 
 # 编译（Debug）
 dotnet build
@@ -20,8 +20,14 @@ dotnet build
 dotnet build -c Release
 
 # 发布单文件（示例：win-x64）
-dotnet publish BBDown -r win-x64 -c Release
+dotnet publish BBDown -r win-x64 -c Release --no-restore
 ```
+
+还原时不要传 `-r`：锁文件包含完整六 RID 图，单 RID 还原会触发 NU1004。发布时才选择 RID，并使用 `--no-restore`。有意修改依赖后，执行 `dotnet restore BBDown.sln --force-evaluate -p:RestoreLockedMode=false`，审查三个锁文件的差异，再恢复 locked mode 验证；SDK 补丁升级也需要检查隐式 ILCompiler / ILLink 依赖。
+
+单元门禁使用 `dotnet test BBDown.sln -c Release --no-build --filter "Category!=Integration&Category!=NetworkIntegration&Category!=LocalIntegration"`。`Category=LocalIntegration` 需要 ffmpeg、aria2c、Bento4 的 mp4encrypt/mp4decrypt；CI 设置 `BBDOWN_REQUIRE_LOCAL_TOOLS=1` 禁止缺工具时空跑。Linux CI 使用 `scripts/install-local-test-tools.sh` 安装并核验固定归档 SHA256 的 Bento4。
+
+AOT 发布保留逐条警告。使用英文输出保存 publish 日志后运行 `pwsh scripts/check-aot-warnings.ps1 -LogPath <log>`；只允许已审计的具体诊断，新增警告必须解释与验证后才能更新基线。保留的两项局部抑制分别对应 CLI 入口和类型注册器，均依赖显式命令/设置类型根。
 
 ## 代码风格
 

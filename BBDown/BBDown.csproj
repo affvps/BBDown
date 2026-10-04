@@ -15,7 +15,9 @@
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);IL3000;IL3001;IL3002;IL2104</NoWarn>
+    <!-- 展开依赖库的逐条警告；scripts/check-aot-warnings.ps1 校验已审计基线。 -->
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <IlcSingleWarn>false</IlcSingleWarn>
     <InternalsVisibleTo>BBDown.Tests</InternalsVisibleTo>
 
     <!-- Release 发布/打包产物瘦身：

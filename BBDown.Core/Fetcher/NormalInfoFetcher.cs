@@ -9,10 +9,16 @@ namespace BBDown.Core.Fetcher;
 
 public partial class NormalInfoFetcher : IFetcher
 {
+    private readonly IApiTransport _transport;
+
+    public NormalInfoFetcher() : this(HttpApiTransport.Instance) { }
+
+    internal NormalInfoFetcher(IApiTransport transport) => _transport = transport;
+
     public async Task<VInfo> FetchAsync(string id, CancellationToken cancellationToken = default)
     {
         string api = $"https://api.bilibili.com/x/web-interface/view?aid={id}";
-        string json = await HTTPUtil.GetWebSourceAsync(api, token: cancellationToken);
+        string json = await _transport.GetStringAsync(api, cancellationToken);
         using var infoJson = JsonDocument.Parse(json);
         FetcherJson.ThrowIfApiError(infoJson.RootElement, "获取视频信息失败");
         // RF-65：data 节点缺失时给可读中文诊断——原 GetPropertySafe 会抛英文裸
@@ -68,7 +74,7 @@ public partial class NormalInfoFetcher : IFetcher
         if (isSteinGate == 1) // 互动视频获取分P信息
         {
             var playerSoApi = $"https://api.bilibili.com/x/player.so?bvid={bvid}&id=cid:{cid}";
-            var playerSoText = await HTTPUtil.GetWebSourceAsync(playerSoApi, token: cancellationToken, rejectHtml: false);
+            var playerSoText = await _transport.GetStringAsync(playerSoApi, cancellationToken, rejectHtml: false);
             var playerSoXml = new XmlDocument();
             try
             {
@@ -90,7 +96,7 @@ public partial class NormalInfoFetcher : IFetcher
                 using var graphDoc = JsonDocument.Parse(interactionNode.InnerText);
                 var graphVersion = graphDoc.RootElement.GetInt64Safe("graph_version");
                 var edgeInfoApi = $"https://api.bilibili.com/x/stein/edgeinfo_v2?graph_version={graphVersion}&bvid={bvid}";
-                var edgeInfoJson = await HTTPUtil.GetWebSourceAsync(edgeInfoApi, token: cancellationToken);
+                var edgeInfoJson = await _transport.GetStringAsync(edgeInfoApi, cancellationToken);
                 using var edgeDoc = JsonDocument.Parse(edgeInfoJson);
                 // RF-65：互动视频边信息接口的 data/edges 缺失时给可读中文诊断，而非英文裸 KNFE
                 if (!(edgeDoc.RootElement.TryGetProperty("data", out var edgeInfoData) && edgeInfoData.ValueKind == JsonValueKind.Object))

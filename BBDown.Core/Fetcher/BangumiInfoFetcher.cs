@@ -8,12 +8,18 @@ namespace BBDown.Core.Fetcher;
 
 public class BangumiInfoFetcher : IFetcher
 {
+    private readonly IApiTransport _transport;
+
+    public BangumiInfoFetcher() : this(HttpApiTransport.Instance) { }
+
+    internal BangumiInfoFetcher(IApiTransport transport) => _transport = transport;
+
     public async Task<VInfo> FetchAsync(string id, CancellationToken cancellationToken = default)
     {
         id = id[3..];
         string index = "";
         string api = $"https://{Config.Current.EpHost}/pgc/view/web/season?ep_id={id}";
-        string json = await HTTPUtil.GetWebSourceAsync(api, token: cancellationToken);
+        string json = await _transport.GetStringAsync(api, cancellationToken);
         using var infoJson = JsonDocument.Parse(json);
         FetcherJson.ThrowIfApiError(infoJson.RootElement, "获取番剧信息失败");
         if (!infoJson.RootElement.TryGetProperty("result", out var result))

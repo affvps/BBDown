@@ -134,10 +134,8 @@ internal static class BBDownDownloadUtil
 
         using var httpRequestMessage = new HttpRequestMessage();
         ApplyMediaRequestHeaders(httpRequestMessage, request.Url);
-        // 只发 Range：续传正确性由 Range: bytes=N- 保证，服务器支持则回 206、不支持则回 200
-        // （下方 200 分支已做降级处理）。不发送 If-Range——此前用本地临时文件的
-        // LastWriteTimeUtc 当 If-Range，它不是服务器的 Last-Modified，符合协议的服务器
-        // 会因不匹配返回完整 200，导致续传被误判为"服务器不支持多线程"。
+        // Range 指定续传偏移；校验器只用服务器的 ETag/Last-Modified，不能把本地
+        // 临时文件的 LastWriteTimeUtc 当作 If-Range（两者没有资源版本对应关系）。
         httpRequestMessage.Headers.Range = new(downloadedBytes, request.ToPosition);
         // 续传时带 If-Range：有 ETag/Last-Modified 时让服务器校验本地前缀仍属于当前对象。
         // 若对象已变化（ETag 不符），服务器返回完整 200，下方 200 分支清空重下，
@@ -589,7 +587,7 @@ internal static class BBDownDownloadUtil
     /// 文件已完整下载，调用方应跳过 aria2c。对存在的 partial/.aria2 控制文件先做
     /// ResumeManifest 身份校验——身份不可信（跨资源/缺清单/等长异内容）时删除 partial
     /// + 控制文件完整重下，杜绝跨资源续传把新资源字节追加到旧前缀上拼出损坏文件；
-    /// 身份可信且长度与远端一致才算"已完整下载"可跳过。校验后写入本次资源身份清单，
+    /// 身份可信、长度与远端一致且没有控制文件时才可跳过。校验后写入本次资源身份清单，
     /// 供同一资源的中断续传（页面级重试）复用。
     /// internal 供测试注入探测结果验证决策。
     /// </summary>
@@ -617,10 +615,10 @@ internal static class BBDownDownloadUtil
                     throw new InvalidOperationException(
                         $"aria2c 无法清理身份不可信的残留文件: {path}，已中止下载（请手动删除后重试）");
             }
-            else if (fileSize > 0 && partialLength == fileSize)
+            else if (fileSize > 0 && partialLength == fileSize && !File.Exists(controlFile))
             {
-                // 身份可信且长度与远端一致：已完整下载，清理控制文件后跳过 aria2c
-                TryDeleteStale(controlFile);
+                // aria2c 默认会预分配到远端总长；长度相等不能证明所有块已下载。
+                // 控制文件仍在时交给 aria2c 恢复，不能删除块进度后把残缺内容当成成品。
                 return true;
             }
             else if (fileSize > 0 && partialLength > fileSize)
@@ -635,7 +633,7 @@ internal static class BBDownDownloadUtil
                     throw new InvalidOperationException(
                         $"aria2c 无法清理超长残留文件: {path}，已中止下载（请手动删除后重试）");
             }
-            // 身份可信且长度 < fileSize：保留续传（--continue=true 从中断处继续）
+            // 身份可信且未确认完成：保留数据及控制文件，交给 aria2c --continue=true 恢复。
         }
         await WriteResumeManifestAsync(path, url, fileSize, headers, contentHeaders, token);
         return false;
@@ -825,13 +823,16 @@ internal static class BBDownDownloadUtil
             List<string> expectedClips = allClips
                 .Select(c => ClipPathFor(path, c.index))
                 .ToList();
+            // 后续分片的绝对偏移由分片大小决定；只比 URL/总长会在调整分片大小后
+            // 把旧分片前缀拼到新偏移。记录实际首分片大小（单分片时即总长）。
+            long segmentSizeBytes = allClips[0].to - allClips[0].from + 1;
             string manifestClip = expectedClips[0]; // 轨道清单挂在首分片名下（00000_<stem>.vclip.manifest.json）
             // 存在任意旧分片 → 校验轨道 manifest；缺失/损坏/不匹配 → 清理全部分片和旧 manifest
             bool anyExistingSegment = expectedClips.Any(File.Exists);
             if (anyExistingSegment)
             {
                 var (canResumeTrack, trackReason) = await CanResumeFromAsync(
-                    manifestClip, url, fileSize, probeHeaders?.ETag?.Tag, probeContentHeaders?.LastModified?.ToString("R"), token);
+                    manifestClip, url, fileSize, probeHeaders?.ETag?.Tag, probeContentHeaders?.LastModified?.ToString("R"), token, segmentSizeBytes);
                 if (!canResumeTrack)
                 {
                     Logger.LogDebug("多线程: 轨道分片资源身份不可信（{0}），删除全部分片后完整重下", trackReason ?? "未知原因");
@@ -840,7 +841,7 @@ internal static class BBDownDownloadUtil
                 }
             }
             // 下载分片前写入轨道清单（真正中断也会留下清单，下次可确认身份续传）
-            await WriteResumeManifestAsync(manifestClip, url, fileSize, probeHeaders, probeContentHeaders, token);
+            await WriteResumeManifestAsync(manifestClip, url, fileSize, probeHeaders, probeContentHeaders, token, segmentSizeBytes);
             // 分片进度按下标存放并维护一个原子累计值。
             // 此前每次回调都要对 ConcurrentDictionary.Values 求两次和，
             // 而 Values 每次访问都会复制出一份快照 —— 回调频率是每分片每 256KB 一次，
@@ -862,12 +863,12 @@ internal static class BBDownDownloadUtil
             Exception? clipFailure = null;
             try
             {
-                await Parallel.ForEachAsync(allClips, parallelOptions, async (clip, _) =>
+                await Parallel.ForEachAsync(allClips, parallelOptions, async (clip, clipToken) =>
                 {
                     // 分片级重试与异常归一化收口在 DownloadClipWithRetryAsync；尺寸错位以权威总长返回，
                     // 由下方统一决定是否按权威总长重切分。
                     long? clipTotal = await DownloadClipWithRetryAsync(
-                        url, path, clip, fileSize, maxRetry, progressAggregator, progress, token);
+                        url, path, clip, fileSize, maxRetry, progressAggregator, progress, clipToken);
                     if (clipTotal is { } actualTotal)
                         Interlocked.CompareExchange(ref mismatchTotal, actualTotal, 0);
                 });
@@ -953,6 +954,7 @@ internal static class BBDownDownloadUtil
             }
             catch (Exception ex) when (ExceptionPolicies.IsTransportFailure(ex))
             {
+                if (token.IsCancellationRequested) throw;
                 int backoffMs = (retry + 1) * Config.Current.RetryDelayMs;
                 Logger.LogDebug("分段下载失败(第{0}次重试, {1}ms后): {2}", retry + 1, backoffMs, ex.Message);
                 await Task.Delay(backoffMs, token);
@@ -1118,7 +1120,8 @@ internal static class BBDownDownloadUtil
     /// 身份用 <see cref="StableResourceIdentity"/>（剥离会刷新的签名 query 参数），
     /// 而非完整签名 URL——媒体 URL 的 deadline/sign 等参数每次请求都会刷新。
     /// </summary>
-    internal sealed record ResumeManifest(string Identity, long TotalLength, string? LastModified, string? ETag);
+    internal sealed record ResumeManifest(string Identity, long TotalLength, string? LastModified, string? ETag,
+        long SegmentSizeBytes = 0);
 
     /// <summary>
     /// 签名/时间戳等每次请求都会刷新的 query 参数：它们不构成资源身份，续传清单比较
@@ -1155,7 +1158,7 @@ internal static class BBDownDownloadUtil
     /// <summary>把本次下载的资源身份写入清单（.tmp.manifest.json 旁车文件）。
     /// LastModified 来自内容头（HttpContentHeaders），ETag 来自响应头。</summary>
     private static async Task WriteResumeManifestAsync(string tmpName, string url, long totalLength,
-        HttpResponseHeaders? headers, HttpContentHeaders? contentHeaders, CancellationToken token)
+        HttpResponseHeaders? headers, HttpContentHeaders? contentHeaders, CancellationToken token, long segmentSizeBytes = 0)
     {
         try
         {
@@ -1163,7 +1166,8 @@ internal static class BBDownDownloadUtil
                 StableResourceIdentity(url),
                 totalLength,
                 contentHeaders?.LastModified?.ToString("R"),
-                headers?.ETag?.Tag);
+                headers?.ETag?.Tag,
+                segmentSizeBytes);
             // 原子写入：写唯一临时文件后同目录 rename。进程在写入中被杀会留下截断 JSON，
             // 下次只能放弃已有 .tmp（CanResumeFrom 读清单失败）。rename 保证清单要么完整
             // 要么不存在；失败时清理临时文件。
@@ -1187,8 +1191,7 @@ internal static class BBDownDownloadUtil
         }
         catch (Exception ex) when (ExceptionPolicies.IsBestEffortFailure(ex))
         {
-            // 清单写入失败只降级为日志：资源身份校验退化为"仅长度"，与旧行为一致。
-            // 不阻断下载（清单是信任增强，不是必需）。
+            // 清单写入失败不阻断本次下载；下次若缺清单则拒绝续传并完整重下。
             Logger.LogDebug("写入续传清单失败: {0}", ex.Message);
         }
     }
@@ -1203,7 +1206,7 @@ internal static class BBDownDownloadUtil
     /// </summary>
     internal static async Task<(bool CanResume, string? Reason)> CanResumeFromAsync(
         string tmpName, string url, long totalLength, string? currentETag = null,
-        string? currentLastModified = null, CancellationToken token = default)
+        string? currentLastModified = null, CancellationToken token = default, long segmentSizeBytes = 0)
     {
         try
         {
@@ -1228,6 +1231,12 @@ internal static class BBDownDownloadUtil
             if (m.TotalLength != totalLength)
             {
                 return (false, $"续传清单总长({m.TotalLength})与当前探测({totalLength})不一致");
+            }
+            // 旧多线程清单没有布局信息（默认 0），也不能确认后续分片的偏移。
+            // 单线程/aria2c 不依赖本工具的分片布局，仍按原有身份和长度校验。
+            if (segmentSizeBytes > 0 && m.SegmentSizeBytes != segmentSizeBytes)
+            {
+                return (false, "续传清单分片布局缺失或与当前分片大小不一致");
             }
             // 校验器对比：清单与当前探测都有 ETag/Last-Modified 且不一致 → 内容已变，拒绝续传。
             // 仅一方有校验器时不强制（有些 CDN 不返回 ETag/Last-Modified），退化为上面

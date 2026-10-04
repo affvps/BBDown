@@ -1,16 +1,17 @@
 # 构建阶段：Native AOT 发布（Directory.Build.props 已全局启用 PublishAot）。
 # 用 AOT 专用 SDK 镜像（预装 AOT 工具链，比通用 sdk 镜像构建更快更小）。
-FROM mcr.microsoft.com/dotnet/sdk:10.0-aot AS builder
+FROM mcr.microsoft.com/dotnet/sdk:10.0.302-aot AS builder
 
 WORKDIR /src
 
 COPY Directory.Packages.props ./
+COPY global.json ./
 COPY BBDown.Core/ BBDown.Core/
 COPY BBDown/ BBDown/
 
 # 只还原/发布 BBDown 本身：解决方案还含 BBDown.Tests，
 # 而这里未复制该项目，用 BBDown.sln 会导致 restore 找不到测试工程而失败。
-RUN dotnet restore BBDown/BBDown.csproj
+RUN dotnet restore BBDown/BBDown.csproj --locked-mode
 # -r linux-x64 配合 --self-contained 产出单个原生可执行文件（含 AOT 裁剪）。
 # PublishAot 由 Directory.Build.props 全局开启，这里无需再传。
 RUN dotnet publish BBDown/BBDown.csproj -c Release -r linux-x64 --self-contained -o /app/publish --no-restore

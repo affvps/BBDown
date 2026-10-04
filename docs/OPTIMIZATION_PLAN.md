@@ -6,6 +6,23 @@
 > 基线：`dotnet build -c Release 0 警告 0 错误` / `dotnet test` PR 门禁过滤器全绿 / Native AOT `PublishAot=true` 生效
 > **锚点声明**：本文的行号/符号锚点以**撰写时点**（2026-08-31，最后一次修订 2026-09-24）为准；后续批次（REFACTOR_PLAN 批 1~7 与收口批）已改动多个文件，符号名可查、行号仅供参考。
 
+## 当前执行状态（2026-10-04）
+
+本轮基于 `7d46981`（已合并分 P 边界修复）在 `fix/download-resume-integrity` 继续评估并优化。下方 P0/P1 条目的 2026-09-24 描述和路线图是历史快照；结构性拆分的完成状态以 `REFACTOR_PLAN.md` 与 `REVIEW_PLAN.md` 顶部总览为准，不能据旧路线图重复安排已经完成的工作。
+
+| 项目 | 本轮处理 | 验证依据 |
+|------|----------|----------|
+| 续传完整性：aria2c 预分配 | 仅在身份和长度匹配且没有 `.aria2` 控制文件时跳过；有控制文件则保留数据和块状态并调用 aria2c 恢复 | 单线程、多线程两个公开下载入口的回归测试，验证真实文件内容 SHA-256、外部执行器被调用、控制文件在恢复前保留 |
+| 续传完整性：多线程布局 | 轨道清单记录实际 `SegmentSizeBytes`；布局变化或旧清单缺字段时丢弃旧分片后重下，匹配时保留前缀续传 | 3 个磁盘清单/本地 HTTP 回放场景：旧清单、2MB 改 1MB、匹配 1MB；验证 SHA-256 与请求区间，含首分片不存在场景 |
+| 并行失败收尾 | 使用 `Parallel.ForEachAsync` 提供的取消令牌传到请求、读写与退避，失败时中断同伴分片 | 本地服务等待第二分片进入停滞后拒绝第一分片；验证原始错误、外部用户令牌未取消、路径锁释放 |
+| 文档基线 | 更新项目分析、README、未发布变更日志与 wiki FAQ，明确旧布局的一次性重新下载 | 本轮产物与验证结果见 `PROJECT_ANALYSIS.md` |
+
+首轮新增 6 个离线回归场景，旧代码 5 失败、1 通过，修复后下载相关 44 项通过。后续新增 23 项单元行为测试和 2 项真实工具集成，当前单元门禁 890/890；WSL 本地工具门禁 5/5，包含真实 aria2c 恢复与 Bento4 CENC 视频/音频解密后的 SHA256 验证。Windows aria2c 控制文件改名失败的历史结果保留；生产判定没有放宽。
+
+已完成本次继续推进的三项：代表性 Fetcher/gRPC/DRM 可重复验证、多 RID locked restore 与具体 AOT 警告审计、复杂 HTTP/下载/Parser 行为测试与实例请求/解密边界。Windows 六 RID 资产解析通过，锁文件未改写；CI 新增三宿主还原矩阵并要求真实工具可用。CI/Docker SDK 补丁固定为匹配现有锁文件的 10.0.302，`global.json` 的 10.0.300/latestPatch、NuGet 包版本和系统配置不变。
+
+后续维护重点：远端三宿主 CI 与其他 RID 的原生发布、Bilibili 真实网络/许可证兼容性、Windows aria2c 工具问题，以及更多静态辅助设施的渐进拆分。Ubuntu 18.04 构建镜像与 Actions SHA 固定策略继续保留原兼容性决策跟踪。
+
 ---
 
 ## 1. 总体结论
@@ -65,13 +82,14 @@
   - 新增根目录 `Directory.Packages.props` 集中管理现有 NuGet 版本，并提交三项目的 `packages.lock.json`；应用与 Core 锁文件覆盖 win/linux/osx 的 x64 与 arm64 RID。
   - PR、release、latest workflow 中的 `setup-dotnet` 开启 NuGet 缓存；Docker 构建上下文复制中央包版本文件。
   - AOT 警告审计发现 `TypeRegistrar.Register` 与 `ITypeRegistrar` 未标注的动态注册契约，将 IL2067 局部抑制在该方法；Spectre CLI 的 IL3050 仅在 `Program.Main` 局部抑制，并说明静态根保留的命令类型。两项从全局 `NoWarn` 移除。
-- **仍待处理**：`NoWarn` 仍包含 Spectre.Console.Cli 产生的 IL3000/IL3001/IL3002/IL2104；清空屏蔽后观察到 IL2104、IL3000、IL3053 均来自该依赖。CI 暂未强制 NuGet locked mode。当前 AOT 项目按宿主机推导 RID，NuGet locked mode 会把锁文件与单个宿主 RID 绑定，需先调整 restore/publish 流程再启用。
+- **已消纳（2026-10-04）**：全局 `NoWarn` 移除，`TrimmerSingleWarn/IlcSingleWarn=false` 展开具体警告；Windows 发布的 24 条 Spectre.Console.Cli 诊断对应 22 项唯一基线，`check-aot-warnings.ps1` 拒绝新增警告，反向检查已验证。两处局部抑制继续由静态命令/设置根支撑。PR/release/latest/Docker 完整六 RID locked restore 后无还原发布，解决 `restore -r` 缩图引起的 NU1004；CI/Docker SDK 补丁对齐 10.0.302 和现有 ILCompiler/ILLink 10.0.10。六 RID 资产解析及锁文件不改写验证通过。
+- **仍待处理**：Spectre.Console.Cli 已知的反射路径风险需持续保留类型根、原生 CLI 冒烟，并在升级/替换该依赖时重新审计；新三宿主 CI 矩阵尚未远端运行。
 - **位置**：
-  - `BBDown/BBDown.csproj` 中的剩余 `NoWarn` 依赖诊断抑制
+  - `scripts/aot-warnings-baseline.txt`、`check-aot-warnings.ps1`、`check-locked-restore.ps1` 与 PR 发布审计
 - **建议**：
  1. SharpZipLib 已确认没有源码引用，外部依赖已移除。
- 2. 中央版本、RID lock files 与 Actions NuGet 缓存已落地；后续需用适配 AOT RID 的 restore/publish 流程启用 locked mode。
- 3. 升级或替换 Spectre.Console.Cli 后重新审计其 trimming/AOT 诊断，清理剩余全局抑制；CI 增加 `dotnet publish -p:TreatWarningsAsErrors=true` 定时审计。
+ 2. 中央版本、RID lock files、NuGet 缓存与完整图 locked restore 已落地；升级 SDK/依赖时有意重新生成锁文件并审查差异。
+ 3. 升级或替换 Spectre.Console.Cli 后重新审计具体诊断和原生运行行为，不能使用全局 `TreatWarningsAsErrors=false` 或扩充 `NoWarn` 掩盖新增问题。
 - **工作量**：1–2 天
 
 #### P0-4 `Sdk="Microsoft.NET.Sdk.Web"` 收敛

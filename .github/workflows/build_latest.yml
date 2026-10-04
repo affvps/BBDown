@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DOTNET_SDK_VERSION: "10.0.300"
+  DOTNET_SDK_VERSION: "10.0.302"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # 与 release.yml 保持同一固定版本/SHA256（见该文件注释）
   BENTO4_VERSION: "1-6-0-641"
@@ -38,18 +38,24 @@ jobs:
 
       - name: Set up dotnet
         uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
-      - name: Install ffmpeg (for LocalIntegration gate)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install local integration tools
+        run: bash scripts/install-local-test-tools.sh
+
+      - name: Restore locked dependencies
+        run: dotnet restore BBDown.sln --locked-mode
 
       - name: Test
-        # 单元测试 + 本地可重复的 ffmpeg 集成测试（无外部网络依赖，可硬性门禁）：
-        # 此前只跑单元测试，master 推送会绕过 FFmpeg 集成门禁。
-        run: dotnet test -c Release --filter "Category!=Integration&Category!=NetworkIntegration"
+        # 单元测试与本地工具集成；外部网络仍由独立 job 验证。
+        run: dotnet test -c Release --no-restore --filter "Category!=Integration&Category!=NetworkIntegration"
+        env:
+          BBDOWN_REQUIRE_LOCAL_TOOLS: "1"
 
   build-win-x64-arm64:
     runs-on: windows-latest
@@ -60,6 +66,8 @@ jobs:
 
       - name: Set up dotnet
         uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
           cache: true
@@ -70,8 +78,9 @@ jobs:
 
       - name: Publish [win]
         run: |
-          dotnet publish BBDown -r win-x64 -c Release -o artifact
-          dotnet publish BBDown -r win-arm64 -c Release -o artifact-arm64
+          dotnet restore BBDown/BBDown.csproj --locked-mode
+          dotnet publish BBDown -r win-x64 -c Release -o artifact --no-restore
+          dotnet publish BBDown -r win-arm64 -c Release -o artifact-arm64 --no-restore
 
       # 内置 mp4decrypt（Bento4，GPLv2）：与 release.yml 同一固定版本/SHA256；
       # win-arm64 也放 x64 版（Windows 11 on ARM 的 x64 模拟可运行）。
@@ -141,7 +150,8 @@ jobs:
               export PATH=\"/opt/dotnet:\$PATH\"
 
               # 编译 Native AOT 输出到挂载的 artifact 目录
-              dotnet publish BBDown -r linux-x64 -c Release -o /workspace/artifact
+              dotnet restore BBDown/BBDown.csproj --locked-mode
+              dotnet publish BBDown -r linux-x64 -c Release -o /workspace/artifact --no-restore
             "
 
       - name: Build arm64 in Ubuntu 18.04 container (for glibc 2.27 compatibility)
@@ -163,7 +173,8 @@ jobs:
               export PATH=\"/opt/dotnet:\$PATH\"
 
               # 编译 Native AOT 输出到挂载的 artifact 目录
-              dotnet publish BBDown -r linux-arm64 -c Release -p:StripSymbols=true -p:CppCompilerAndLinker=clang-9 -p:SysRoot=/crossrootfs/arm64 -o /workspace/artifact-arm64
+              dotnet restore BBDown/BBDown.csproj --locked-mode
+              dotnet publish BBDown -r linux-arm64 -c Release -p:StripSymbols=true -p:CppCompilerAndLinker=clang-9 -p:SysRoot=/crossrootfs/arm64 -o /workspace/artifact-arm64 --no-restore
             "
 
       # 内置 mp4decrypt（Bento4，GPLv2）：仅 x64 有官方 Linux 二进制；arm64 不内置。
@@ -212,6 +223,8 @@ jobs:
 
       - name: Set up dotnet
         uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
           cache: true
@@ -219,8 +232,9 @@ jobs:
 
       - name: Publish [osx]
         run: |
-          dotnet publish BBDown -r osx-x64 -c Release -o artifact
-          dotnet publish BBDown -r osx-arm64 -c Release -o artifact-arm64
+          dotnet restore BBDown/BBDown.csproj --locked-mode
+          dotnet publish BBDown -r osx-x64 -c Release -o artifact --no-restore
+          dotnet publish BBDown -r osx-arm64 -c Release -o artifact-arm64 --no-restore
 
       # 内置 mp4decrypt（Bento4，GPLv2）：macOS 官方包为 universal 二进制，x64/arm64 通用。
       - name: Bundle mp4decrypt (Bento4, universal)
