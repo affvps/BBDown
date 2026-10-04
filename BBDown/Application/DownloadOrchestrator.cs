@@ -57,6 +57,8 @@ internal sealed record PageDownloadRequest(
 /// </summary>
 internal sealed class DownloadOrchestrator
 {
+    private const int MaxReportedPages = 20;
+
     private readonly Func<MyOption, VInfo, string, List<string>?> _selectPages;
     private readonly Func<string, string, int, bool, string> _resolveSavePathFormat;
     private readonly Func<string, CancellationToken, Task<bool>> _checkArchived;
@@ -93,9 +95,8 @@ internal sealed class DownloadOrchestrator
         bool bangumi = job.VideoInfo.IsBangumi;
         List<string>? selectedPages = _selectPages(job.Options, job.VideoInfo, job.Input);
 
-        // RF-81：selectedPages 最多可达 MaxExpandedPages（100k）项，直接 Join 会产生近 MB 级日志行
-        //（serve 下同时写控制台与无轮转的 bbdown-api.log）。只记前 20 项 + 计数。
-        _log($"共计 {pagesInfo.Count} 个分P, 已选择：" + (selectedPages == null ? "ALL" : $"{selectedPages.Count} 项 [{string.Join(",", selectedPages.Take(20))}{(selectedPages.Count > 20 ? ",…" : "")}]"));
+        // RF-81：选择列表最多有 100k 项，日志和错误消息共用有界摘要。
+        _log($"共计 {pagesInfo.Count} 个分P, 已选择：{FormatSelectedPages(selectedPages)}");
         int pagesCount = pagesInfo.Count;
 
         // 分P选择最多可展开到 100k 项。HashSet 保持 List.Contains 的 ordinal 字符串语义，
@@ -109,7 +110,7 @@ internal sealed class DownloadOrchestrator
         if (pagesInfo.Count == 0)
         {
             throw new InvalidOperationException(
-                $"所选分P不存在: {(selectedPages is null ? "ALL" : string.Join(",", selectedPages))}，视频共有 {pagesCount} 个分P");
+                $"所选分P不存在: {FormatSelectedPages(selectedPages)}，视频共有 {pagesCount} 个分P");
         }
 
         // 保存路径模板按实际下载的分P数决策；番剧未完结时固定按多P处理。
@@ -172,9 +173,15 @@ internal sealed class DownloadOrchestrator
         if (failedPages.Count > 0)
         {
             throw new InvalidOperationException(
-                $"共 {failedPages.Count} 个分P下载失败：P{string.Join(", P", failedPages)}");
+                $"共 {failedPages.Count} 个分P下载失败：P{string.Join(", P", failedPages.Take(MaxReportedPages))}{(failedPages.Count > MaxReportedPages ? ", …" : "")}");
         }
 
         _log("任务完成");
+    }
+
+    private static string FormatSelectedPages(List<string>? selectedPages)
+    {
+        if (selectedPages is null) return "ALL";
+        return $"{selectedPages.Count} 项 [{string.Join(",", selectedPages.Take(MaxReportedPages))}{(selectedPages.Count > MaxReportedPages ? ",…" : "")}]";
     }
 }

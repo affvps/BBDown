@@ -199,6 +199,8 @@ BBDown -p 1-3,7,9-11 "https://www.bilibili.com/video/BV1Y7411d7Ys"
 BBDown -p ALL "https://www.bilibili.com/bangumi/play/ss33073"
 ```
 
+分 P 序号按整数匹配；例如 `-p 01` 会选择 P1。选择不到分 P 时，错误消息会显示选择项总数和前 20 项。
+
 下载 UP 主的全部投稿（需登录）：
 ```bash
 # 先登录，该接口不接受未登录请求

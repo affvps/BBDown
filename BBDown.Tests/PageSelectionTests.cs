@@ -10,6 +10,7 @@ public class PageSelectionTests
     [Theory]
     [InlineData("1", new[] { "1" })]
     [InlineData("1,2,10", new[] { "1", "2", "10" })]
+    [InlineData("01,002", new[] { "1", "2" })]
     [InlineData("1-3", new[] { "1", "2", "3" })]
     [InlineData("5-5", new[] { "5" })]
     public void ParsesPlainListsAndRanges(string input, string[] expected)
@@ -42,6 +43,12 @@ public class PageSelectionTests
     {
         var ex = Assert.Throws<ArgumentException>(() => Program.ParsePageSelection("1-99999999"));
         Assert.Contains("展开后超过", ex.Message);
+    }
+
+    [Fact]
+    public void RangeEndingAtIntMaxValue_DoesNotOverflow()
+    {
+        Assert.Equal(new[] { int.MaxValue.ToString() }, Program.ParsePageSelection("2147483647-2147483647"));
     }
 
     [Fact]
