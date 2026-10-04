@@ -111,7 +111,8 @@ internal partial class Program
                 // 上层 Where 过滤时永远匹配不上真实分P，会产生静默少下的非预期行为。这里显式抛错。
                 if (!int.TryParse(segment, out var singlePage) || singlePage <= 0)
                     throw new ArgumentException($"无法识别的分P \"{segment}\"");
-                pages.Add(segment);
+                // 分P索引是整数；保留原文中的前导零会让 -p 01 无法匹配 P1。
+                pages.Add(singlePage.ToString());
                 continue;
             }
 
@@ -132,7 +133,8 @@ internal partial class Program
 
             // RF-81：总量累计上限——单段各自 ≤ MaxExpandedPages，但 1-100000,1-100000,… 类输入
             // 可让总量远超上限（内存/CPU 放大 + 多 MB 日志行）。累计越界即拒。
-            for (var i = start; i <= end; i++)
+            // 用 long 计数，避免 end=int.MaxValue 时最后一次 i++ 回绕到负数。
+            for (long i = start; i <= end; i++)
             {
                 if (pages.Count >= MaxExpandedPages)
                     throw new ArgumentException($"分P选择表达式展开后总量超过 {MaxExpandedPages} 项");

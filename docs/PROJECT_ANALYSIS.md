@@ -1,10 +1,10 @@
 # BBDown 项目分析报告（PROJECT_ANALYSIS）
 
-> 更新日期：2026-10-02
-> 当前源码基线：`v1.7.2`（`1a720db`，`origin/master`）
-> 当前验证：Release 构建通过；单测 853/853 通过；`dotnet format --verify-no-changes` 通过
+> 更新日期：2026-10-04
+> 当前源码基线：`v1.7.3`（`4aa9b96`，`origin/master`）+ `fix/page-selection-boundaries` 未发布改动
+> 当前验证：Release 构建 0 警告；PR 过滤器单测 861/861；本地 ffmpeg 集成 3/3；`dotnet format --verify-no-changes` 通过；win-x64 Native AOT 发布成功（Spectre.Console.Cli 有 1 条已知 IL3053 警告）
 > 分析范围：当前目录规模、关键架构/安全实现与 CI 配置检查；结合历史审查记录，不等同于逐行安全审计。
-> 未在本次本机验证：真实网络集成、跨平台 Native AOT 发布产物。历史发现见 [REVIEW_FINDINGS.md](REVIEW_FINDINGS.md) RF-1~RF-98；剩余跟踪项见 [REVIEW_PLAN.md](REVIEW_PLAN.md)。
+> 未在本次本机验证：真实网络集成、win-x64 以外平台的 Native AOT 发布产物。历史发现见 [REVIEW_FINDINGS.md](REVIEW_FINDINGS.md) RF-1~RF-98；剩余跟踪项见 [REVIEW_PLAN.md](REVIEW_PLAN.md)。
 
 ---
 
@@ -14,11 +14,11 @@ BBDown 是一个命令行 B 站下载器（C# / .NET 10 / Native AOT），由一
 
 | 项目 | C# 文件数 | C# 代码行 | 职责 |
 |------|-----------|-----------|------|
-| `BBDown/` | 59 | 11,787 | CLI 应用层：命令（Spectre.Console.Cli）、下载管线、混流、直播、DRM、serve |
-| `BBDown.Core/` | 38 | 7,242 | 引擎库：链接/元数据 fetcher、Parser、HTTP 层、弹幕/字幕、DRM 密码学、日志 |
-| `BBDown.Tests/` | 72 | 13,139 | xUnit 套件（单测 + 本地集成 + 真网络集成） |
+| `BBDown/` | 59 | 11,796 | CLI 应用层：命令（Spectre.Console.Cli）、下载管线、混流、直播、DRM、serve |
+| `BBDown.Core/` | 38 | 7,302 | 引擎库：链接/元数据 fetcher、Parser、HTTP 层、弹幕/字幕、DRM 密码学、日志 |
+| `BBDown.Tests/` | 73 | 13,307 | xUnit 套件（单测 + 本地集成 + 真网络集成） |
 
-规模特征：以上统计仅包含各项目中非 `bin/obj` 的 C# 源文件，共 169 个文件、32,168 行。测试代码约为生产代码（`BBDown/` + `BBDown.Core/`）的 69%，测试投入显著。下载与 serve 已拆分出多个职责文件；当前较大的生产文件包括 `BBDownDownloadUtil.cs`（1,327 行）、`Parser.cs`（923 行）和 `HTTPUtil.cs`（913 行），仍有继续控制单文件复杂度的空间。
+规模特征：以上统计仅包含各项目中非 `bin/obj` 的 C# 源文件，共 170 个文件、32,405 行。测试代码约为生产代码（`BBDown/` + `BBDown.Core/`）的 70%，测试投入显著。下载与 serve 已拆分出多个职责文件；当前较大的生产文件包括 `BBDownDownloadUtil.cs`（1,327 行）、`Parser.cs`（983 行）和 `HTTPUtil.cs`（913 行），仍有继续控制单文件复杂度的空间。
 
 ---
 
@@ -62,7 +62,7 @@ BBDown 是一个命令行 B 站下载器（C# / .NET 10 / Native AOT），由一
 
 ### 3.1 正面
 
-- **当前验证通过**：本次在基线 `1a720db` 上使用 .NET SDK 10.0.302 执行 Release 构建、PR 门禁单测过滤器（853 通过、0 失败、0 跳过）和 `dotnet format --verify-no-changes`，均通过。
+- **当前验证通过**：本次使用 .NET SDK 10.0.302 在 `v1.7.3` 加本分支改动上执行 Release 构建（0 警告）、PR 门禁单测过滤器（861 通过、0 失败、0 跳过）、本地 ffmpeg 集成（3 通过）和格式检查，均通过；win-x64 Native AOT 发布成功，另有来自 Spectre.Console.Cli 的 1 条 IL3053 警告。
 - **CI 覆盖面较全面**：PR workflow 有格式和 NuGet 漏洞门禁、安装并确认 ffmpeg 后的本地集成测试、Linux x64 AOT 冒烟及 Docker/serve 冒烟；网络集成测试会报告结果但设置为非阻断。
 - **测试纪律强**：`failSkips: true`、动态端口、隔离共享状态及针对 CLI 入口、AOT Settings 类型、异常策略和 serve 安全边界的回归测试，降低了静默旁路和假绿风险。
 - **安全纵深较完整**：HTTP 客户端池隔离、携带凭据的请求禁止未经校验的自动重定向、响应体和请求输入设上限；serve 的 token、失败限速、回环 Host、写端点 Origin/Content-Type 检查形成多层防护。
@@ -76,7 +76,7 @@ BBDown 是一个命令行 B 站下载器（C# / .NET 10 / Native AOT），由一
 | 类别 | 当前状态 | 影响 |
 |------|----------|------|
 | **Native AOT 诊断透明度** | 主项目仍抑制部分 trimming/AOT warnings；NuGet lock 文件已加入，但 CI 尚未启用 locked mode（详见 `OPTIMIZATION_PLAN.md` P0-3） | 依赖升级或新反射路径可能产生被屏蔽的警告；需持续审计 |
-| **外部 API / DRM 端到端验证** | 网络集成 job 为 `continue-on-error`；本次本机未跑网络集成或跨平台 AOT 发布。`v1.7.2` 修复了 `v1.7.1` 中 mp4decrypt 参数错误 | 本地单测不能完全覆盖 B 站接口变化、外部工具差异和真实媒体内容 |
+| **外部 API / DRM 端到端验证** | 网络集成 job 为 `continue-on-error`；本次本机未跑真实网络集成或其他 RID 的 AOT 发布。`v1.7.2` 修复了 mp4decrypt 参数错误，`v1.7.3` 修复了 playurl 风控响应处理 | 本地单测不能完全覆盖 B 站接口变化、外部工具差异和真实媒体内容 |
 | **静态耦合** | 下载调度和单页执行已有注入边界，但部分辅助设施仍由 `Program` 静态入口组装；API server 多个 partial 文件仍共享实例状态 | 增加维护复杂度，部分整合测试仍难隔离生产边界 |
 | **剩余排期项** | `REVIEW_PLAN.md` 记录 90 项中 87 项完成、3 项剩余：I10 已决定不做，J1/J2 为 Ubuntu 18.04 apt 可用性及 GitHub Actions SHA 固定策略跟踪 | 属于已知跟踪项，不是当前未处置的 RF 安全/功能缺陷 |
 | **文档基线管理** | 审查和优化计划包含明确的历史基线与行号锚点 | 阅读时应以文档日期及当前源码为准，不能把历史快照当作当前实现状态 |
@@ -88,6 +88,12 @@ BBDown 是一个命令行 B 站下载器（C# / .NET 10 / Native AOT），由一
 - 多轮审查暴露的共同模式是边界覆盖和测试对生产入口的约束需要持续核对；后续批次已加强异常策略、路径/日志净化、CI 假绿防护和 CLI 入口测试。
 - 结构性重构已显著拆分下载与 API server 职责，但不代表静态状态和跨模块依赖已完全消除。
 - 最新评分基于当前快照和有代表性的代码/CI 路径检查；不是正式渗透测试，也不是对每个历史风险点重新逐行复核。
+
+### 3.4 本轮改善
+
+- 修复 `-p 01` 被接受为整数却无法匹配 P1 的问题；最大 32 位整数作为范围终点时不再回绕。
+- 分 P 选择失败与大量分 P 下载失败的异常消息限制为前 20 项加总数，避免 10 万项选择生成近 MB 级日志行。新测试从 `DownloadOrchestrator.RunAsync` 入口验证错误消息长度与总数，不仅检查格式化函数。
+- 本轮改动限于分 P 选择和诊断；真实网络接口、DRM 许可证获取及其他平台发布仍需独立验证。
 
 ---
 
@@ -113,7 +119,7 @@ BBDown 是一个命令行 B 站下载器（C# / .NET 10 / Native AOT），由一
 
 ## 6. 结论
 
-基于 `v1.7.2` 当前源码、CI 配置与本次本地验证，工程健康度综合评分为 **8.2/10**。项目的测试纪律、安全边界和持续重构表现较强；主要扣分来自外部 API/DRM 真实场景覆盖、AOT 警告抑制及残留静态耦合。
+基于 `v1.7.3` 加本分支改动、CI 配置与本次本地验证，工程健康度综合评分维持 **8.2/10**。项目的测试纪律、安全边界和持续重构表现较强；主要扣分来自外部 API/DRM 真实场景覆盖、AOT 警告抑制及残留静态耦合。
 
 | 维度 | 评分 |
 |------|------|

@@ -2,6 +2,13 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- 分 P 选择中的前导零按整数规范化（如 `-p 01` 匹配 P1），单项范围到 `int.MaxValue` 时不再发生计数回绕。
+- 选择不到分 P 或大量分 P 下载失败时，错误消息只展示前 20 项和总数，避免生成过大的异常与日志行。
+
 ## [1.7.3] - 2026-10-04
 
 ### 修复
