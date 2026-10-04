@@ -29,6 +29,8 @@ jobs:
 
       - name: Set up dotnet
         uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
           cache: true
@@ -54,6 +56,8 @@ jobs:
 
       - name: Set up dotnet
         uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
           cache: true
@@ -230,6 +234,8 @@ jobs:
 
       - name: Set up dotnet
         uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
           cache: true
