@@ -1,7 +1,7 @@
-﻿using BBDown.Core.Entity;
+using BBDown.Core.Entity;
+using BBDown.Core.Util;
 using System.Text.Json;
 using static BBDown.Core.Entity.Entity;
-using static BBDown.Core.Util.HTTPUtil;
 
 namespace BBDown.Core.Fetcher;
 
@@ -12,49 +12,58 @@ namespace BBDown.Core.Fetcher;
 /// </summary>
 public class MediaListFetcher : IFetcher
 {
-    public async Task<VInfo> FetchAsync(string id)
+    public async Task<VInfo> FetchAsync(string id, CancellationToken cancellationToken = default)
     {
         id = id[10..];
         var api = $"https://api.bilibili.com/x/v1/medialist/info?type=8&biz_id={id}&tid=0";
-        var json = await GetWebSourceAsync(api);
+        var json = await HTTPUtil.GetWebSourceAsync(api, token: cancellationToken);
         using var infoJson = JsonDocument.Parse(json);
         var root = infoJson.RootElement;
-        var data = root.GetProperty("data");
-        if (data.ValueKind != JsonValueKind.Object)
+        // data 缺失时保留“合集被误识别为系列”的回退；data 存在时再检查 code，
+        // 避免带错误 code 的响应被当作有效合集解析。
+        if (!(root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object))
         {
             // 部分情况下（合集被删除、设为私密或无权访问）data 会是 null
             // 也有可能是“系列”却被误识别为合集，这里优先尝试按系列解析
             try
             {
-                return await new SeriesListFetcher().FetchAsync($"seriesBizId:{id}");
+                return await new SeriesListFetcher().FetchAsync($"seriesBizId:{id}", cancellationToken);
             }
-            catch
+            // KeyNotFoundException（RF-52）：SeriesListFetcher 内部节点缺失同属"误识别为系列"
+            // 的回退场景，与 HttpRequestException/InvalidOperationException 一并降级为可读诊断。
+            catch (Exception fallbackEx) when (fallbackEx is HttpRequestException or InvalidOperationException or KeyNotFoundException)
             {
+                Logger.LogDebug("MediaList fallback to SeriesList failed: {0}", fallbackEx.Message);
                 var code = root.TryGetProperty("code", out var codeElem) && codeElem.ValueKind == JsonValueKind.Number
                     ? codeElem.GetInt32()
                     : 0;
                 var message = root.TryGetProperty("message", out var msgElem) && msgElem.ValueKind == JsonValueKind.String
                     ? msgElem.GetString()
                     : "未知错误";
-                throw new Exception($"获取合集信息失败(code={code}): {message}");
+                throw new InvalidOperationException($"获取合集信息失败(code={code}): {JsonElementExtensions.SanitizeServerText(message)}");
             }
         }
-        var listTitle = data.GetProperty("title").GetString()!;
-        var intro = data.GetProperty("intro").GetString()!;
-        long pubTime = data.GetProperty("ctime").GetInt64()!;
+        FetcherJson.ThrowIfApiError(root, "获取合集信息失败");
+        var listTitle = data.GetValueAsStringSafe("title");
+        var intro = data.GetValueAsStringSafe("intro");
+        long pubTime = data.GetInt64Safe("ctime");
 
         List<Page> pagesInfo = new();
+        // 翻页去重集合：Contains 是 O(n)，翻页几十页时 O(n²) 拖慢解析；Page 已实现
+        // Equals/GetHashCode（按 aid+cid+epid），HashSet 去重与 Contains 语义一致。
+        HashSet<Page> seenPages = new();
         bool hasMore = true;
         var oid = "";
         int index = 1;
         while (hasMore)
         {
             var listApi = $"https://api.bilibili.com/x/v2/medialist/resource/list?type=8&oid={oid}&otype=2&biz_id={id}&with_current=true&mobi_app=web&ps=20&direction=false&sort_field=1&tid=0&desc=false";
-            json = await GetWebSourceAsync(listApi);
+            json = await HTTPUtil.GetWebSourceAsync(listApi, token: cancellationToken);
             using var listJson = JsonDocument.Parse(json);
             var listRoot = listJson.RootElement;
-            data = listRoot.GetProperty("data");
-            if (data.ValueKind != JsonValueKind.Object)
+            FetcherJson.ThrowIfApiError(listRoot, "获取合集视频列表失败");
+            // RF-52：先查 code 再取 data（与首屏一致，错误响应不再抛裸 KeyNotFoundException）。
+            if (!(listRoot.TryGetProperty("data", out var listData) && listData.ValueKind == JsonValueKind.Object))
             {
                 var code = listRoot.TryGetProperty("code", out var codeElem) && codeElem.ValueKind == JsonValueKind.Number
                     ? codeElem.GetInt32()
@@ -62,37 +71,54 @@ public class MediaListFetcher : IFetcher
                 var message = listRoot.TryGetProperty("message", out var msgElem) && msgElem.ValueKind == JsonValueKind.String
                     ? msgElem.GetString()
                     : "未知错误";
-                throw new Exception($"获取合集视频列表失败(code={code}): {message}");
+                throw new InvalidOperationException($"获取合集视频列表失败(code={code}): {JsonElementExtensions.SanitizeServerText(message)}");
             }
-            hasMore = data.GetProperty("has_more").GetBoolean();
-            foreach (var m in data.GetProperty("media_list").EnumerateArray())
+            data = listData;
+            hasMore = data.GetBooleanSafe("has_more");
+            // 游标必须记录本页最后一条的 id，无论它是否被 attr 过滤跳过。
+            // 否则整页都是失效条目时 oid 不会推进，下一轮请求同一页 → 死循环。
+            var previousOid = oid;
+            foreach (var m in data.EnumerateArraySafe("media_list"))
             {
+                oid = m.GetValueAsStringSafe("id");
+
                 // 只处理未失效的视频条目（与收藏夹解析逻辑保持一致）
-                if (m.TryGetProperty("attr", out var attrElem) && attrElem.GetInt32() != 0)
+                if (m.GetInt32Safe("attr") != 0)
                     continue;
 
-                var pageCount = m.GetProperty("page").GetInt32();
-                var desc = m.GetProperty("intro").GetString()!;
-                var ownerName = m.GetProperty("upper").GetProperty("name").ToString();
-                var ownerMid = m.GetProperty("upper").GetProperty("mid").ToString();
-                foreach (var page in m.GetProperty("pages").EnumerateArray())
+                var pageCount = m.GetInt32Safe("page");
+                var desc = m.GetValueAsStringSafe("intro");
+                var upperElem = m.TryGetPropertySafe("upper");
+                var ownerName = upperElem?.GetValueAsStringSafe("name") ?? "";
+                var ownerMid = upperElem?.GetValueAsStringSafe("mid") ?? "";
+                foreach (var page in m.EnumerateArraySafe("pages"))
                 {
-                    Page p = new(index++,
-                        m.GetProperty("id").ToString(),
-                        page.GetProperty("id").ToString(),
-                        "", //epid
-                        pageCount == 1 ? m.GetProperty("title").ToString() : $"{m.GetProperty("title")}_P{page.GetProperty("page")}_{page.GetProperty("title")}", //单P使用外层标题 多P则拼接内层子标题
-                        page.GetProperty("duration").GetInt32(),
-                        page.GetProperty("dimension").GetProperty("width").ToString() + "x" + page.GetProperty("dimension").GetProperty("height").ToString(),
-                        m.GetProperty("pubtime").GetInt64(),
-                        m.GetProperty("cover").ToString(),
-                        desc,
-                        ownerName,
-                        ownerMid);
-                    if (!pagesInfo.Contains(p)) pagesInfo.Add(p);
+                    Page p = new()
+                    {
+                        index = index++,
+                        aid = m.GetValueAsStringSafe("id"),
+                        cid = page.GetValueAsStringSafe("id"),
+                        epid = "",
+                        title = pageCount == 1 ? m.GetValueAsStringSafe("title") : $"{m.GetValueAsStringSafe("title")}_P{page.GetValueAsStringSafe("page")}_{page.GetValueAsStringSafe("title")}", //epid
+                        dur = page.GetInt32Safe("duration"), //单P使用外层标题 多P则拼接内层子标题
+                        res = page.TryGetProperty("dimension", out var dim) && dim.TryGetProperty("width", out var w) && dim.TryGetProperty("height", out var h) ? $"{w}x{h}" : "",
+                        pubTime = m.GetInt64Safe("pubtime"),
+                        cover = m.GetValueAsStringSafe("cover"),
+                        desc = desc,
+                        ownerName = ownerName,
+                        ownerMid = ownerMid,
+                    };
+                    if (seenPages.Add(p)) pagesInfo.Add(p);
                     else index--;
                 }
-                oid = m.GetProperty("id").ToString();
+            }
+
+            // 兜底：接口报 has_more 却没让游标前进（空页 / with_current 只回显游标本身），
+            // 再请求也是同一页，直接停止，避免请求洪泛
+            if (hasMore && oid == previousOid)
+            {
+                Logger.LogDebug("合集翻页游标未推进（oid={0}），停止翻页", oid);
+                break;
             }
         }
 

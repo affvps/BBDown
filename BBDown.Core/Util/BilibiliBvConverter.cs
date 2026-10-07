@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 
 namespace BBDown.Core.Util;
 
@@ -30,11 +30,11 @@ public static class BilibiliBvConverter
     {
         if (avid < MIN_AID)
         {
-            throw new Exception($"Av {avid} is smaller than {MIN_AID}");
+            throw new ArgumentOutOfRangeException(nameof(avid), $"Av {avid} is smaller than {MIN_AID}");
         }
         if (avid >= MAX_AID)
         {
-            throw new Exception($"Av {avid} is bigger than {MAX_AID}");
+            throw new ArgumentOutOfRangeException(nameof(avid), $"Av {avid} is bigger than {MAX_AID}");
         }
 
         var bvid = new byte[BV_LEN];
@@ -54,9 +54,14 @@ public static class BilibiliBvConverter
 
     public static long Decode(string bvid_str)
     {
+        if (bvid_str.StartsWith("BV1", StringComparison.OrdinalIgnoreCase) && bvid_str.Length == 12)
+        {
+            bvid_str = bvid_str[3..];
+        }
+
         if (bvid_str.Length != BV_LEN)
         {
-            throw new Exception($"Bv BV1{bvid_str} must to be 12 char");
+            throw new ArgumentException($"BV 长度必须为 {BV_LEN} 字符后缀或 12 字符完整 BV1 字符串，当前输入: '{bvid_str}'", nameof(bvid_str));
         }
 
         byte[] bvid = Encoding.ASCII.GetBytes(bvid_str);
@@ -66,7 +71,9 @@ public static class BilibiliBvConverter
         long avid = 0;
         foreach (byte b in bvid)
         {
-            avid = avid * BASE + REV_ALPHABETA[b];
+            if (!REV_ALPHABETA.TryGetValue(b, out var val))
+                throw new ArgumentException($"BV 包含无效字符: '{(char)b}'", nameof(bvid_str));
+            avid = avid * BASE + val;
         }
 
         return (avid & MASK_CODE) ^ XOR_CODE;

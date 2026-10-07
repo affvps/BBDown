@@ -1,4 +1,3 @@
-﻿using static BBDown.Core.Logger;
 using System.Text;
 using System.Xml;
 
@@ -35,9 +34,9 @@ public static class DanmakuUtil
             {
                 xmlFile.Load(reader);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is XmlException or IOException)
             {
-                LogDebug("解析字幕xml时出现异常: {0}", ex.ToString());
+                Logger.LogDebug("解析字幕xml时出现异常: {0}", ex.ToString());
                 return null;
             }
         }
@@ -69,6 +68,27 @@ public static class DanmakuUtil
     }
 
     /// <summary>
+    /// 按关键词/发送者 midHash 过滤弹幕：任一过滤条件命中即丢弃。
+    /// 关键词黑名单用于去掉广告/无关弹幕；B站弹幕 XML 不含用户 UID，
+    /// 只有发送者 midHash（p 属性 index 6），按用户过滤即匹配该哈希。
+    /// </summary>
+    public static DanmakuItem[] Filter(DanmakuItem[] danmakus, string? keywords, string? userIds)
+    {
+        if (danmakus.Length == 0) return danmakus;
+        if (string.IsNullOrWhiteSpace(keywords) && string.IsNullOrWhiteSpace(userIds)) return danmakus;
+
+        var kw = (keywords ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var uids = (userIds ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return danmakus.Where(d =>
+        {
+            if (uids.Length > 0 && d.MidHash.Length > 0 && uids.Contains(d.MidHash)) return false;
+            if (kw.Length > 0 && kw.Any(k => d.Content.Contains(k, StringComparison.Ordinal))) return false;
+            return true;
+        }).ToArray();
+    }
+
+    /// <summary>
     /// 保存为ASS字幕文件
     /// </summary>
     /// <param name="danmakus">弹幕</param>
@@ -79,7 +99,7 @@ public static class DanmakuUtil
         var sb = new StringBuilder();
         // ASS字幕文件头
         sb.AppendLine("[Script Info]");
-        sb.AppendLine("Script Updated By: BBDown(https://github.com/nilaoda/BBDown)");
+        sb.AppendLine("Script Updated By: BBDown(https://github.com/AliverAnme/BBDown)");
         sb.AppendLine("ScriptType: v4.00+");
         sb.AppendLine($"PlayResX: {MONITOR_WIDTH}");
         sb.AppendLine($"PlayResY: {MONITOR_HEIGHT}");
@@ -93,11 +113,12 @@ public static class DanmakuUtil
         sb.AppendLine($"Style: BBDOWN_Style, 黑体, {FONT_SIZE}, &H00FFFFFF, &H00FFFFFF, &H00000000, &H00000000, 0, 0, 0, 0, 100, 100, 0.00, 0.00, 1, 2, 0, 7, 0, 0, 0, 0");
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
-            
+
         PositionController controller = new();   // 弹幕位置控制器
         Array.Sort(danmakus, comparer);
         foreach (DanmakuItem danmaku in danmakus)
         {
+            if (string.IsNullOrEmpty(danmaku.StartTime) || string.IsNullOrEmpty(danmaku.EndTime)) continue;
             int height = controller.UpdatePosition(danmaku.DanmakuMode, danmaku.Second, danmaku.Content.Length);
             if (height == -1) continue;
             string effect = "";
@@ -107,14 +128,50 @@ public static class DanmakuUtil
                 2 => $"\\an8\\pos({MONITOR_WIDTH / 2}, {height})",
                 _ => $"\\move({MONITOR_WIDTH}, {height}, {-danmaku.Content.Length * FONT_SIZE}, {height})",
             };
-            if (danmaku.Color != "FFFFFF")
+            if (danmaku.Color.Length == 6 && danmaku.Color != "FFFFFF")
             {
-                effect += $"\\c&{danmaku.Color}&";
+                // ASS 颜色格式为 &HBBGGRR（BGR），而 B 站弹幕 color 是 #RRGGBB（RGB）。
+                // 直接拼接会让红蓝互换（红弹幕渲染成蓝）；反转字节序后才能还原正确颜色。
+                // &H 前缀是 ASS 颜色规范的必需部分：缺了它 FF0000 会被当作十进制而非十六进制。
+                string bgr = danmaku.Color[4..] + danmaku.Color[2..4] + danmaku.Color[..2];
+                effect += $"\\c&H{bgr}&";
             }
-            sb.AppendLine($"Dialogue: 2,{danmaku.StartTime},{danmaku.EndTime},BBDOWN_Style,,0000,0000,0000,,{{{effect}}}{danmaku.Content}");
+            sb.AppendLine($"Dialogue: 2,{danmaku.StartTime},{danmaku.EndTime},BBDOWN_Style,,0000,0000,0000,,{{{effect}}}{EscapeAssText(danmaku.Content)}");
         }
 
         await File.WriteAllTextAsync(outputPath, sb.ToString(), Encoding.UTF8);
+    }
+
+    /// <summary>
+    /// 中和弹幕正文里的 ASS 控制字符。
+    /// 弹幕内容由其他用户提供：花括号在 ASS 中界定样式覆盖标签块，
+    /// 一条 <c>{\c&amp;HFF0000&amp;}</c> 就能改掉后续渲染；换行则会让正文
+    /// 后半段脱离 Dialogue 行，变成解析器无法识别的孤立行。
+    /// 花括号替换为全角字符以保留可读性，换行折叠为 ASS 自身的 \N，
+    /// 反斜杠替换为全角反斜杠以防止恶意注入 \N 或排版标签。
+    /// </summary>
+    private static string EscapeAssText(string content)
+    {
+        if (string.IsNullOrEmpty(content)) return content;
+
+        var sb = new StringBuilder(content.Length);
+        for (var i = 0; i < content.Length; i++)
+        {
+            switch (content[i])
+            {
+                case '\\': sb.Append('＼'); break;
+                case '{': sb.Append('｛'); break;
+                case '}': sb.Append('｝'); break;
+                case '\r':
+                    // 吃掉 \r\n 中的 \n，避免产生两个 \N
+                    if (i + 1 < content.Length && content[i + 1] == '\n') i++;
+                    sb.Append("\\N");
+                    break;
+                case '\n': sb.Append("\\N"); break;
+                default: sb.Append(content[i]); break;
+            }
+        }
+        return sb.ToString();
     }
 
     protected class PositionController
@@ -178,26 +235,34 @@ public static class DanmakuUtil
             };
             try
             {
-                double second = double.Parse(attrs[0]);
+                // B站弹幕时间固定为点号小数（如 "12.345"）：在 de-DE 等小数点分隔符为
+                // 逗号的区域，CurrentCulture 会把分组符吞掉解析成 12345，时间轴整体错乱
+                double second = double.Parse(attrs[0], System.Globalization.CultureInfo.InvariantCulture);
                 Second = second;
                 StartTime = ComputeTime(second);
                 EndTime = ComputeTime(second + (DanmakuMode == 1 ? MOVE_SPEND_TIME : TOP_SPEND_TIME));
             }
-            catch (Exception e)
+            catch (Exception e) when (e is FormatException or OverflowException)
             {
-                Log(e.Message);
+                Logger.LogDebug("弹幕时间解析失败: {0}", e.Message);
             }
             FontSize = attrs[2];
             try
             {
-                int colorD = int.Parse(attrs[3]);
+                int colorD = int.Parse(attrs[3], System.Globalization.CultureInfo.InvariantCulture);
                 Color = string.Format("{0:X6}", colorD);
             }
-            catch (FormatException e)
+            // 与上方时间解析保持一致：超范围的颜色值同样只应降级为默认色，
+            // 而不是让整个弹幕文件的生成失败。用 LogDebug 避免大量异常弹幕刷屏。
+            catch (Exception e) when (e is FormatException or OverflowException)
             {
-                Log(e.Message);
+                Logger.LogDebug("弹幕颜色解析失败: {0}", e.Message);
             }
             Timestamp = attrs[4];
+            // B站弹幕 p 属性: 进度,模式,字号,颜色,ctime,弹幕池,用户midHash,rowID。
+            // index 6 才是发送者标识（哈希）；Timestamps 存的是 ctime（发送时间戳），
+            // 若用它做"按用户过滤"会永远匹配不上。
+            MidHash = attrs.Length > 6 ? attrs[6] : "";
             Content = content;
         }
         private static string ComputeTime(double second)
@@ -205,7 +270,7 @@ public static class DanmakuUtil
             int hour = (int)second / 3600;
             int minute = (int)(second - (hour * 3600)) / 60;
             second -= (hour * 3600) + (minute * 60);
-            return hour.ToString() + string.Format(":{0:D2}:", minute) + string.Format("{0:00.00}", second);
+            return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}:{1:D2}:{2:00.00}", hour, minute, second);
         }
         public string Content { get; set; } = "";
         // 弹幕内容
@@ -223,6 +288,8 @@ public static class DanmakuUtil
         // 颜色
         public string Timestamp { get; set; } = "";
         // 时间戳
+        public string MidHash { get; set; } = "";
+        // 发送者标识（弹幕 XML p 属性 index 6）
     }
 
     public class DanmakuComparer : IComparer<DanmakuItem>

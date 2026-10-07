@@ -1,0 +1,284 @@
+syntax = "proto2";
+
+package widevine_proto;
+option csharp_namespace = "BBDown.Core.DRM.Proto";
+
+// WidevineCencHeader is inside the PSSH box payload, used to extract key IDs
+message WidevineCencHeader {
+  enum Algorithm {
+    UNENCRYPTED = 0;
+    AESCTR = 1;
+  }
+  optional Algorithm algorithm = 1 [deprecated = true];
+  repeated bytes key_ids = 2;
+  optional string provider = 3 [deprecated = true];
+  optional bytes content_id = 4;
+  optional string policy = 6 [deprecated = true];
+  optional bytes grouped_license = 8 [deprecated = true];
+  optional uint32 protection_scheme = 9;
+  optional uint32 crypto_period_seconds = 10;
+}
+
+// --- License request enums ---
+
+enum LicenseType {
+  STREAMING = 1;
+  OFFLINE = 2;
+  AUTOMATIC = 3;
+}
+
+enum ProtocolVersion {
+  VERSION_2_0 = 20;
+  VERSION_2_1 = 21;
+  VERSION_2_2 = 22;
+}
+
+// --- Device identification (embedded in .wvd file) ---
+
+message ClientIdentification {
+  enum TokenType {
+    KEYBOX = 0;
+    DRM_DEVICE_CERTIFICATE = 1;
+  }
+  message NameValue {
+    optional string name = 1;
+    optional string value = 2;
+  }
+  message ClientCapabilities {
+    enum HdcpVersion {
+      HDCP_NONE = 0;
+      HDCP_V1 = 1;
+      HDCP_V2 = 2;
+      HDCP_V2_1 = 3;
+      HDCP_V2_2 = 4;
+      HDCP_V2_3 = 5;
+      HDCP_NO_DIGITAL_OUTPUT = 0xff;
+    }
+    enum CertificateKeyType {
+      RSA_2048 = 0;
+      RSA_3072 = 1;
+      ECC_SECP256R1 = 2;
+      ECC_SECP384R1 = 3;
+      ECC_SECP521R1 = 4;
+    }
+    enum AnalogOutputCapabilities {
+      ANALOG_OUTPUT_UNKNOWN = 0;
+      ANALOG_OUTPUT_NONE = 1;
+      ANALOG_OUTPUT_SUPPORTED = 2;
+    }
+    optional bool client_token = 1 [default = false];
+    optional bool session_token = 2 [default = false];
+    optional HdcpVersion max_hdcp_version = 4 [default = HDCP_NONE];
+    optional uint32 oem_crypto_api_version = 5;
+    optional bool anti_rollback_usage_table = 6 [default = false];
+    optional bool can_update_srm = 8 [default = false];
+    repeated CertificateKeyType supported_certificate_key_type = 9;
+    optional AnalogOutputCapabilities analog_output_capabilities = 10 [default = ANALOG_OUTPUT_UNKNOWN];
+    optional bool can_disable_analog_output = 11 [default = false];
+    optional uint32 resource_rating_tier = 12 [default = 0];
+  }
+  message ClientCredentials {
+    optional TokenType type = 1 [default = KEYBOX];
+    optional bytes token = 2;
+  }
+  optional TokenType type = 1 [default = KEYBOX];
+  optional bytes token = 2;
+  repeated NameValue client_info = 3;
+  optional bytes provider_client_token = 4;
+  optional uint32 license_counter = 5;
+  optional ClientCapabilities client_capabilities = 6;
+  optional bytes vmp_data = 7;
+  repeated ClientCredentials device_credentials = 8;
+}
+
+// --- License request ---
+
+message LicenseRequest {
+  message ContentIdentification {
+    message WidevinePsshData {
+      repeated bytes pssh_data = 1;
+      optional LicenseType license_type = 2;
+      optional bytes request_id = 3;
+    }
+    message WebmKeyId {
+      optional bytes header = 1;
+      optional LicenseType license_type = 2;
+      optional bytes request_id = 3;
+    }
+    message ExistingLicense {
+      optional LicenseIdentification license_id = 1;
+      optional int64 seconds_since_started = 2;
+      optional int64 seconds_since_last_played = 3;
+      optional bytes session_usage_table_entry = 4;
+    }
+    message InitData {
+      enum InitDataType {
+        CENC = 1;
+        WEBM = 2;
+      }
+      optional InitDataType init_data_type = 1 [default = CENC];
+      optional bytes init_data = 2;
+      optional LicenseType license_type = 3;
+      optional bytes request_id = 4;
+    }
+    oneof content_id_variant {
+      WidevinePsshData widevine_pssh_data = 1;
+      WebmKeyId webm_key_id = 2;
+      ExistingLicense existing_license = 3;
+      InitData init_data = 4;
+    }
+  }
+  enum RequestType {
+    NEW = 1;
+    RENEWAL = 2;
+    RELEASE = 3;
+  }
+  optional ClientIdentification client_id = 1;
+  optional ContentIdentification content_id = 2;
+  optional RequestType type = 3;
+  optional int64 request_time = 4;
+  optional bytes key_control_nonce_deprecated = 5;
+  optional ProtocolVersion protocol_version = 6 [default = VERSION_2_0];
+  optional uint32 key_control_nonce = 7;
+  optional EncryptedClientIdentification encrypted_client_id = 8;
+}
+
+// --- License response ---
+
+message License {
+  message KeyContainer {
+    enum KeyType {
+      SIGNING = 1;
+      CONTENT = 2;
+      KEY_CONTROL = 3;
+      OPERATOR_SESSION = 4;
+      ENTITLEMENT = 5;
+      OEM_CONTENT = 6;
+    }
+    enum SecurityLevel {
+      SW_SECURE_CRYPTO = 1;
+      SW_SECURE_DECODE = 2;
+      HW_SECURE_CRYPTO = 3;
+      HW_SECURE_DECODE = 4;
+      HW_SECURE_ALL = 5;
+    }
+    message KeyControl {
+      optional bytes key_control_block = 1;
+      optional bytes iv = 2;
+    }
+    message OutputProtection {
+      enum HDCP {
+        HDCP_NONE = 0;
+        HDCP_V1 = 1;
+        HDCP_V2 = 2;
+        HDCP_V2_1 = 3;
+        HDCP_V2_2 = 4;
+        HDCP_V2_3 = 5;
+        HDCP_NO_DIGITAL_OUTPUT = 0xff;
+      }
+      optional HDCP hdcp = 1 [default = HDCP_NONE];
+    }
+    optional bytes id = 1;
+    optional bytes iv = 2;
+    optional bytes key = 3;
+    optional KeyType type = 4;
+    optional SecurityLevel level = 5 [default = SW_SECURE_CRYPTO];
+    optional OutputProtection required_protection = 6;
+    optional KeyControl key_control = 8;
+  }
+  message Policy {
+    optional bool can_play = 1 [default = false];
+    optional bool can_persist = 2 [default = false];
+    optional bool can_renew = 3 [default = false];
+    optional int64 rental_duration_seconds = 4 [default = 0];
+    optional int64 playback_duration_seconds = 5 [default = 0];
+    optional int64 license_duration_seconds = 6 [default = 0];
+  }
+  optional LicenseIdentification id = 1;
+  optional Policy policy = 2;
+  repeated KeyContainer key = 3;
+  optional int64 license_start_time = 4;
+  optional bytes srm_requirement = 8;
+  optional bytes srm_update = 9;
+}
+
+message LicenseIdentification {
+  optional bytes request_id = 1;
+  optional bytes session_id = 2;
+  optional bytes purchase_id = 3;
+  optional LicenseType type = 4;
+  optional int32 version = 5;
+  optional bytes provider_session_token = 6;
+}
+
+// --- Signed envelope ---
+
+message SignedMessage {
+  enum MessageType {
+    LICENSE_REQUEST = 1;
+    LICENSE = 2;
+    ERROR_RESPONSE = 3;
+    SERVICE_CERTIFICATE_REQUEST = 4;
+    SERVICE_CERTIFICATE = 5;
+  }
+  enum SessionKeyType {
+    UNDEFINED = 0;
+    WRAPPED_AES_KEY = 1;
+    EPHERMERAL_ECC_PUBLIC_KEY = 2;
+  }
+  optional MessageType type = 1;
+  optional bytes msg = 2;
+  optional bytes signature = 3;
+  optional bytes session_key = 4;
+  optional bytes remote_attestation = 5;
+  optional SessionKeyType session_key_type = 8 [default = WRAPPED_AES_KEY];
+  optional bytes oemcrypto_core_message = 9;
+}
+
+// --- Service certificate ---
+
+enum HashAlgorithmProto {
+  HASH_ALGORITHM_UNSPECIFIED = 0;
+  HASH_ALGORITHM_SHA_1 = 1;
+  HASH_ALGORITHM_SHA_256 = 2;
+}
+
+message DrmCertificate {
+  enum Type {
+    ROOT = 0;
+    DEVICE_MODEL = 1;
+    DEVICE = 2;
+    SERVICE = 3;
+    PROVISIONER = 4;
+  }
+  enum Algorithm {
+    UNKNOWN = 0;
+    RSA = 1;
+    ECC_SECP256R1 = 2;
+    ECC_SECP384R1 = 3;
+    ECC_SECP521R1 = 4;
+  }
+  optional Type type = 1;
+  optional bytes serial_number = 2;
+  optional uint32 creation_time_seconds = 3;
+  optional bytes public_key = 4;
+  optional uint32 system_id = 5;
+  optional string provider_id = 7;
+  optional Algorithm algorithm = 9 [default = RSA];
+  optional bytes rot_id = 10;
+}
+
+message SignedDrmCertificate {
+  optional bytes drm_certificate = 1;
+  optional bytes signature = 2;
+  optional SignedDrmCertificate signer = 3;
+  optional HashAlgorithmProto hash_algorithm = 4;
+}
+
+message EncryptedClientIdentification {
+  optional string provider_id = 1;
+  optional bytes service_certificate_serial_number = 2;
+  optional bytes encrypted_client_id = 3;
+  optional bytes encrypted_client_id_iv = 4;
+  optional bytes encrypted_privacy_key = 5;
+}

@@ -1,0 +1,274 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_SDK_VERSION: "10.0.302"
+
+jobs:
+  locked-restore:
+    name: Locked restore (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      # 六 RID 依赖图一次锁定还原；带 -r 的 restore 会把图缩成单 RID。
+      - run: dotnet restore BBDown.sln --locked-mode
+      - name: Verify all publish targets were restored
+        shell: pwsh
+        run: ./scripts/check-locked-restore.ps1
+      - run: git diff --exit-code -- '*/packages.lock.json'
+
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore
+        run: dotnet restore BBDown.sln --locked-mode
+
+      - name: Build (Release, includes AOT-compat compile via Directory.Build.props)
+        run: dotnet build BBDown.sln -c Release --no-restore
+
+      - name: Test (unit)
+        # 排除全部集成类别：外部网络（NetworkIntegration）与本地 ffmpeg（LocalIntegration）
+        run: dotnet test BBDown.sln -c Release --no-build --filter "Category!=Integration&Category!=NetworkIntegration&Category!=LocalIntegration"
+
+  vulnerability-scan:
+    name: NuGet Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore
+        run: dotnet restore BBDown.sln --locked-mode
+
+      - name: Audit packages
+        # RF-67：`dotnet list package --vulnerable` 无论是否发现漏洞退出码恒为 0
+        # （NuGet/Home#11315），原先的 job 永不阻断 PR。改用 --format json + jq 判定：
+        # 任一项目出现带 vulnerabilities 的包即 exit 1，使门禁具备真实失败语义。
+        # --include-transitive：仅扫描直接依赖会漏掉传递依赖中的已知漏洞。
+        run: |
+          set -euo pipefail
+          dotnet list BBDown.sln package --vulnerable --include-transitive --format json > vuln.json
+          echo "--- vulnerable packages report ---"
+          jq -r '.projects[] | select(.frameworks) | .path as $p | .frameworks[] | .topLevelPackages[]?, .transitivePackages[]? | select(.vulnerabilities) | "\($p): \(.id) \(.resolvedVersion) -> \(.vulnerabilities | map(.severity) | join(","))"' vuln.json || true
+          if ! jq -e '[.. | objects | select(.vulnerabilities?)] | length == 0' vuln.json > /dev/null; then
+            echo "::error::发现具有已知漏洞的 NuGet 依赖，PR 门禁失败"
+            exit 1
+          fi
+          echo "未发现已知漏洞"
+
+  # 格式门禁（硬性）：此前的存量 CRLF/BOM 问题已随格式修复 PR 清理，
+  # 报告确认 dotnet format --verify-no-changes 当前通过，升级为硬性门禁防回归。
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore
+        run: dotnet restore BBDown.sln --locked-mode
+
+      - name: Verify formatting
+        run: dotnet format BBDown.sln --verify-no-changes --no-restore
+
+  # 本地可重复的集成测试：回环 aria2c 续传、Bento4 解密和 ffmpeg 混流。
+  # 显式安装/检查工具，且新工具测试禁止缺工具时空跑。
+  local-integration:
+    name: Integration Tests (local tools)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Install local integration tools
+        run: bash scripts/install-local-test-tools.sh
+
+      - name: Verify ffmpeg is on PATH
+        # RF-77：LocalIntegration 测试在找不到 ffmpeg 时内部 early-return（不产生断言），
+        # 若安装成功但探测不到，job 会报绿却零有效断言。安装后显式断言，封死静默空跑。
+        run: command -v ffmpeg
+
+      - name: Restore
+        run: dotnet restore BBDown.sln --locked-mode
+
+      - name: Test (local integration)
+        # 独立 runner 无其他 job 的构建产物，必须显式构建（dotnet test 自带 build）
+        run: dotnet test BBDown.sln -c Release --no-restore --filter "Category=LocalIntegration"
+        env:
+          BBDOWN_REQUIRE_LOCAL_TOOLS: "1"
+
+  # 外部网络集成测试：真实访问 B 站 API，验证解析/重定向/登录检测等端到端路径。
+  # 不阻断 PR（网络抖动/API 变更易误报），但必须运行并报告结果；失败时收集
+  # 测试输出供人工判断是"网络环境失败"还是"代码回归"。
+  network-integration:
+    name: Integration Tests (external network)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore
+        run: dotnet restore BBDown.sln --locked-mode
+
+      - name: Test (network integration)
+        # 独立 runner 无其他 job 的构建产物，必须显式构建（dotnet test 自带 build）。
+        # --logger trx 产出 TRX 测试结果供失败分析：此前无 logger 时通常没有 .trx 可上传，
+        # 失败时只能靠 console 输出人工判断，网络 job 的"报告结果"形同虚设。
+        run: dotnet test BBDown.sln -c Release --no-restore --filter "Category=NetworkIntegration" --logger "trx;LogFileName=network.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            BBDown.Tests/TestResults/*.trx
+            BBDown.Tests/TestResults/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Native AOT smoke：BBDown 的 Directory.Build.props 全局 PublishAot=true，
+  # 确保 PR 能产出可运行的 AOT 二进制（与 release.yml 的 linux-x64 对齐）
+  aot-smoke:
+    name: Native AOT smoke (linux-x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore
+        run: dotnet restore BBDown/BBDown.csproj --locked-mode
+
+      - name: Publish Native AOT (linux-x64)
+        env:
+          DOTNET_CLI_UI_LANGUAGE: en
+        run: |
+          set -euo pipefail
+          dotnet publish BBDown/BBDown.csproj -c Release -r linux-x64 --no-restore 2>&1 | tee aot-publish.log
+
+      - name: Check reviewed AOT warning baseline
+        shell: pwsh
+        run: ./scripts/check-aot-warnings.ps1 -LogPath aot-publish.log
+
+      - name: Upload AOT audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aot-publish-audit
+          path: aot-publish.log
+          if-no-files-found: error
+
+      - name: Verify binary
+        run: |
+          test -x BBDown/bin/Release/net10.0/linux-x64/publish/BBDown
+          BBDown/bin/Release/net10.0/linux-x64/publish/BBDown --version
+
+  # RF-87：Docker 镜像构建 + serve 启动冒烟在 PR CI 中验证——此前仅在 master push /
+  # release 验证，破坏 Dockerfile 或 serve token 契约的 PR 在合入前始终绿。
+  docker-build-smoke:
+    name: Docker image smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t bbdown:test .
+
+      - name: Smoke test — 默认 CMD（0.0.0.0 无 token）应拒绝启动
+        run: |
+          set +e
+          output=$(docker run --rm bbdown:test 2>&1)
+          exit_code=$?
+          set -e
+          echo "$output"
+          if [ $exit_code -eq 0 ]; then
+            echo "错误：非回环监听未配置 token 应拒绝启动（非零退出），实际却成功了" >&2
+            exit 1
+          fi
+
+      - name: Smoke test — 显式 token 应正常启动并可调用 API
+        run: |
+          docker run -d --name bbdown-smoke -p 23333:23333 bbdown:test \
+            serve -l http://0.0.0.0:23333 --serve-token smoketest
+          for i in $(seq 1 20); do
+            if curl -sf -H "X-Serve-Token: smoketest" http://127.0.0.1:23333/get-tasks/ >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          code_no_token=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:23333/get-tasks/)
+          code_with_token=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Serve-Token: smoketest" http://127.0.0.1:23333/get-tasks/)
+          echo "no-token=$code_no_token with-token=$code_with_token"
+          [ "$code_no_token" = "401" ] || { echo "无 token 应返回 401，实际 $code_no_token" >&2; exit 1; }
+          [ "$code_with_token" = "200" ] || { echo "带 token 应返回 200，实际 $code_with_token" >&2; exit 1; }
+          docker rm -f bbdown-smoke >/dev/null

@@ -1,4 +1,4 @@
-﻿using BBDown.Core.Util;
+using BBDown.Core.Util;
 using System.Diagnostics.CodeAnalysis;
 
 namespace BBDown.Core.Entity;
@@ -8,9 +8,28 @@ public static class Entity
     public class Page
     {
         public required int index;
-        public required string aid;
-        public required string cid;
-        public required string epid;
+        // RF-73：aid/cid/epid 逐字来自 API 响应（Fetcher 的 GetValueAsStringSafe("id") 等，无数字校验），
+        // 又直接拼入工作区路径与 <aid>/<cid> 占位符。属性 setter 统一经 SanitizePathSegment 净化，
+        // 单一收口杜绝镜像站/中间人下发 "..\\..\\tmp\\x" 类值导致路径穿越出 --work-dir。
+        // 纯数字/ BV 号等合法值为恒等变换，不影响 RF-48 的 bvid 非数字回退。
+        private string _aid = "";
+        public required string aid
+        {
+            get => _aid;
+            set => _aid = PathUtil.SanitizePathSegment(value);
+        }
+        private string _cid = "";
+        public required string cid
+        {
+            get => _cid;
+            set => _cid = PathUtil.SanitizePathSegment(value);
+        }
+        private string _epid = "";
+        public required string epid
+        {
+            get => _epid;
+            set => _epid = PathUtil.SanitizePathSegment(value);
+        }
         public required string title;
         public required int dur;
         public required string res;
@@ -21,67 +40,34 @@ public static class Entity
         public string? ownerMid;
         public string bvid
         {
-            get => BilibiliBvConverter.Encode(long.Parse(aid));
+            get
+            {
+                if (long.TryParse(aid, out var aidNum))
+                {
+                    // RF-48：服务器可控 aid（收藏夹/合集/空间条目 id 可为 "0"/负数/超界大数）
+                    // 经 Encode 范围校验抛 ArgumentOutOfRangeException——不在下载页两级 catch
+                    // 过滤器内（Download.cs 注释三次明言 AOORE 须逐点防护），会中止整批。
+                    // 与下方"非纯数字"分支同语义：编码失败回落原始 aid。
+                    try
+                    {
+                        return BilibiliBvConverter.Encode(aidNum);
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        return aid;
+                    }
+                }
+                // aid 非纯数字（可能本就是 BV 号或自定义标识）：无法编码，直接返回原始 aid。
+                // 注意：此处 fallback 返回的是原始字符串而非真实 BV——调用方不应假设 bvid 恒为
+                // 规范化 BV 号（如仅用于展示/匹配时它等价 aid；用于请求 API 时请用 aid 字段）。
+                return aid;
+            }
         }
         public List<ViewPoint> points = new();
-
-        [SetsRequiredMembers]
-        public Page(int index, string aid, string cid, string epid, string title, int dur, string res, long pubTime)
+        // I13：原 8/9/10/12 参"阶梯构造器"已删除——同一语义改用无参构造 + 对象初始化器表达，
+        // required 字段由编译器强制（漏填即编译失败），aid/cid/epid 的净化仍只在属性 setter 收口。
+        public Page()
         {
-            this.aid = aid;
-            this.index = index;
-            this.cid = cid;
-            this.epid = epid;
-            this.title = title;
-            this.dur = dur;
-            this.res = res;
-            this.pubTime = pubTime;
-        }
-
-        [SetsRequiredMembers]
-        public Page(int index, string aid, string cid, string epid, string title, int dur, string res, long pubTime, string cover)
-        {
-            this.aid = aid;
-            this.index = index;
-            this.cid = cid;
-            this.epid = epid;
-            this.title = title;
-            this.dur = dur;
-            this.res = res;
-            this.pubTime = pubTime;
-            this.cover = cover;
-        }
-
-        [SetsRequiredMembers]
-        public Page(int index, string aid, string cid, string epid, string title, int dur, string res, long pubTime, string cover, string desc)
-        {
-            this.aid = aid;
-            this.index = index;
-            this.cid = cid;
-            this.epid = epid;
-            this.title = title;
-            this.dur = dur;
-            this.res = res;
-            this.pubTime = pubTime;
-            this.cover = cover;
-            this.desc = desc;
-        }
-
-        [SetsRequiredMembers]
-        public Page(int index, string aid, string cid, string epid, string title, int dur, string res, long pubTime, string cover, string desc, string ownerName, string ownerMid)
-        {
-            this.aid = aid;
-            this.index = index;
-            this.cid = cid;
-            this.epid = epid;
-            this.title = title;
-            this.dur = dur;
-            this.res = res;
-            this.pubTime = pubTime;
-            this.cover = cover;
-            this.desc = desc;
-            this.ownerName = ownerName;
-            this.ownerMid = ownerMid;
         }
 
         [SetsRequiredMembers]
@@ -96,8 +82,10 @@ public static class Entity
             this.res = page.res;
             this.pubTime = page.pubTime;
             this.cover = page.cover;
+            this.desc = page.desc;
             this.ownerName = page.ownerName;
             this.ownerMid = page.ownerMid;
+            this.points = page.points;
         }
 
         public override bool Equals(object? obj)
@@ -129,7 +117,7 @@ public static class Entity
         public string? res;
         public string? fps;
         public required string codecs;
-        public long bandwith;
+        public long bandwidth;
         public int dur;
         public double size;
 
@@ -141,13 +129,13 @@ public static class Entity
                    res == video.res &&
                    fps == video.fps &&
                    codecs == video.codecs &&
-                   bandwith == video.bandwith &&
+                   bandwidth == video.bandwidth &&
                    dur == video.dur;
         }
 
         public override int GetHashCode()
         {
-            return HashCode.Combine(id, dfn, res, fps, codecs, bandwith, dur);
+            return HashCode.Combine(id, dfn, res, fps, codecs, bandwidth, dur);
         }
     }
 
@@ -157,11 +145,13 @@ public static class Entity
         public required string dfn;
         public required string baseUrl;
         public required string codecs;
-        public required long bandwith;
+        public required long bandwidth;
         public required int dur;
-        
+
         // E-AC-3 => EAC3
-        public string shortCodecs => codecs.ToUpper().Replace("-", string.Empty);
+        // RF-60：ToUpperInvariant——tr-TR 等区域下含 'i' 的服务器可控 codecs 串经
+        // 文化敏感 ToUpper() 变 'İ'（U+0130），选轨优先级查表失败静默退化。
+        public string shortCodecs => codecs.ToUpperInvariant().Replace("-", string.Empty);
 
         public override bool Equals(object? obj)
         {
@@ -169,13 +159,13 @@ public static class Entity
                    id == audio.id &&
                    dfn == audio.dfn &&
                    codecs == audio.codecs &&
-                   bandwith == audio.bandwith &&
+                   bandwidth == audio.bandwidth &&
                    dur == audio.dur;
         }
 
         public override int GetHashCode()
         {
-            return HashCode.Combine(id, dfn, codecs, bandwith, dur);
+            return HashCode.Combine(id, dfn, codecs, bandwidth, dur);
         }
     }
 

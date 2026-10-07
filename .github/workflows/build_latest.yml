@@ -1,10 +1,24 @@
 name: Build Latest
 
-on: [push,workflow_dispatch]
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+# RF-87：快速连续 master push 会排队并发跑完整 5 目标构建；同分支新 push 取消在途。
+concurrency:
+  group: build-latest-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
-  DOTNET_SDK_VERSION: "9.0.306"
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+  DOTNET_SDK_VERSION: "10.0.302"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # 与 release.yml 保持同一固定版本/SHA256（见该文件注释）
+  BENTO4_VERSION: "1-6-0-641"
+  BENTO4_SHA256_WIN: "6916a390f75878872594be74554b8b54ab220bb29812424441a8e1ecc9a6ac5e"
+  BENTO4_SHA256_LINUX: "d48dc6b164941212e5614237b4d9aeff81d4d111ee8b1508892764078a0870e8"
+  BENTO4_SHA256_MAC: "0570cf0dd59f362904d6f1cb472cbf4cdd37928fb0fe28e4c7f98c460e8e0ced"
 
 jobs:
   set-date:
@@ -16,52 +30,103 @@ jobs:
         id: get_date
         run: echo "date=$(date -u -d '8 hours' +'%Y%m%d')" >> "$GITHUB_OUTPUT"
 
-  build-win-x64-arm64:
-    runs-on: windows-latest
-    needs: set-date
-
+  # 构建物必须建立在通过的测试之上，否则测试形同虚设
+  test:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@v4
 
       - name: Set up dotnet
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Install local integration tools
+        run: bash scripts/install-local-test-tools.sh
+
+      - name: Restore locked dependencies
+        run: dotnet restore BBDown.sln --locked-mode
+
+      - name: Test
+        # 单元测试与本地工具集成；外部网络仍由独立 job 验证。
+        run: dotnet test -c Release --no-restore --filter "Category!=Integration&Category!=NetworkIntegration"
+        env:
+          BBDOWN_REQUIRE_LOCAL_TOOLS: "1"
+
+  build-win-x64-arm64:
+    runs-on: windows-latest
+    needs: [set-date, test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
 
       - name: Install zip
         run: choco install zip --no-progress --yes
 
       - name: Publish [win]
         run: |
-          dotnet publish BBDown -r win-x64 -c Release -o artifact
-          dotnet publish BBDown -r win-arm64 -c Release -o artifact-arm64
+          dotnet restore BBDown/BBDown.csproj --locked-mode
+          dotnet publish BBDown -r win-x64 -c Release -o artifact --no-restore
+          dotnet publish BBDown -r win-arm64 -c Release -o artifact-arm64 --no-restore
+
+      # 内置 mp4decrypt（Bento4，GPLv2）：与 release.yml 同一固定版本/SHA256；
+      # win-arm64 也放 x64 版（Windows 11 on ARM 的 x64 模拟可运行）。
+      - name: Bundle mp4decrypt (Bento4)
+        shell: pwsh
+        run: |
+          $ver = "${{ env.BENTO4_VERSION }}"
+          $zip = Join-Path $env:RUNNER_TEMP "bento4-sdk-win.zip"
+          Invoke-WebRequest -Uri "https://www.bok.net/Bento4/binaries/Bento4-SDK-$ver.x86_64-microsoft-win32.zip" -OutFile $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($hash -ne "${{ env.BENTO4_SHA256_WIN }}") { throw "Bento4 归档 SHA256 不匹配: $hash" }
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $env:RUNNER_TEMP "bento4") -Force
+          $root = Get-ChildItem (Join-Path $env:RUNNER_TEMP "bento4") -Directory | Select-Object -First 1
+          Copy-Item (Join-Path $root.FullName "bin/mp4decrypt.exe") "artifact/mp4decrypt.exe"
+          Copy-Item (Join-Path $root.FullName "docs/LICENSE.txt") "artifact/mp4decrypt-LICENSE.txt"
+          Copy-Item (Join-Path $root.FullName "bin/mp4decrypt.exe") "artifact-arm64/mp4decrypt.exe"
+          Copy-Item (Join-Path $root.FullName "docs/LICENSE.txt") "artifact-arm64/mp4decrypt-LICENSE.txt"
 
       - name: Package [win]
         run: |
           cd artifact
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-x64.zip BBDown.exe
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-x64.zip BBDown.exe device.wvd mp4decrypt.exe mp4decrypt-LICENSE.txt
           cd ../artifact-arm64
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-arm64.zip BBDown.exe
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_win-arm64.zip BBDown.exe device.wvd mp4decrypt.exe mp4decrypt-LICENSE.txt
 
       - name: Upload Artifact [win-x64]
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: BBDown_win-x64
           path: BBDown_${{ needs.set-date.outputs.date }}_win-x64.zip
+          retention-days: 7
 
       - name: Upload Artifact [win-arm64]
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: BBDown_win-arm64
           path: BBDown_${{ needs.set-date.outputs.date }}_win-arm64.zip
+          retention-days: 7
 
   build-linux-x64-arm64:
     runs-on: ubuntu-latest
-    needs: set-date
+    needs: [set-date, test]
 
     steps:
-      - uses: actions/checkout@v1
-      
+      - uses: actions/checkout@v4
+
       - name: Build x64 in Ubuntu 18.04 container (for glibc 2.27 compatibility)
         run: |
           # 在 Ubuntu 18.04 容器中执行完整构建流程
@@ -71,11 +136,11 @@ jobs:
             ubuntu:18.04 \
             bash -c "
               set -e
-  
+
               # 安装编译和运行依赖
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y wget build-essential clang libicu-dev zlib1g libcurl4-openssl-dev libkrb5-dev
-  
+
               # 下载并安装 .NET SDK
               DOTNET_SDK_VERSION='${{ env.DOTNET_SDK_VERSION }}'
               DOTNET_SDK_URL=\"https://builds.dotnet.microsoft.com/dotnet/Sdk/\${DOTNET_SDK_VERSION}/dotnet-sdk-\${DOTNET_SDK_VERSION}-linux-x64.tar.gz\"
@@ -83,11 +148,12 @@ jobs:
               mkdir -p /opt/dotnet
               tar -xzf dotnet-sdk.tar.gz -C /opt/dotnet
               export PATH=\"/opt/dotnet:\$PATH\"
-  
+
               # 编译 Native AOT 输出到挂载的 artifact 目录
-              dotnet publish BBDown -r linux-x64 -c Release -o /workspace/artifact
+              dotnet restore BBDown/BBDown.csproj --locked-mode
+              dotnet publish BBDown -r linux-x64 -c Release -o /workspace/artifact --no-restore
             "
-      
+
       - name: Build arm64 in Ubuntu 18.04 container (for glibc 2.27 compatibility)
         run: |
           # 在 Ubuntu 18.04 容器中执行完整构建流程
@@ -97,7 +163,7 @@ jobs:
             mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-18.04-cross-arm64-20220312201346-b2c2436 \
             bash -c "
               set -e
-  
+
               # 下载并安装 .NET SDK
               DOTNET_SDK_VERSION='${{ env.DOTNET_SDK_VERSION }}'
               DOTNET_SDK_URL=\"https://builds.dotnet.microsoft.com/dotnet/Sdk/\${DOTNET_SDK_VERSION}/dotnet-sdk-\${DOTNET_SDK_VERSION}-linux-x64.tar.gz\"
@@ -105,62 +171,152 @@ jobs:
               mkdir -p /opt/dotnet
               tar -xzf dotnet-sdk.tar.gz -C /opt/dotnet
               export PATH=\"/opt/dotnet:\$PATH\"
-  
+
               # 编译 Native AOT 输出到挂载的 artifact 目录
-              dotnet publish BBDown -r linux-arm64 -c Release -p:StripSymbols=true -p:CppCompilerAndLinker=clang-9 -p:SysRoot=/crossrootfs/arm64 -o /workspace/artifact-arm64
+              dotnet restore BBDown/BBDown.csproj --locked-mode
+              dotnet publish BBDown -r linux-arm64 -c Release -p:StripSymbols=true -p:CppCompilerAndLinker=clang-9 -p:SysRoot=/crossrootfs/arm64 -o /workspace/artifact-arm64 --no-restore
             "
+
+      # 内置 mp4decrypt（Bento4，GPLv2）：仅 x64 有官方 Linux 二进制；arm64 不内置。
+      - name: Bundle mp4decrypt (Bento4, linux-x64)
+        run: |
+          set -e
+          # artifact/ 由 ubuntu:18.04 容器内的 root 写出（属主是 root）：本步骤要往其中写入
+          # mp4decrypt，先取回属主，否则 cp 会因 Permission denied 失败
+          sudo chown -R "$(id -u):$(id -g)" artifact
+          ver="${{ env.BENTO4_VERSION }}"
+          curl -sSL -o /tmp/bento4-sdk.zip "https://www.bok.net/Bento4/binaries/Bento4-SDK-${ver}.x86_64-unknown-linux.zip"
+          echo "${{ env.BENTO4_SHA256_LINUX }}  /tmp/bento4-sdk.zip" | sha256sum -c -
+          unzip -q /tmp/bento4-sdk.zip -d /tmp/bento4
+          root=$(find /tmp/bento4 -mindepth 1 -maxdepth 1 -type d | head -n1)
+          cp "$root/bin/mp4decrypt" artifact/mp4decrypt
+          chmod +x artifact/mp4decrypt
+          cp "$root/docs/LICENSE.txt" artifact/mp4decrypt-LICENSE.txt
 
       - name: Package [linux]
         run: |
           cd artifact
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-x64.zip BBDown
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-x64.zip BBDown device.wvd mp4decrypt mp4decrypt-LICENSE.txt
           cd ../artifact-arm64
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-arm64.zip BBDown
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_linux-arm64.zip BBDown device.wvd
 
       - name: Upload Artifact [linux-x64]
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: BBDown_linux-x64
           path: BBDown_${{ needs.set-date.outputs.date }}_linux-x64.zip
+          retention-days: 7
 
-      - name: Upload Artifact[linux-arm64]
-        uses: actions/upload-artifact@v4
+      - name: Upload Artifact [linux-arm64]
+        uses: actions/upload-artifact@v5
         with:
           name: BBDown_linux-arm64
           path: BBDown_${{ needs.set-date.outputs.date }}_linux-arm64.zip
+          retention-days: 7
 
   build-mac-x64-arm64:
     runs-on: macos-latest
-    needs: set-date
+    needs: [set-date, test]
 
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@v4
 
       - name: Set up dotnet
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
 
       - name: Publish [osx]
         run: |
-          dotnet publish BBDown -r osx-x64 -c Release -o artifact
-          dotnet publish BBDown -r osx-arm64 -c Release -o artifact-arm64
+          dotnet restore BBDown/BBDown.csproj --locked-mode
+          dotnet publish BBDown -r osx-x64 -c Release -o artifact --no-restore
+          dotnet publish BBDown -r osx-arm64 -c Release -o artifact-arm64 --no-restore
+
+      # 内置 mp4decrypt（Bento4，GPLv2）：macOS 官方包为 universal 二进制，x64/arm64 通用。
+      - name: Bundle mp4decrypt (Bento4, universal)
+        run: |
+          set -e
+          ver="${{ env.BENTO4_VERSION }}"
+          curl -sSL -o /tmp/bento4-sdk.zip "https://www.bok.net/Bento4/binaries/Bento4-SDK-${ver}.universal-apple-macosx.zip"
+          echo "${{ env.BENTO4_SHA256_MAC }}  /tmp/bento4-sdk.zip" | shasum -a 256 -c -
+          unzip -q /tmp/bento4-sdk.zip -d /tmp/bento4
+          root=$(find /tmp/bento4 -mindepth 1 -maxdepth 1 -type d | head -n1)
+          cp "$root/bin/mp4decrypt" artifact/mp4decrypt
+          chmod +x artifact/mp4decrypt
+          cp "$root/docs/LICENSE.txt" artifact/mp4decrypt-LICENSE.txt
+          cp "$root/bin/mp4decrypt" artifact-arm64/mp4decrypt
+          chmod +x artifact-arm64/mp4decrypt
+          cp "$root/docs/LICENSE.txt" artifact-arm64/mp4decrypt-LICENSE.txt
 
       - name: Package [osx]
         run: |
           cd artifact
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-x64.zip BBDown
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-x64.zip BBDown device.wvd mp4decrypt mp4decrypt-LICENSE.txt
           cd ../artifact-arm64
-          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-arm64.zip BBDown
+          zip ../BBDown_${{ needs.set-date.outputs.date }}_osx-arm64.zip BBDown device.wvd mp4decrypt mp4decrypt-LICENSE.txt
 
       - name: Upload Artifact [osx-x64]
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: BBDown_osx-x64
           path: BBDown_${{ needs.set-date.outputs.date }}_osx-x64.zip
+          retention-days: 7
 
       - name: Upload Artifact [osx-arm64]
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: BBDown_osx-arm64
           path: BBDown_${{ needs.set-date.outputs.date }}_osx-arm64.zip
+          retention-days: 7
+
+  # Docker 镜像构建 + serve 启动冒烟：验证 Dockerfile 能产出可运行的 AOT 镜像，
+  # 且 serve 在非回环监听下正确要求 token（默认 CMD 拒绝启动是预期行为）。
+  docker-build-smoke:
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t bbdown:test .
+
+      - name: Smoke test — 默认 CMD（0.0.0.0 无 token）应拒绝启动
+        run: |
+          set +e
+          output=$(docker run --rm bbdown:test 2>&1)
+          exit_code=$?
+          set -e
+          echo "exit=$exit_code"
+          echo "$output"
+          if [ $exit_code -eq 0 ]; then
+            echo "错误：非回环监听未配置 token 应拒绝启动（非零退出），实际却成功了" >&2
+            exit 1
+          fi
+          echo "$output" | grep -q "serve-token" || {
+            echo "错误：拒绝信息应提示 --serve-token，实际输出: $output" >&2
+            exit 1
+          }
+
+      - name: Smoke test — 显式 token 应正常启动并可调用 API
+        run: |
+          # 后台启动容器（serve 监听 0.0.0.0:23333 + token）
+          docker run -d --name bbdown-smoke -p 23333:23333 bbdown:test \
+            serve -l http://0.0.0.0:23333 --serve-token smoketest
+          # 等待启动（AOT 二进制直接启动，通常 1-2s）
+          for i in $(seq 1 20); do
+            if curl -sf -H "X-Serve-Token: smoketest" http://127.0.0.1:23333/get-tasks/ >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          # 无 token 应 401，带 token 应 200
+          code_no_token=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:23333/get-tasks/)
+          code_with_token=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Serve-Token: smoketest" http://127.0.0.1:23333/get-tasks/)
+          echo "no-token=$code_no_token with-token=$code_with_token"
+          [ "$code_no_token" = "401" ] || { echo "无 token 应返回 401，实际 $code_no_token" >&2; exit 1; }
+          [ "$code_with_token" = "200" ] || { echo "带 token 应返回 200，实际 $code_with_token" >&2; exit 1; }
+          docker rm -f bbdown-smoke >/dev/null

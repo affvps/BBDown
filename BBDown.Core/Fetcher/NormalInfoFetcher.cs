@@ -1,116 +1,149 @@
-﻿using BBDown.Core.Entity;
+using BBDown.Core.Entity;
+using BBDown.Core.Util;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
 using static BBDown.Core.Entity.Entity;
-using static BBDown.Core.Util.HTTPUtil;
 
 namespace BBDown.Core.Fetcher;
 
 public partial class NormalInfoFetcher : IFetcher
 {
-    public async Task<VInfo> FetchAsync(string id)
+    private readonly IApiTransport _transport;
+
+    public NormalInfoFetcher() : this(HttpApiTransport.Instance) { }
+
+    internal NormalInfoFetcher(IApiTransport transport) => _transport = transport;
+
+    public async Task<VInfo> FetchAsync(string id, CancellationToken cancellationToken = default)
     {
         string api = $"https://api.bilibili.com/x/web-interface/view?aid={id}";
-        string json = await GetWebSourceAsync(api);
+        string json = await _transport.GetStringAsync(api, cancellationToken);
         using var infoJson = JsonDocument.Parse(json);
-        var data = infoJson.RootElement.GetProperty("data");
-        string title = data.GetProperty("title").ToString();
-        string desc = data.GetProperty("desc").ToString();
-        string pic = data.GetProperty("pic").ToString();
-        var owner = data.GetProperty("owner");
-        string ownerMid = owner.GetProperty("mid").ToString();
-        string ownerName = owner.GetProperty("name").ToString();
-        long pubTime = data.GetProperty("pubdate").GetInt64();
+        FetcherJson.ThrowIfApiError(infoJson.RootElement, "获取视频信息失败");
+        // RF-65：data 节点缺失时给可读中文诊断——原 GetPropertySafe 会抛英文裸
+        // KeyNotFoundException（"JSON property not found: 'data' ..."），且 code 诊断已在上方。
+        if (!infoJson.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("获取视频信息失败: 响应缺少 data 节点");
+        string title = data.GetStringSafe("title");
+        string desc = data.GetStringSafe("desc");
+        string pic = data.GetStringSafe("pic");
+        var owner = data.GetPropertySafe("owner");
+        // owner.mid 是 JSON 数字，GetStringSafe 只认字符串会返回空串，
+        // 导致 <ownerMid> 文件名占位符恒为空；用 GetValueAsStringSafe 兼容数字。
+        string ownerMid = owner.GetValueAsStringSafe("mid");
+        string ownerName = owner.GetStringSafe("name");
+        long pubTime = data.GetInt64Safe("pubdate");
         bool bangumi = false;
-        var bvid = data.GetProperty("bvid").ToString();
-        var cid = data.GetProperty("cid").GetInt64();
+        var bvid = data.GetStringSafe("bvid");
+        var cid = data.GetInt64Safe("cid");
 
         // 互动视频 1:是 0:否
-        var isSteinGate = data.GetProperty("rights").GetProperty("is_stein_gate").GetInt16();
+        var isSteinGate = data.TryGetPropertySafe("rights")?.GetInt32Safe("is_stein_gate") ?? 0;
+
+        // UP主充电专属视频。未充电时 playurl 依然返回 code=0，
+        // 只是把完整流换成试看片段，因此必须靠这里的权限字段判断，
+        // 否则会把几分钟的试看片段当作完整视频下载完毕。
+        bool isUpowerExclusive = data.GetBooleanSafe("is_upower_exclusive");
+        bool isUpowerPreview = data.GetBooleanSafe("is_upower_preview");
+        bool isUpowerPlay = data.GetBooleanSafe("is_upower_play");
 
         // 分p信息
         List<Page> pagesInfo = new();
-        var pages = data.GetProperty("pages").EnumerateArray().ToList();
+        var pages = data.EnumerateArraySafe("pages").ToList();
         foreach (var page in pages)
         {
-            Page p = new(page.GetProperty("page").GetInt32(),
-                id,
-                page.GetProperty("cid").ToString(),
-                "", //epid
-                page.GetProperty("part").ToString().Trim(),
-                page.GetProperty("duration").GetInt32(),
-                page.GetProperty("dimension").GetProperty("width").ToString() + "x" + page.GetProperty("dimension").GetProperty("height").ToString(),
-                pubTime, //分p视频没有发布时间
-                "",
-                "",
-                ownerName,
-                ownerMid
-            );
+            Page p = new()
+            {
+                index = page.GetInt32Safe("page"),
+                aid = id,
+                cid = page.GetValueAsStringSafe("cid"),
+                epid = "",
+                title = page.GetValueAsStringSafe("part").Trim(), //epid
+                dur = page.GetInt32Safe("duration"),
+                res = page.TryGetProperty("dimension", out var dim) && dim.TryGetProperty("width", out var w) && dim.TryGetProperty("height", out var h) ? $"{w}x{h}" : "",
+                pubTime = pubTime,
+                cover = "", //分p视频没有发布时间
+                desc = "",
+                ownerName = ownerName,
+                ownerMid = ownerMid,
+            };
             pagesInfo.Add(p);
         }
 
         if (isSteinGate == 1) // 互动视频获取分P信息
         {
             var playerSoApi = $"https://api.bilibili.com/x/player.so?bvid={bvid}&id=cid:{cid}";
-            var playerSoText = await GetWebSourceAsync(playerSoApi);
+            var playerSoText = await _transport.GetStringAsync(playerSoApi, cancellationToken, rejectHtml: false);
             var playerSoXml = new XmlDocument();
-            playerSoXml.LoadXml($"<root>{playerSoText}</root>");
-                
+            try
+            {
+                playerSoXml.LoadXml($"<root>{playerSoText}</root>");
+            }
+            catch (XmlException ex)
+            {
+                // player.so 是互动视频的装饰性分P信息来源：rejectHtml:false 让风控 HTML 页
+                // 直达此处，HTML 未闭合标签会让 LoadXml 抛 XmlException；响应含 XML 声明
+                //（<?xml ...?>）包在 <root> 内同样非法。与同文件其它装饰性抓取一致，
+                // 降级为可读错误而非裸 XmlException 崩溃（其它 fetcher 均有 try/catch 降级）。
+                throw new InvalidOperationException($"互动视频 player.so 解析失败: {ex.Message}");
+            }
+
             var interactionNode = playerSoXml.SelectSingleNode("//interaction");
 
             if (interactionNode is { InnerText.Length: > 0 })
             {
-                var graphVersion = JsonDocument.Parse(interactionNode.InnerText).RootElement
-                    .GetProperty("graph_version").GetInt64();
+                using var graphDoc = JsonDocument.Parse(interactionNode.InnerText);
+                var graphVersion = graphDoc.RootElement.GetInt64Safe("graph_version");
                 var edgeInfoApi = $"https://api.bilibili.com/x/stein/edgeinfo_v2?graph_version={graphVersion}&bvid={bvid}";
-                var edgeInfoJson = await GetWebSourceAsync(edgeInfoApi);
-                var edgeInfoData = JsonDocument.Parse(edgeInfoJson).RootElement.GetProperty("data");
-                var questions = edgeInfoData.GetProperty("edges").GetProperty("questions").EnumerateArray()
+                var edgeInfoJson = await _transport.GetStringAsync(edgeInfoApi, cancellationToken);
+                using var edgeDoc = JsonDocument.Parse(edgeInfoJson);
+                // RF-65：互动视频边信息接口的 data/edges 缺失时给可读中文诊断，而非英文裸 KNFE
+                if (!(edgeDoc.RootElement.TryGetProperty("data", out var edgeInfoData) && edgeInfoData.ValueKind == JsonValueKind.Object))
+                    throw new InvalidOperationException("互动视频边信息接口响应缺少 data 节点");
+                var questions = edgeInfoData.GetPropertySafe("edges").EnumerateArraySafe("questions")
                     .ToList();
                 var index = 2; // 互动视频分P索引从2开始
                 foreach (var question in questions)
                 {
-                    var choices = question.GetProperty("choices").EnumerateArray().ToList();
+                    var choices = question.EnumerateArraySafe("choices").ToList();
                     foreach (var page in choices)
                     {
-                        Page p = new(index++,
-                            id,
-                            page.GetProperty("cid").ToString(),
-                            "", //epid
-                            page.GetProperty("option").ToString().Trim(),
-                            0,
-                            "",
-                            pubTime, //分p视频没有发布时间
-                            "",
-                            "",
-                            ownerName,
-                            ownerMid
-                        );
+                        Page p = new()
+                        {
+                            index = index++,
+                            aid = id,
+                            cid = page.GetValueAsStringSafe("cid"),
+                            epid = "",
+                            title = page.GetValueAsStringSafe("option").Trim(), //epid
+                            dur = 0,
+                            res = "",
+                            pubTime = pubTime,
+                            cover = "", //分p视频没有发布时间
+                            desc = "",
+                            ownerName = ownerName,
+                            ownerMid = ownerMid,
+                        };
                         pagesInfo.Add(p);
                     }
                 }
             }
             else
             {
-                throw new Exception("互动视频获取分P信息失败");
+                throw new InvalidOperationException("互动视频获取分P信息失败");
             }
         }
 
-        try
+        if (data.TryGetProperty("redirect_url", out var redirectUrl) && redirectUrl.ToString().Contains("bangumi"))
         {
-            if (data.GetProperty("redirect_url").ToString().Contains("bangumi"))
+            bangumi = true;
+            string epId = EpIdRegex().Match(redirectUrl.ToString()).Groups[1].Value;
+            //番剧内容通常不会有分P，如果有分P则不需要epId参数
+            if (pages.Count == 1)
             {
-                bangumi = true;
-                string epId = EpIdRegex().Match(data.GetProperty("redirect_url").ToString()).Groups[1].Value;
-                //番剧内容通常不会有分P，如果有分P则不需要epId参数
-                if (pages.Count == 1)
-                {
-                    pagesInfo.ForEach(p => p.epid = epId);
-                }
+                pagesInfo.ForEach(p => p.epid = epId);
             }
         }
-        catch { }
 
         var info = new VInfo
         {
@@ -120,7 +153,10 @@ public partial class NormalInfoFetcher : IFetcher
             PubTime = pubTime,
             PagesInfo = pagesInfo,
             IsBangumi = bangumi,
-            IsSteinGate = isSteinGate == 1
+            IsSteinGate = isSteinGate == 1,
+            IsUpowerExclusive = isUpowerExclusive,
+            IsUpowerPreview = isUpowerPreview,
+            IsUpowerPlay = isUpowerPlay
         };
 
         return info;

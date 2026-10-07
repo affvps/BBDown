@@ -1,0 +1,742 @@
+# 代码审查修复排期（REVIEW_PLAN）
+
+> 审查来源：R1/R2/R3/R4 四轮审查（安全/可读性/可靠性/韧性），2026-08 批次。
+> 本文件跟踪**剩余未处理项**；已修复项见 git log（13766b0..2ab54d1 五连提交）与各代码注释。
+> 轮次记录见下方第 1~18 轮，逐项处置结论见 [`REVIEW_FINDINGS.md`](REVIEW_FINDINGS.md)（RF-1~RF-98）。
+
+## 状态总览
+
+> **回填说明（2026-09-30，第 18 轮消纳后）**：本表自 2026-08 起未同步，F/G 两组实际已清零、B3 已结项、I8 已完成但未回填；本次逐项核验后重算。
+> H/I 剩余项的核验口径：逐符号检查重构产物是否存在（`ServeSecurityMiddleware`/`TaskRouteMapper`/`TaskFileStore`/`CallbackGuard`、`MuxRequest`、`RangeDownloadRequest`、`DownloadContext`、`BiliApiKeys`、`IsRetryableDownloadException`、`ReadHistoryLocked` 均不存在 → 未落地；`BiliApiKeys`/`EstimatedBytes` 已于 2026-10-01 的 REFACTOR_PLAN 批 1b 落地，`PickDataRoot`/`PickTrackBaseUrl` 已于同日批 4 落地）。
+> 另注：**I16 的范围已被 PR #53 部分消化**（“静态缓存 BuildAliasMap”由新增的 `CliOptionIndex` 承担，四处手工扫参尚未收敛）；H/I 与 [`OPTIMIZATION_PLAN.md`](OPTIMIZATION_PLAN.md) 存在重叠（P0-1 ≈ I1/I2/I10、P1-1 ≈ H5、P1-2 ≈ I2、P1-3 ≈ J1），评估时请合并口径，避免重复排期。
+> **H/I 剩余项的执行计划见 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md)**（7 批 7 PR、逐批范围/风险/安全网/验收口径与进度追踪）。
+
+| 组 | 总数 | 已完成 | 剩余 |
+|----|------|--------|------|
+| A 安全 Infra | 7 | 7 | 0 |
+| B 安全 Core | 3 | 3 | 0（B3 已结项：无 High / 无当前可利用 Medium；未消纳项均有“已修复 / 维持现状”结论） |
+| C 功能缺陷 | 3 | 3 | 0 |
+| D 韧性 Infra | 10 | 10 | 0 |
+| E 韧性 Core | 6 | 6 | 0 |
+| F 测试 Infra | 12 | 12 | 0 |
+| G 测试结构 | 10 | 10 | 0 |
+| H 可读性 Infra | 13 | 13 | 0（H6 随批 7 收口，**H 组清零**） |
+| I 可读性 App/Core | 22 | 21 | **1**（I10 定案不做；I1~I9/I11~I22 已完成） |
+| J CI/发布 | 4 | 2 | **2**（J1/J2 跟踪项） |
+| **合计** | **90** | **87** | **3**（I10 + J1/J2） |
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 1b + 批 4 + 批 6 + 批 3a 后）**：I3/I11/I14/I15 随批 1b 落地（第 19 轮）、I2 随批 4 落地（第 20 轮）、H1 随批 6 落地（第 21 轮）、H2/H3 随批 3a 落地（第 22 轮），I 组已完成 8 → 13、H 组 4 → 7；剩余项中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**（其余按该计划 §6 批次序推进，下一批为批 3b：I5/I13）。
+
+> 回填前的历史快照为 `90 / 44 / 46`（2026-08）；本次补记的 21 项完成度分布为 F +6、G +6、B +1（B3）、H +3（H7/H11/H12/H13 中除 H11 外新补）、I +5（I8 与 I17~I20）。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 5b 后）**：H4 随批 5b 落地（PR #70，第 26 轮），H 组 8 → 9 / 剩余 5 → 4；同时回填 **I7**——第 19 轮已记录"批 1a（PR #60）验收 ✅"，但状态总览漏记，本轮一并修正（I 组 16 → 17 / 剩余 6 → 5）。合计由 **77/13 → 79/11**。剩余 11 项 = H5/H6/H8/H10（批 5c/2b/7）+ I6/I9/I10/I12/I16（批 7，其中 **I10 已在 REFACTOR_PLAN §5 定案"不做"**）+ J1/J2（跟踪项）。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 5c-2 后）**：H5 随 5c-1（PR #72）+ 5c-2（PR #74）收口（第 27/28 轮），H 组 9 → 10 / 剩余 4 → 3；合计 **79/11 → 80/10**。剩余 10 项 = H6/H8/H10（批 2b 收尾 + 批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。**批 5（I1/H4/H5）至此全部收口**。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 2b-1 后）**：H8 随 2b-1（PR #76）收口（第 29 轮），H 组 10 → 11 / 剩余 3 → 2；合计 **80/10 → 81/9**。剩余 9 项 = H6/H10（批 2b-2 与批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 2b-2 后）**：H10 随 2b-2（PR #78）收口（第 30 轮），H 组 11 → 12 / 剩余 2 → 1；合计 **81/9 → 82/8**。剩余 8 项 = **H6**（批 7）+ I6/I9/I10/I12/I16（批 7，I10 定案不做）+ J1/J2（跟踪项）。**批 2（H8/H9/H10）至此全部收口**，H 组仅剩 H6。
+
+> **回填（2026-10-01，REFACTOR_PLAN 批 7 后）**：H6/I6/I9/I12 随批 7（PR #80，合并提交 `eb0fbb9`）收口（第 31 轮），H 组 12 → 13 / 剩余 1 → **0**，I 组 17 → 20 / 剩余 5 → 2；合计 **82/8 → 86/4**。剩余 4 项 = **I10**（`REFACTOR_PLAN` §5 定案不做）+ **I16**（配置解析层扫参收敛，未排期）+ J1/J2（跟踪项）。**至此 `REFACTOR_PLAN` 的 7 批全部执行完毕，H/I 组不再有已排期的结构性改动。**
+
+> **回填（2026-10-01，剩余项收口批后）**：I16 随收口批（PR #82，合并提交 `028f67e`）落地（第 32 轮），I 组 20 → 21 / 剩余 2 → **1**（仅 I10 定案不做）；合计 **86/4 → 87/3**。该批同时收口三项挂账决策：四族"单条目可跳过"过滤器合并为单一核心（原登记为"需行为决策"）、`apiType` 展示与实际分派统一（第 20 轮 Info ①）、P2-3 DRM 密钥清零（`OPTIMIZATION_PLAN`）；并把批 1a 的异常过滤器统计口径统一为可复现方法（第 19 轮 Info ④ 就此消纳）。**I 组除定案不做的 I10 外全部清零。**
+
+---
+
+## 第 1 轮：测试套件结构加固（防 CI 假绿/假失败，低风险高价值）
+
+| 项 | 级别 | 位置 | 处理 |
+|----|------|------|------|
+| G1 | Critical | .github/workflows/pr.yml | ✅ 已落地（替代方案）：审查原建议 `xunit.runner.json 加 forbidOnly` 是 Playwright（JS `test.only`）概念，**xunit v2/v3 均无 forbidOnly/`[Only]`**（已查源码 ConfigReader_Json 与官方配置文档确认）。xunit 中“测试子集全绿”的等价残留是 `[Fact(Skip=...)]` 跳过不跑。已用 `xunit.runner.json` 的 `failSkips: true`（v2.5+，项目 v2.9.3 可用）把任何 Skip 当作硬失败；项目当前 0 个 Skip 零副作用，且已实测验证（注入临时 Skip 被报 FAIL） |
+| G5 | Medium | DownloadPipelineTests.cs:848 | ✅ 墙钟断言改区间重叠断言（a 区间 ∩ b 区间必须重叠）——CI 调度抖动只影响总耗时不再误报 |
+| G6 | Medium | RedirectHopValidationTests.cs:25,147 | ✅ 两处固定端口段（24000-26000/25000段）改 TestPort.Allocate() 动态端口 |
+| G8 | Medium | HttpUtilRetryTests.cs 7 处 finally | ✅ 9 个测试全部改为捕获前值恢复（`var original = Config.Current` + finally 恢复）；补连接被拒用例（StatusCode=null 命中重试谓词，退避耗时下限证明重试发生） |
+| G9 | Low | RedirectHopValidationTests.cs:120 | ✅ LocalRedirectServer 加 RequestCount 计数；断言请求数 ≤ maxHops+1（强证据：仅断言终值无法区分“截断返回”与“侥幸返回”） |
+| G10 | Low | ServeApiHttpTests.cs:21,415 | ✅ BaseUrl 改动态端口（TestPort.Allocate 静态字段）；WaitForFinishedCountAsync 轮询耗尽抛带上下文 TimeoutException；Cancel 持久化断言带任务文件名/存在性上下文 |
+| F9 | Medium | ServeApiSecurityTests | ✅ 新增 SanitizeUntrustedOptions_ClampsNumerics：上界（3/5000/120/30/64）+ 下界（RetryCount→1、MuxerTimeout→1、ThreadSegmentSize→1）共 10 断言 |
+| F11 | Suggestion | ServeApiHttpTests.cs:1-40 | ✅ 补 [CollectionDefinition("ServeApiCollection")]；更新类注释（_taskFile 已实例字段注入，不再静态污染） |
+
+## 第 2 轮：功能/韧性测试补齐
+
+| 项 | 级别 | 位置 | 处理 |
+|----|------|------|------|
+| F6 | Medium | ExternalProcessRunnerTests.cs:50,68 | ✅ “KillsProcessTree” 两个测试升级为进程树哨兵验证：根进程派生持续写哨兵文件的子进程，超时/取消后验证哨兵文件停止增长（整棵进程树被杀）——替换此前只断言异常类型、杀根不杀子也通过的零证据断言；Unix 用 sh 后台子 shell / Windows 用 cmd+ping 重定向 |
+| F7 | Medium | ExternalProcessRunnerTests.cs:160-201 | ✅ MergeFLV 假 runner 测试从“try/catch 吞异常”（抛/不抛都通过）改为确定性断言：Assert.ThrowsAsync<InvalidOperationException> + 消息含“保留源分段” + 假 runner 确实被调 + 源分段保留 |
+| G7 | Medium | DownloadPipelineTests.cs:133-161 | ✅ 新增 3-clips SHA-256 用例：2.5MB 载荷/1MB 分片 → 服务端 Record RangeHeaders（3 段互补不重叠覆盖 [0,size)）+ 产物逐字节哈希一致 + 分片清理 + 锁释放 |
+| F10 | Suggestion | LiveStreamUtil.cs | ✅ 补 2 个可稳定分支：非数字 roomId→ArgumentException（ResolveAsync 不发起网络请求）；零字节 EOF→删除空 seg + 退避重连续录（新 StreamMode.ZeroByte）。⚠️ LiveStreamWriteException 分支需要磁盘故障/只读文件系统，跨平台测试不可靠触发，保留人工验证 |
+| F12 | Suggestion | 多处 | ✅ IsBlockedAddress CGNAT/ULA 经 IsSafeCallbackUrl 域名 DNS 分支直测（6 断言）；ProgressBar Dispose 结算新增 Test 文件（2 测试）；SubscriptionStore 幂等新增 5 测试（重复 Add/不存在 Remove/同 aid 去重/最近优先）。⚠️ LocalIntegration 缺 ffmpeg return 改 Skip 在 **xunit v2 无法实现**：`Assert.Skip` 动态跳过仅 v3 支持；静态 `[Fact(Skip)]` 编译期写死不能表达运行时缺 ffmpeg，且与 G1 的 `failSkips:true` 冲突（Skip 会变失败）——保留 return，待 v3 迁移时改为 Assert.Skip |
+
+## 第 3 轮：B3 独立安全审查（Parser 签名/HTTP 层/AppHelper）
+
+> ✅ 已完成（三路并行 reviewer 全产出，无子代理超时）。
+
+### 结论
+- **无 High、无当前可利用的 Medium**：签名链（WbiSign/GetSign/盐配对/时序）、HttpClient 池隔离（insecure↔校验池）、VerifiedAppHttpClient 不可降级、Cookie 携带边界、重定向逐跳校验、超时/取消分类、日志脱敏七面全部核实通过 ✅。
+- 跨文件一致的根问题：**签名媒体 URL 脱敏在下载链路失效**（AppHelper/Parser 明确脱敏，下载器日志却明文落盘）。
+
+### 已消纳修复（低风险高价值）
+| 来源 | 处理 |
+|------|------|
+| Parser-M1 + AppHelper-F1 | ✅ SensitiveKeys 扩 `sign/x_sign/w_rid/deadline/marlin_token`；`BBDownDownloadUtil` 两处 Start downloading 日志改 SensitiveDataMasker.MaskUrl；+1 单测 |
+| AppHelper-F4 | ✅ `item.StreamInfo?.Quality ?? 0` 防畸形帧 NRE（+S5 Size*8 checked 防 ulong 回绕） |
+| Parser-Low-2 | ✅ WBI mixin key 日志改 MaskValue |
+
+### 未消纳（记录，评估后决定）
+
+> ✅ 已按后续加固批全部处理（见下“B3 补充加固已消纳”），下表保留为历史记录：
+> - HTTP-L1/L2/S1、AppHelper-F2/F3/S1/S2、Parser-L3 已修复；
+> - HTTP-S2/S3、AppHelper-S3/S4、Parser-L5 评估后维持现状（载荷非机密/已有更上游链路/改动风险>收益，见对应修改注释）。
+
+| 来源 | 级别 | 位置 | 说明 |
+|------|------|------|------|
+| HTTP-L1 | Low | HTTPUtil.GetWebLocationAsync | ✅ 加使用约束 XML 注释（仅供硬编码可信 URL，禁用不可信输入） |
+| HTTP-L2 | Low | HTTPUtil.CalibrateClock | ✅ 加 fromVerifiedPool 参数：--insecure 连接的 Date 头（中间人可控）不写全局时钟偏移，防跨流 WBI 扰动 |
+| HTTP-S1 | Sugg. | GetWebSourceCoreAsync | ✅ Cookie 主机白名单纵深防御：sendCookie=true 前校验主机 ∈ 官方域 / 操作者配置的 Host / 回环，非可信主机拒绝外发凭据且不发任何网络请求 |
+| HTTP-S2/S3 | Sugg. | webhook 客户端 | ⭕ 维持现状：CLI webhook 载荷非机密、自动跟随无害；serve 侧已有独立校验 client 收敛 |
+| AppHelper-F2 | Low | GetPostResponseAsync | ✅ gRPC POST 改 NoRedirectClient + 3xx 显式拦截（禁止凭据/body 随 307/308 重放外发） |
+| AppHelper-F3 | Low | BBDownDownloadUtil 媒体 Cookie | ✅ 新增 MediaDownloadClient（AllowAutoRedirect=false）替换 3 处媒体下载请求；--force-http 明文时 LogWarn 告警（无法强去 Cookie 否则 CDN 取流失败） |
+| AppHelper-S1 | Sugg. | GzipDecompress | ✅ gzip 解压设 48MB 上限防解压炸弹（剔除输出超限内存占用） |
+| AppHelper-S2 | Sugg. | ReadMessage 帧首字节 | ✅ gRPC 帧首字节显式校验（仅 0/1，其它抛 InvalidDataException 替代静默当未压缩） |
+| AppHelper-S3 | Sugg. | token 日志首尾 | ⭕ 维持现状：保留首尾 4 字符是刻意设计（B1/B2 已验证通过，用于核对凭据身份） |
+| AppHelper-S4 | Sugg. | 空 buvid 指纹 | ⭕ 维持现状：真实设备标识已由 BuvidProvider（buvid3）维护，AppHelper 空 buvid 是无关紧要历史字段；强行生成格式不符可能反触发风控 |
+| Parser-L3 | Low | 异常消息回显 | ✅ SanitizeServerText 剥离控制字符再拼异常消息（防 ANSI/日志投毒注入面） |
+| Parser-L5 | Low | tv/intl 时钟校准盲区 | ⭕ 维持现状：常规流程必有 web API 先行校准（审查结论“保持现状可接受”） |
+
+### B3 补充加固新增测试
+- ClockCalibrationTests：FromInsecurePool_DoesNotWriteGlobalOffset（L2）
+- HttpUtilRetryTests：CookieNonTrustedHost_ThrowsBeforeNetwork / TrustedHost_WithCookie_Succeeds（S1）
+- AppHelperMessageTests（新文件 5 测）：帧首字节非法/过短/gzip 往返/未压缩往返/解压上限（S1/S2）
+
+## 第 4 轮：D8 HTTP 并发请求数上限
+
+- ✅ 已落地：/get-tasks 族查询端点（`/`、`/running`、`/finished`、`/{id}`）经 MapGroup.AddEndpointFilter 加查询并发信号量（上限 8）——快照深拷贝是查询成本，槽位不足返回 429（与接受队列/认证限速同一语义，不排队堆积、客户端可重试）。新增 TryAcquireQuerySlot/AvailableQuerySlots 测试缝 + 端点测试（正常 200 → 占满 8 槽 → 列表与子路径均 429）
+
+## 第 5 轮：H 组可读性重构（Infrastructure）
+
+| 项 | 级别 | 位置 | 处理 |
+|----|------|------|------|
+| H1 | High | BBDownApiServer.cs 全文件 | God 类拆 ServeSecurityMiddleware / TaskRouteMapper / TaskFileStore / CallbackGuard；SetUpServer ~200 行 lambda 内联无法单测。⚠️ **第 12 轮勘误**：四个拆分文件在 git 全历史中从未存在（零提交记录），功能实际仍集中在本文件（现 1543 行）——本条记录失实，文件结构上 god 类未拆分；功能层面（中间件/持久化/回调防护）已实现并经审查通过。**✅ 2026-10-01 批 6 已按文件级切分落地**（PR #64：7 个 partial 文件 + DTO/源生成上下文迁出，见第 21 轮） |
+| H2 | High | BBDownMuxer.cs:64,174 | MuxAV 20 参 / MuxByMp4box 15 参改 MuxRequest 参数对象 |
+| H3 | High | BBDownDownloadUtil.cs:28 | RangeDownloadToTmpAsync 10 参 → RangeDownloadRequest + 拆两段 |
+| H4 | High | BBDownDownloadUtil.cs:227,611 | Core 170/200 行嵌套 6-7 层：预检决策方法 + DownloadClipWithRetryAsync；6 个"检查 .tmp/.aria2"块收敛。**✅ 2026-10-01 批 5b 已落地**（PR #70：`DownloadFileCoreAsync` 163 → 91 行、`MultiThreadDownloadCoreAsync` 196 → 152 行 / 嵌套 7 → 4 层；"目标等长 → 权威总长复核" 3 处副本 → `VerifyExistingTargetAsync`；logger 30 → 28 / catch 22 = 22，见第 26 轮） |
+| H5 | High | 多处 | 重复簇抽 6 个辅助方法（任务收尾四元组 ×4、IsLoopback 判定、SSRF 字面 IP ×2、DNS+逐地址校验 ×3、头块 ×3、权威大小复核 ×3、clip 路径推导 ×4）。⚠️ **口径修正（第 26 轮）**："权威大小复核 ×3"已由批 5b 的 `VerifyExistingTargetAsync`（PR #70）消化。**🔶 5c-1 已落地（第 27 轮，PR #72）**：clip 路径推导 ×4 → `ClipPathFor`、头块 ×3 → `ApplyMediaRequestHeaders`；**✅ 5c-2 已落地（第 28 轮，PR #74）**：IsLoopback 判定 4 份实现 → `IsLoopbackHost` 唯一实现、SSRF 字面 IP ×2 + 归一化 ×5 → `TryParseLiteralIp`/`NormalizeMappedIpv4`（复用 `IsUnsafeLiteralIpAddress`）、DNS 逐地址校验 ×2 → `ResolveCallbackAddressesAsync` + `CallbackHostVerdict`、任务收尾四元组 ×4 → `FinishTask`——**H5 7 簇全部收口** |
+| H6 | Medium | LiveStreamUtil.cs:75,222,286 | **✅ 2026-10-01 批 7 已落地**（PR #80：`LiveRoomClosedException` 专用异常取代三处消息文本匹配；+2 变异验证用例，见第 31 轮） |
+| H7 | Medium | 多处 | ✅ 死代码逐条删除（BBDownUtil.GetFiles、UrlResolver.MdRegex、GetAvIdAsync 无 token 重载、空 WriteLine ×2、NormalizeLockKey 上方孤立 doc 归位到 AcquireDownloadLock；CommandLineSplitter 保留——其位与为非短路是有意语义已加注释） |
+| H8 | Medium | 多处 | 误导性命名：ReadLinesThrottled、_savePathLock、MyOptionBindingResult<T>、QualityName 档位映射顺序、nowId。**✅ 2026-10-01 全部 5 项收口**（3 项随 PR #69；余 2 项随批 2b-1/PR #76：`ReadLinesThrottled` → `ReadLinesDedupedAndCapped`、`QualityName` 补分支顺序文档，见第 29 轮） |
+| H9 | Medium | 多处 | 魔法数字集中常量（关停 30s/回调 2min/1048576/复核 15s/分片并发 8/退避 3000*2^n/完整性 0.8/FLV 常量 13 个） |
+| H10 | Medium | SubscriptionStore.cs:110-149,205 | 同一历史文件两套异常语义：抽 ReadHistoryLocked() 单入口。**✅ 2026-10-01 批 2b-2 已落地**（PR #78：`ReadHistoryLockedAsync` 单入口；顺带修复写路径只 catch `JsonException` 致读取 IO 失败裸奔、及只校验被请求 target 的分歧；3 处行为变化补 3 例变异验证，测试 789 → 792，见第 30 轮） |
+| H12 | Low | 多处 | ✅ recevied 拼写修正、bool & bool 加非短路注释、SetUpServer→SetupServer 改名（1 定义+4 调用） |
+| H13 | Low | LiveStreamUtil.cs:57,235 | ✅ ResolveAsync 5 元组 → sealed record LiveStreamInfo；LiveCommand/LiveStreamUtil 内部/测试三处消费改按名访问 |
+
+## 第 6 轮：I 组可读性重构（应用层 + Core 结构）
+
+| 项 | 级别 | 位置 | 处理 |
+|----|------|------|------|
+| I1 | High | Download.cs:326-843 | DownloadPageAsync ~520 行 god 方法拆 4 helper + dash/flv 子方法；弹幕块 55 行重复、CoverOnly 重复、"已存在跳过"×3、"空 aid 目录删除"×5 收敛 |
+| I2 | High | Parser.cs:106-540 | ExtractTracksAsync ~430 行：PickDataRoot/PickTrackBaseUrl 纯函数 + ApiMode 枚举；数据节点定位 3 份漂移变体收敛 |
+| I3 | High | BBDownUtil.cs:167 vs Parser.cs:680 | GetSign MD5 盐 ×2、appkey ×2、GetTimeStamp(bool bflag) ×2 集中 BiliApiKeys 常量 + 单份实现 |
+| I5 | Medium | Workflow.cs:15-16 起 | SetUpWork 10 元组 → DownloadContext record；4 层透传参数收敛 |
+| I6 | Medium | BBDownLoginUtil.cs:69-316 | **✅ 2026-10-01 批 7 已落地**（PR #80：`RenderQrCodeAsync`/`WriteOwnerOnlyFileAsync` + `QrPollCode`；Logger 29 → 25、catch 8 → 7，日志文案集合零差异） |
+| I7 | Medium | 6+ 处 | 异常过滤器 or-链逐字重复抽 IsRetryableDownloadException(Exception)。**✅ 2026-10-01 批 1a 已落地**（PR #60：改为 `ExceptionPolicies` 9 条具名策略 + 生产站点；第 19 轮已验收，第 26 轮回填。**统计口径已在第 32 轮统一**：全仓 `catch (Exception …) when (…)`（排除 bin/obj）实测收口后 **104 处 = 具名 67 + 内联 37**，历史 94/102/66 三组数字作废——第 19 轮 Info ④ 就此消纳） |
+| I8 | Medium | 4 个命令 | Task.Run(...).GetAwaiter().GetResult() async-over-sync 改 AsyncCommand + ExitCodeFor |
+| I9 | Medium | SubCommand.cs:49-81 + WatchLaterCommand.cs:13-45 | **✅ 2026-10-01 批 7 已落地**（PR #80：`DownloadOptionSettings` 抽象基类 + `ToMyOption`；实测 Spectre 分支约束后取 `SubSettings` 中间层，唯一用户可见差异为 `watchlater --help` 的 `--limit` 位置） |
+| I10 | Medium | BBDownUtil.cs 全文件 | god 工具类按职责拆分（更新检查/文件/签名/TV 指纹/章节/WBI/SESSDATA） |
+| I11 | Medium | Config.cs:61-84 | 门面双命名体系统一 PascalCase |
+| I12 | Medium | UrlResolver.cs:15-180 | **✅ 2026-10-01 批 7 已落地**（PR #80：实测 208 行 → 入口分派 + `ResolveHttpUrlAsync`/`ResolveBareIdAsync`，`avid` → `target`；12 例分支夹具先行） |
+| I13 | Medium | Entity.cs:37-93 | Page 阶梯构造器（8/9/10/12 参）改无参构造 + 初始化器 + 属性 |
+| I14 | Medium | AppHelper.cs:448 vs Entity.cs:203 | 同名 AudioMaterial 冲突：DTO 改名 AppRoleAudioDto |
+| I15 | Medium | Display.cs | XML 文档挂错方法归位；.Replace("[] ", "") hack ×4；带宽估算公式 ×6 抽 EstimatedBytes；bool video 参数 |
+| I16 | Medium | BBDownConfigParser.cs:83-209 | **✅ 2026-10-01 收口批已落地**（PR #82：3 份 argv 扫描 → `SkipArgument`/`GetOptionValue`/`OptionName`、2 段重复 while → `CountOptionValueTokens`；`BuildAliasMap` 静态缓存在 PR #53 已由 `CliOptionIndex` 承担） |
+| I17 | Low | 5 处 | ✅ 死代码全部删除（BBDownLoginUtil 注释 Log、BBDownUtil.GetFiles、UrlResolver.MdRegex、GetAvIdAsync 无 token 重载、Pages.cs 末尾悬空 XML 注释） |
+| I18 | Low | 多处 | ✅ 魔法数具名（日志 JSON 摘要 1024→LogJsonSummaryMaxChars ×3、Task.Delay(200)→FileHandleReleaseDelayMs、DrmTechType==2/QR GetGraphic(7)×2/86400 加注释或常量） |
+| I19 | Low | 3 处 | ✅ 注释残余清理（外部编号引用改自描述、Parser 硬编码行号去掉、连续 ThrowIfCancellationRequested 去重） |
+| I20 | Low | 多处 | ✅ 命名/文档歧义（aidOri 注释说明、--skip-ai 描述明确、Page.bvid fallback 加语义注释；--bandwith-ascending 拼写/语法兼容保留） |
+
+## 第 7 轮：CI 跟踪项
+
+| 项 | 级别 | 位置 | 处理 |
+|----|------|------|------|
+| J1 | Observation | release.yml | ubuntu:18.04 已 EOL（glibc 2.27 兼容是刻意选择），跟踪 apt 源长期可用性；必要时迁移容器基镜像 |
+| J2 | Observation | 所有 workflow | Actions 固定 major 版本（@v4/@v5/@v6）非完整 SHA；有 Dependabot 周更兜底可接受，严格供应链可升级 SHA 固定 |
+
+---
+
+## 第 8 轮：续审（2026-08-29，MAINTENANCE_PLAN 批次验收 + 未深查区域扫查）
+
+> 本轮为维护计划两批次落地后的续审。新发现登记于 REVIEW_FINDINGS.md（RF-5/RF-6/RF-7）。
+
+| 项 | 结果 |
+|----|------|
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；单测 634/634 全绿（PR gate 过滤器） |
+| 批次二文档分支验收 | ✅ `docs/serve-security-options-sync`（e726c4c）对照 9 个改动点逐一核实：README 三处+矛盾表述修正、API.md 两条、wiki 参数表/忽略清单/反代提示全部就位；忽略清单与 `SanitizeUntrustedOptions`（BBDownApiServer.cs:697）17 字段逐一比对一致，文案与 ServeCommand.cs 源码描述一致；无反代的 Docker 示例未误加 `--trusted-proxy`。可提 PR。余项：CHANGELOG 条目随下次发版、合入后手动跑 `scripts/sync-wiki.ps1` |
+| 批次一护栏代码审查 | ✅ FakeBilibiliApiServer（锁/Dispose/404 快速失败）、ParserFixtureTests（G8 卫生约定、15 用例断言真实消费节点）、Parser.cs `WithApiScheme` 开缝（默认配置行为逐字节不变）均无缺陷 |
+| 新一轮深查 | SubUtil / DanmakuUtil / BBDownMuxer / ExternalProcessRunner / BBDownConfigParser / Program.cs：无 High/Medium；实证排除两个疑点（SubUtil:278 三字符 `\\/` 替换正确匹配 intl 双重转义；JSON 序列化 6 个 source-gen 上下文全覆盖无 AOT 缺口）；产出 3 个 Low（RF-5 culture 时间格式、RF-6 mp4box cover 转义一致性、RF-7 cliHasUrl 误报） |
+
+## 第 9 轮：消纳挂起发现 RF-4/RF-5/RF-6/RF-7（2026-08-29）
+
+> 将 REVIEW_FINDINGS.md 中四个 ⏳ 待议的 Low 级发现一次性落地（分支 `fix/review-r9-pending-findings`）。剩余挂起仅 RF-2（AsyncCommand 批量迁移，技术债待排期）；RF-3 经评估维持现状。
+
+| 项 | 处理 |
+|----|------|
+| RF-5 | ✅ `BBDownMuxer` ffmpeg `creation_time` 格式化追加 `CultureInfo.InvariantCulture`（自定义格式的 `:` 是 culture 时间分隔符占位符，fi-FI 等区域设置下产出非 ISO-8601 串，`av_parse_time` 解析失败后发布时间元数据静默丢失） |
+| RF-6 | ✅ `MuxByMp4box` itags `cover` 值补 `EscapeString(pic)`（Windows 路径天然含 `\`，与同函数其它 itags 值的转义规则对齐，杜比视界自动切 mp4box 时封面不再静默丢失） |
+| RF-4 | ✅ 新增 `HTTPUtil.VerifiedNoRedirectClient`（始终校验证书 + `AllowAutoRedirect=false`，独立池不受 `--insecure` 降级）；`WidevineCdm` 许可证 POST 切换并在 3xx 显式拦截（与 gRPC POST B3-F2 收口同构，签名 challenge 不随 307/308 重放外发） |
+| RF-7 | ✅ `BBDownConfigParser` 新增 `GetPositionalTokens`（与 `IsSubCommandInvocation` 同构跳值），`cliHasUrl` 只对位置参数应用 URL 启发式——`--aria2c-proxy http://...`、`--work-dir av123` 等 URL 形值选项不再压制配置文件里的 URL |
+| 测试 | ✅ 新增 6 例（总计 640）：VerifiedNoRedirectClient 身份稳定/GET 307 不跟随（含自动跳转对照）/POST+body 307 不重放；ConfigMerge 两个 URL 形值选项回归 + 位置参数提取器语义 |
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；单测 640/640 全绿（PR gate 过滤器）；dotnet format --verify-no-changes 通过 |
+
+## 第 10 轮：RF-2 一次性批量重构（AsyncCommand 迁移，2026-08-29）
+
+> 消纳 REVIEW_FINDINGS 最后一个 ⏳ 挂起项 RF-2（分支 `refactor/rf2-async-command-migration`）。至此 FINDINGS 全部条目结转完毕（其余为"已修复"或"维持现状"）。
+
+| 项 | 处理 |
+|----|------|
+| RF-2 | ✅ 7 个命令迁移 `AsyncCommand<TSettings>`（Login/LoginTV/Article/Live/SubCheck/WatchLater/Serve；原清单含 DefaultCommand，核实已迁移过，漂移修正）；serve 链路 `Run` → `ValidateListenUrl` + `RunAsync`、`StartServer` → `StartServerAsync`，serve 全程 await 不再占用线程池线程阻塞等待；各命令 catch/退出码语义逐字保留，`ExitCodeFor` 评估后不抽取（各命令取消/超时/部分失败语义不同，见 FINDINGS RF-2） |
+| 测试 | ✅ ServeApiHttpTests 适配：RunningServer 直用 `RunAsync`、NonLoopbackListen 改断 `ValidateListenUrl` 同步异常语义；单测 640/640 全绿（PR gate 过滤器）+ LocalIntegration 3/3 |
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；dotnet format --verify-no-changes 通过；serve 冒烟：`--help` 退出码 0、serve 监听回环、`/get-tasks/running` 200 |
+
+## 第 11 轮：RF-2 迁移后全库续审 + 新发现消纳（2026-08-30）
+
+> 本轮为 RF-2 合入后的续审：核实迁移质量 + 四路并行深查（下载管线 / serve 服务 / Core 解析网络层 / 测试套件），产出 8 个新发现（3 Medium + 5 Low，登记 REVIEW_FINDINGS RF-8..RF-13）并**全部修复**（含回归测试）。
+
+| 项 | 处理 |
+|----|------|
+| RF-2 迁移后核实 | ✅ 8 命令 AsyncCommand 语义逐字保留、serve `ValidateListenUrl`+`RunAsync` 拆分合理、无残留 async-over-sync 阻塞（仅 ExternalToolHelper 短进程探针例外，文档已说明）；基线 build 0 警告 0 错误、单测 640/640、format 通过 |
+| serve 冒烟 | ✅ 回环启动 `/get-tasks/running`+`/finished` 200；非回环无 token 拒绝启动且退出码 1（遗留 serve 进程 31152 锁 DLL，已确认来源并终止） |
+| RF-8 | ✅ Download.cs FLV 跳过路径清理与 DASH 分支对齐（封面/字幕/章节），fastSkipChecked 路径补章节清理；新增 `DeleteResidualChapterFiles` 按前缀兜底清理（muxer 写 `chapters-{basename}` 唯一名，旧清理只删固定名 `chapters` 是预存不一致）；+2 测试 |
+| RF-9 | ✅ BBDownApiServer 认证失败限速字典超过 `MaxTrackedAuthFailureIps` 时按最后失败时间裁剪（仅删过期条目约束不住新 IP 轰炸）；+1 测试（反射验证字典有界） |
+| RF-10 | ✅ `TrimFinishedTasksLocked` 溢出裁剪按 `TaskCreateTime` 保留最新（旧 `RemoveRange(0,...)` 按完成顺序误删"后创建先完成"任务）；+1 测试 |
+| RF-11 | ✅ Parser 大会员回退 host 改用 `Config.Current.EpHost`（镜像站可用）；回退判定改解析 JSON `message` 字段（子串匹配仅作非 JSON 兜底，防 B 站改文案失效）；+2 测试 |
+| RF-12 | ✅ `BaseUrlRegex` 收紧为 `^https?://[^/:]+:\d+`（query 中 `:数字` 不再误判为端口）；+1 测试 |
+| RF-13 | ✅ `GetWebSourceWithSetCookiesAsync`（登录轮询）改 `NoRedirectClient` 手动逐跳 + 每跳 `IsTrustedCookieHost` 校验（与 gRPC/Widevine 收口同构，凭据与响应 Set-Cookie 不外发非可信主机），上限 `MaxRedirectHops=10`；+2 测试 |
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；单测 659/659 全绿（PR gate 过滤器，新增 19 例）；dotnet format --verify-no-changes 通过 |
+
+---
+
+## 第 12 轮：全库完整续审（2026-08-30）
+
+> 四路并行深查（下载管线 / serve 服务 / Core 解析网络层 / 测试与 CI 合规）+ Medium 级发现逐项人工核实。新发现 3 Medium + 16 Low + 若干 Info，**仅登记评估未修复**，全部登记 REVIEW_FINDINGS（RF-14..RF-29）；Info 级观察不登记 RF，见下表末行。
+
+| 项 | 结果 |
+|----|------|
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；单测 659/659 全绿（PR gate 过滤器）；无 Skip 残留（failSkips 在位）；CI 门禁与 AGENTS.md 逐字一致；AOT source-gen JSON 四上下文覆盖完整；RF-1~RF-13 修复质量抽查通过 |
+| RF-14 (M) | 下载管线两级 catch 过滤器缺口：`NotSupportedException`（CDN 忽略 Range，BBDownDownloadUtil.cs:797 刻意抛出）/`ArgumentException`/`AggregateException` 逃逸 Download.cs:94/:1067 白名单 → 整批中止、丢 webhook/failedPages。建议 :797 改抛 InvalidOperationException + 过滤器补 AggregateException |
+| RF-15 (M) | serve 读端点无 Host 校验：默认无 token 部署下 DNS rebinding 可读 `/get-tasks*`（响应含 SavePaths 绝对路径）；写端点因 POST 必带 Origin 已受保护，读端点同源 GET 不发 Origin，须 Host 白名单收口 |
+| RF-16 (M) | 文档正确性族：wiki 退出码表虚构 2/3 且 Ctrl+C 归 0 与实现不符（实况：充电专属跳过→0、工具缺失→1、默认命令 Ctrl+C→130）；CLI-Reference 缺 --host/--ep-host/--tv-host/--area 4 项；README:333 serve 选项列举不完整 |
+| RF-17 | Parser 免二压重发两处 catch（:324/:526）吞用户取消——TaskCanceledException 无 `!token.IsCancellationRequested` 守卫，:518 注释前提错误（SendAsync 用户取消抛的正是 TaskCanceledException） |
+| RF-18 | 服务器可控 lan/audio_id 未净化直拼文件路径（SubUtil 5 处 + Parser:502 + Download:444，ResolveWorkPath 只 Combine 不过滤）；附带 SubOnly 无条件改名 .srt（ASS 内容产物扩展名错误） |
+| RF-19 | publishDate/videoDate 占位符 CurrentCulture 格式化（`:` 占位符）且替换值未过 GetValidFileName（Windows `:` ADS 陷阱/跨机路径漂移）——Program.cs:48 + PathHelper.cs:67-68 |
+| RF-20 | 跳过路径清理一致性残留：锁内权威 Skipped 分支（Download.cs:208-225）漏 coverPath；dash 跳过路径多处裸 File.Delete/Directory.Delete 与 flv 包裹版不一致（RF-8 修复族漏网） |
+| RF-21 | aria2c stdin input-file 的 URL/Cookie 未滤 `\r\n`，可注入 `all-proxy`/`dir`/新 URI 指令行（BBDownAria2c.cs:45-50） |
+| RF-22 | 进程执行边界：CheckFFmpegDOVI 探针同步阻塞 + 超时分支未观察 outTask/errTask（ExternalToolHelper.cs:26-33）；ExternalProcessRunner 成功路径 5s 管道兜底可把退出码 0 翻转为 TimeoutException（:90-92，先确认是否有意） |
+| RF-23 | 混流事务化 `.muxing-{guid}` 未知扩展名直接作为 mp4box `-new` 输出参数，GPAC 按扩展名推断容器，新版行为需实测（Download.cs:236 + BBDownMuxer.cs:184） |
+| RF-24 | SanitizeUntrustedOptions 漏 `interactive` → serve 任务阻塞 Console.ReadLine 占死并发槽且 /cancel 无法中断（一行清零修复） |
+| RF-25 | 解析失败日志两处 option.Url 未过 SanitizeLogString（BBDownApiServer.cs:1091/:1120），客户端可控 CRLF 日志注入残留 |
+| RF-26 | Core 低危族 5 小项：免二压降级音频重复追加（缺去重）、PGC gRPC Host 头与目标不符、FavList 翻页无空页保护、IntlBangumi 多余 `\/` Replace、`x/player/wbi/v2` 两处未签名（未记录行为依赖） |
+| RF-27 | FindBinaries 写进程级静态工具路径——核实 serve 下 SanitizeUntrustedOptions:737-740 已清零路径字段，覆盖场景实际不可达，倾向维持现状（待议） |
+| RF-28 | HTTP 响应体无大小上限（gRPC POST 二进制与普通响应字符串层；gzip 侧 48MB 上限未覆盖本体） |
+| RF-29 | .editorconfig 存量违规 4 文件（两个 csproj BOM、Tests csproj 与两个 github yml 缺末尾换行；format 门禁不检查 BOM/insert_final_newline）——已逐字节验证 |
+| 勘误 R-1 | 第 5 轮 H1 记录失实：ServeSecurityMiddleware/TaskRouteMapper/TaskFileStore/CallbackGuard 四文件在 git 全历史中从未存在，功能仍集中于 BBDownApiServer.cs（1543 行）；已在 H1 行加注 |
+| Info 级观察（不登记 RF） | webhook payload 页数用全量分 P 数非选中数；AddSavePath 无去重（Download.cs:211+1063 重复记录）；serve 响应缺 Cache-Control: no-store / 429 缺 Retry-After；任务持久化 tmp 固定名多实例互踩（SubscriptionStore 已用 GUID tmp 未对齐）；番剧 pub_time 无时区串按本机时区解析；HTTPUtil 重定向超限抛 HttpRequestException（StatusCode=null）命中重试谓词整流程重试；WbiSign 未按规范排序/过滤保留字符（当前可用）；TestPort.Allocate 理论 TOCTOU；Windows 哨兵 0.6s 采样窗口可能漏报进程树未杀；ClockCalibrationTests expected 基准应在调用前取；.dockerignore 未排除 .git/Tests/docs（context 偏大）；sync-wiki.ps1 未查 $LASTEXITCODE、不清理 wiki 旧页面、无 try/finally；根目录 .tmp 已被 gitignore 且未跟踪（无需处理） |
+| 无新发现面 | HttpClient 池隔离（verified/insecure×redirect/no-redirect×media 全独立）、WBI 密钥链、JsonDocument 生命周期、protobuf 帧边界、路径锁机制、LiveStreamUtil 录制循环、webhook SSRF 三重防护、持久化 tmp+flush+rename 原子性、锁序一致性、测试共享状态恢复（try/finally 快照）、Collection 序列化声明闭合、Dockerfile AOT、secrets、proto 生成纪律、serve 参数文档与代码一致性、SECURITY/CONTRIBUTING 完备性 |
+
+---
+
+## 第 12 轮附：消纳批 RF-14~RF-29（2026-08-30）
+
+> 消纳第 12 轮登记的发现（分支 `fix/review-r12-findings`）。15 项修复落地（含补遗 RF-23，临时名补 `.mp4` 后缀无需 GPAC 实测即定案）；RF-27 维持现状定案。
+
+| 项 | 处理 |
+|----|------|
+| RF-14 | ✅ `MultiThreadDownloadCoreAsync` 抛出点 `NotSupportedException`→`InvalidOperationException`（消息不变），Download.cs 两级 catch 过滤器补 `AggregateException`——"CDN 忽略 Range"不再中止整批/丢 webhook |
+| RF-15 | ✅ 无 token 时 `isApi` 强制 Host 为字面回环（新增 `internal IsLoopbackHost`：localhost/127/8/::1，刻意不做 DNS 解析防 rebinding 绕过）；有 token 时跳过校验保反代/自定义域名部署；+3 端点测试（evil Host 读写 403 / 回环放行 / 带 token 跳过）+1 纯函数测试 |
+| RF-16 | ✅ 文档修正：wiki 退出码表删虚构 2/3 行、Ctrl+C 改"主命令 130 / 子命令 0"、工具缺失归入 1；总表补 `--host`/`--ep-host`/`--tv-host`/`--area`（语义取自 MyOption Description）；README:333 serve 选项列举补 `--trusted-proxy`/`--notify-webhook` |
+| RF-17 | ✅ Parser 免二压两处 catch 前补 `catch (OperationCanceledException) when (token.IsCancellationRequested) throw;`（SendAsync 用户取消抛的正是 TaskCanceledException），并修正 :518 错误注释 |
+| RF-18 | ✅ SubUtil 新增 `BuildSubtitlePath` 统一 5 处 lan 走 `GetValidFileName`；Parser `audio_id` 同款净化；SubOnly 目标扩展名按源内容形态（.ass 保留）+ lan 净化 |
+| RF-19 | ✅ `FormatTimeStamp` 追加 `CultureInfo.InvariantCulture`（与 RF-5 同构）；PathHelper publishDate/videoDate 替换值过 `GetValidFileName`；`FormatSavePath` 改 internal 可测；+1 测试（fi-FI 区域下断言文化无关与 `:` 净化） |
+| RF-20 | ✅ 锁内权威 Skipped 分支补 coverPath 清理；dash 分支裸删全部包裹（封面 1 处、弹幕 XML 3 处、aid 目录 3 处、flv 弹幕 2 处对齐），统一 `catch (IOException or UnauthorizedAccessException)` |
+| RF-21 | ✅ aria2c stdin 的 URL/Cookie 写入前剥离 CR/LF（注入的指令行语义消除，畸形 URI 由退出码校验兜底）；+1 测试（注入 cookie/双 URI 场景断言单行化） |
+| RF-22 | ✅ `CheckFFmpegDOVI` 改真异步 `CheckFFmpegDOVIAsync`（WaitForExitAsync+WaitAsync 5s；超时分支补观察管道任务防 UnobservedTaskException），调用点改 await；ExternalProcessRunner 成功路径 5s 兜底 ⭕ 维持现状（有意设计，注释在位） |
+| RF-23 | ✅ （补遗）混流临时名改为 `.muxing-{guid:N}.mp4`——不再依赖 GPAC 对未知扩展名的容忍度（新版 filter-based MP4Box 按扩展名推断输出封装），新旧版本全部确定性走 ISOM；ffmpeg 分支 `-f mp4` 强制格式不受影响；`muxingPath` 仅精确路径引用，改动零波及 |
+| RF-24 | ✅ `SanitizeUntrustedOptions` 补 `req.Interactive = false`（阻塞占死并发槽面消除）；既有 ClearsExecutionFields 测试补断言 |
+| RF-25 | ✅ 解析失败日志两处 `option.Url`（及异常消息）过 `SanitizeLogString` |
+| RF-26 | ✅ 5 小项全落地：① 免二压降级 dolby/flac 重复追加——applied 标志守卫 + 新文档接管时重置；② AppHelper GetHeader 移除硬编码 `Host: grpc.biliapi.net`（由 HttpClient 按 URI 生成，番剧 gRPC SNI/Host 不再错位）；③ FavListFetcher 翻页空页 break（对齐其余 fetcher 停滞语义）；④ IntlBangumiInfoFetcher 删除多余 `.Replace("\\/","/")`；⑤ `x/player/wbi/v2` 两处（SubUtil/BBDownUtil）登录态补 WbiSign（aid/cid/wts 升序），未登录保持无签名 |
+| RF-27 | ⭕ 维持现状定案（详见 FINDINGS） |
+| RF-28 | ✅ HTTPUtil 新增 `MaxResponseBodyBytes`（64MB）+ `ReadContentBoundedAsync`（Content-Length 预检 + 逐块累计双拦截）替换 `ReadAsStringAsync`/`ReadAsByteArrayAsync`，`DecodeBodyBytes` 按 charset 解码；+1 判定函数测试（64MB 上限无法廉价构造真实响应） |
+| RF-29 | ✅ 4 文件去 BOM/补末尾换行（BBDown.Core.csproj、BBDown.Tests.csproj、codeql.yml、dependabot.yml） |
+| Info 级观察 | ✅ 消纳 8 项：AddSavePath 去重（Skipped+成功双记导致 API 快照重复）；serve API 响应补 `Cache-Control: no-store`/`X-Content-Type-Options`、429 补 `Retry-After: 60`；任务持久化 tmp 名带 GUID（对齐 SubscriptionStore，多实例同目录不再互踩）；HTTPUtil 重定向超限改抛 InvalidOperationException（HttpRequestException StatusCode=null 误命中重试谓词）；TestPort.Allocate 进程内去重（TOCTOU 偶发 AddressAlreadyInUse）；ClockCalibrationTests expected 基准移到调用前；.dockerignore 补 .git/Tests/docs 等排除（context 瘦身）；sync-wiki.ps1 健壮化（$LASTEXITCODE 检查、废弃页面清理、try/finally 回目录）。⭕ 维持观察 4 项：webhook 页数语义（需产品决策）、番剧 pub_time 本机时区解析、WbiSign 未排序（当前可用）、Windows 哨兵采样窗口（漏报仅影响测试证据强度） |
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；单测 666/666 全绿（+7）；LocalIntegration 3/3；serve Host 校验不破坏既有回环用例 |
+
+---
+
+## 已完成批次（git log 13766b0..2ab54d1，2026-08）
+
+1. **13766b0** Core 韧性：字幕 TimeoutException 降级（E1）、Widevine 许可证有界重试+超时分类（B2/E2）、重定向 GET 重试（E3）、fetcher code 诊断（E4/E5）、Logger.LogStack（E6）
+2. **2cff36c** serve 安全：ForceHttp 清零（A1）、trusted-proxy XFF（A2）、数值 Clamp 慢速 DoS（A3）、RetryCount [1,3]（A4/D5）、日志单行化（A7）、DnsSafeHost（C2）、token 环境变量（A6）、持久化/加载/webhook 日志升级与重启提示/关停枚举 JobId（D2/D3/D4/D7）
+3. **df4eba9** 下载/直播/订阅韧性：VOD 读停滞看门狗（D1）、分片扩展名大小写统一（C3/H11）、直播短段退避（D6）、管道成功路径超时（D9）、订阅历史有界（D10）、itags CRLF 转义（A5）
+4. **e59402c** 应用层：LATEST 全词匹配（C1/I4）、Download.cs 字幕 TimeoutException、Download.cs 662 处缩进对齐（format 门禁修复）
+5. **2ab54d1** 测试：CSRF/认证限速/cancel 端点测试（F1/F2/F3/G2）、413 契约对齐（F8）、看门狗 per-call 注入（F5）、程序集级串行（G3/G4）、ExpandPageAliases 测试（C1）
+
+另：B1 WidevineCrypto 亲验无问题；I21/I22 亲验无问题；J3 设计合理；J4 全部 CI/依赖验证通过。
+
+---
+
+## 第 13 轮：全库续审 + OPTIMIZATION_PLAN 文档验收（2026-08-31）
+
+> 本轮为 v1.6.17 发布、第 12 轮消纳批（RF-14~RF-29）合入后的续审：①第 12 轮消纳批 17 项逐一验收；②`docs/optimization-plan` 分支（未合入的 OPTIMIZATION_PLAN.md）逐锚点事实验收；③此前未深查区域（DRM/弹幕/评论/登录/订阅/应用层）扫查；④命令层退出码/serve-vs-CLI 校验漂移/文档一致性扫查。四路并行深查中两路因子代理 50 轮上限截断而拆小重跑。Medium 级发现全部逐项人工核实。新发现 **4 Medium + 9 Low**，登记 REVIEW_FINDINGS（RF-30..RF-42）；Info 级观察不登记 RF，见表末行。**仅登记评估未修复**，修复待消纳批。
+
+| 项 | 结果 |
+|----|------|
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；单测 666/666 全绿（PR gate 过滤器）；LocalIntegration 3/3（ffmpeg 在 PATH）；dotnet format --verify-no-changes 通过；无 Skip 残留（failSkips:true 在位）；RF-29 四文件字节复核干净（无 BOM/无 CR/有末尾换行） |
+| 第 12 轮消纳批验收 | ✅ 17 项（RF-14~RF-29 + Info 8 项）逐一亲验在位且正确。RF-14 机制核实：分片循环 `catch (NotSupportedException)` → 规范化 `InvalidOperationException`（BBDownDownloadUtil.cs:794-800 带 RF-14 注释），两级过滤器已补 `AggregateException`（Download.cs:94/:1084）；单线程路径 `failOnRangeNotSupported` 默认 false、200 响应优雅全量重下，**无残留逃逸面**。RF-17（Parser.cs:332/:545 守卫）/RF-18（SubUtil `BuildSubtitlePath`×5 + Parser.cs:521 audio_id 净化）/RF-19（Program.cs:51 InvariantCulture）/RF-20（Download.cs:225-227 coverPath + 包裹删除）/RF-21（BBDownAria2c.cs:47/:52 剥离 CR/LF）/RF-22（CheckFFmpegDOVIAsync 真异步 + 管道观察）/RF-23（:243 `.muxing-{guid:N}.mp4`）/RF-24（:836 Interactive=false）/RF-25（:1134/:1163 SanitizeLogString）/RF-26 五小项（dolbyApplied/flacApplied 守卫 :360/:376、AppHelper Host 头移除、FavListFetcher 空页 break :160-163、IntlBangumi 无多余 Replace、SubUtil/BBDownUtil 两处 WbiSign）/RF-28（MaxResponseBodyBytes 64MB + ReadContentBoundedAsync 双拦截）全数在位 |
+| 两个维持现状定案复核 | ✅ RF-27（SanitizeUntrustedOptions 路径字段清零）与 RF-22 成功路径 5s 管道兜底（注释在位）前提仍成立 |
+| OPTIMIZATION_PLAN 文档验收 | ⚠️→✅ 约 30 个事实锚点中 24 个精确命中；7 处必改（`BBDownDownloadUtil` 并非 `partial class Program`、`DownloadPageAsync` 550→约 760 行、`IsServeMode` :27→:35、P1-4 锚点 :825→:818-819、`CkcDecryptor`→`DrmDecryptor`、"六池"→9 个池实例/6 个访问器、P2-1 失效锚点）**已随本轮修正落地**（11 行改动），另补 P0-2 遗漏锚点、P0-3 restore 表述修正、P1-3 arm64 镜像补充；修正后该分支可提 PR |
+| RF-30 (M) | sub check 逐 aid 过滤器吞 `SubscriptionDataCorruptException`：`RecordDownloaded`（SubCommand.cs:179）在 per-aid try 内，过滤器 :185 含 `InvalidOperationException`（专用异常的基类）→ 中止契约失效（外层 :195 专用重抛对此调用点不可达）；历史文件已被 `IsolateCorruptFile` 隔离移走，下一 aid 的 `RecordDownloaded` 见文件不存在**静默重建仅含当前 aid 的历史并原子写回 → 全部订阅历史清零 → 下次 check 全量重下**（SubscriptionStore.cs:190-191 注释明言必须避免的后果） |
+| RF-31 (M) | `TrackSort.cs:19` 裸 `Convert.ToInt32(v.id)`：id 服务器可控（Parser.cs:398/:222/:604），缺失→`GetValueAsStringSafe("")`→FormatException、超大→OverflowException；页面级（Download.cs:1084-1085）与批级（:94）过滤器均无此二类型 → 单个畸形 dash 节点穿透两级过滤器**中止整批多 P**（RF-14 同族逃逸面） |
+| RF-32 (M) | sub check 用户取消语义违约（亲验两条路径）：①Ctrl+C 落在 HttpClient 调用 → `TaskCanceledException` 被 per-aid :181 正确重抛后，又被 **per-sub 过滤器 :202-204（含 TaskCanceledException、无 token 守卫）吞掉**，逐订阅记"检查失败" → 退出码 1 + 误导日志；②取消落在 `ThrowIfCancellationRequested`/初始化段（:146，任何 try 之外）→ 基类 OCE 不匹配 per-sub 过滤器 → 全局 handler（Program.cs:162-167）→ 退出码 130。均违反 wiki:122"子命令取消→0"与 watchlater 正确对照（WatchLaterCommand.cs:105-116）；RF-2 记录"cancel→0 逐字保留"需随修复勘误 |
+| RF-33 (M) | API.md `DownloadTask` 字段清单（:118-131）缺 `ErrorMessage`（BBDownApiServer.cs:1131/:1153 写入 + SanitizeErrorMessage 净化）与 `SavePaths`（:263 深拷贝入快照）两个已序列化字段；同文件 :60 承诺可凭 JobId 查失败任务"错误原因"，按文档开发的客户端拿不到该字段——RF-16 文档族漏网（当时只修 wiki/README 未对照 API.md 字段清单） |
+| RF-34 | DOVI 探针 `Win32Exception` 未捕获：`--skip-mux` 时 FindBinaries 跳过 ffmpeg 解析（Options.cs:166-189），但探针调用（Download.cs:747）无 SkipMux 门控；无 ffmpeg + 杜比视界分 P → `Process.Start` 抛 Win32Exception 穿透探针过滤器（ExternalToolHelper.cs:53）与两级过滤器 → 整批死（语义应为 return false 走 mp4box）。serve 任务 `skip-mux:true` 同面 |
+| RF-35 | DRM 取钥链丢 `CancellationToken`：`DecryptDrmAsync` 持有 token（mp4decrypt 阶段已用），`DrmDecryptor.GetKeyWidevineAsync`（CkcDecryptor.cs:5）未透传；下游 `WidevineCdm.GetKeysAsync`（WidevineCdm.cs:26）token 形参现成，3 行改动即可接通。取钥 = 2 分钟超时 ×3 次尝试 + 退避，serve `/cancel` 最长约 6 分钟不可中断（RF-17 取消族新位置） |
+| RF-36 | ArticleCommand.cs:42 用 `SanitizeFileName`（仅非法字符替换，LiveStreamUtil.cs:668-675）：服务器可控专栏标题恰为 CON/NUL/COM1… 时产出 `CON.md`，Windows 设备名语义无法落盘 → 误导性"专栏获取失败"退出 1；`PathUtil.GetValidFileName` 的保留名防护（PathUtil.cs:55-60，含带扩展名变体）未用上 |
+| RF-37 | TV 登录轮询（BBDownLoginUtil.cs:243）仍用 `AppHttpClient` 自动跟随重定向：POST 体携带按 appsecret 签名的参数、响应含新下发 access_token。WEB 轮询（RF-13）/gRPC POST（B3-F2）/Widevine 许可证（RF-4）均已 NoRedirect 收口，唯 TV 轮询漏网（入口硬编码可信 + 恒校验 TLS，无当前可利用面——一致性/纵深项） |
+| RF-38 | ServeCommand.cs:64-67 `catch (OperationCanceledException)` 无 token 守卫：非根 token 的 OCE（内部超时联动 CTS 等）→ 退出码 0 掩盖异常退出，Docker `restart: unless-stopped`/systemd `on-failure`/CI 丢失崩溃信号；仓库 4 处同款规则注释（LiveCommand.cs:100-103 / WatchLaterCommand.cs:107-115 / ArticleCommand.cs:48-58 / BBDownApiServer.cs:1185-1188）此处未遵守 |
+| RF-39~RF-42 | 文档族 4 项（Low）：CLI-Reference.md:53 示例 `xml,protobuf` 不可用（枚举仅 Xml/Ass，Options.cs:115 报错路径）+:52"默认保存为 XML"与 `DefaultFormats=[Xml,Ass]` 不符；README:97 `--show-all` 写成"显示全部可用音视频流"（实为展示所有分 P 标题，MyOption.cs:43 / Workflow.cs:166-180，CLI-Reference.md:40 正确）；模板文档（Configuration-and-Templates.md:69"18 种"）缺 `<videoDate>`（PathHelper.cs:73 活占位符、RF-19 修复对象）应为 19；README:151-158 serve 子选项表缺 `--notify-webhook`（ServeCommand.cs:29，与同页 :333 RF-16 修正处自相矛盾） |
+| Info 级观察（不登记 RF） | ① CommentUtil.cs:94 / ArticleUtil.cs:50 数据文件导出用 CurrentCulture（`:` 时间分隔符占位符，跨机产物漂移）——RF-5 排他性结论"其余均为日志/控制台场景"对这两处误判，建议 InvariantCulture；② Decrypt.cs:195 密钥文件"安全覆写"写 64 NUL 但 kid:key 行 65 字节（FileMode.Create 截断，末字符仍留盘）——best-effort 本有限，改按实长写；③ `ServeRequestOptions` 继承死属性 `ConfigFile`（全库唯一命中为声明处，`--config-file` 实际在 argv 层实现），SanitizeUntrustedOptions 未清零——当前无害，一行防御 `req.ConfigFile = null`；④ API.md 未记录 GET `/get-tasks*` 的 429 + `Retry-After: 60`（第 12 轮 Info 消纳新增的查询限速行为）；⑤ `CheckUpdateAsync` fire-and-forget 亲验良性（体内全 catch 包裹、有意不干扰退出码，短跑 CLI 的结果竞速仅观感问题）；⑥ `WvdDevice`/`WidevineCrypto` 私钥字节未清零（`WidevineCdm` 已用 ZeroMemory 4 处）——已并入 OPTIMIZATION_PLAN P2-3 现状说明，不另立条目 |
+| 无新发现面 | DRM 解密核心（AES-CMAC/密钥推导对照 RFC 4493 核对、PSSH/盒子长度边界校验、`FixedTimeEquals`、许可证 3xx 拦截 + 重试分类、单键解密失败跳过不整批）、弹幕 XML（DtdProcessing.Prohibit 无 XXE、无 ReDoS、ASS 转义收口）、评论/专栏解析防御性、登录凭据脱敏 + 凭据文件 Unix 权限 + QR 资源 finally 清理、订阅存储原子写/裁剪/IO 锁自洽（缺陷在其调用方 RF-30）、serve-vs-CLI 数值 clamp 全集（5 个数值项双向对齐且 sanitize 先于 Validate 执行）、TypeRegistrar DI、全局异常 handler 取消分类语义、API.md 9 端点/方法/请求字段/响应码全对齐（仅字段清单缺 2 项已登记）、CLI-Reference 65 选项与退出码表全对齐（仅弹幕 2 处已登记）、配置别名表、CHANGELOG 1.6.17 抽查 6 项全部属实 |
+
+---
+
+## 第 13 轮附：消纳批 RF-30~RF-42（2026-08-31）
+
+> 消纳第 13 轮登记的全部发现（分支 `fix/review-r13-findings`，自 `docs/optimization-plan` 顶部切出——**文档 PR 需先合**）。13 项 RF 全部修复，Info 级观察 4 项落地（①数据导出文化固定 ②密钥覆写按实长 ③configFile 防御清零 ④API.md 429 说明）；Info ⑤（CheckUpdateAsync fire-and-forget）亲验良性维持现状、Info ⑥（WvdDevice 私钥清零）已在 OPTIMIZATION_PLAN P2-3 路线图登记不另立条目。
+
+| 项 | 处理 |
+|----|------|
+| RF-30 | ✅ per-aid catch 前补 `SubscriptionDataCorruptException` 专用重抛（SubCommand），损坏异常以退出码 1 终止整个检查，历史清零面消除 |
+| RF-31 | ✅ `TrackSort` 改 `int.TryParse(…, InvariantCulture, out var q) ? q : 0`（id 仅 tie-break，降级 0 无行为损失）+ 两级过滤器补 `FormatException or OverflowException` 纵深；`SortTracks` 提 internal 供回归 |
+| RF-32 | ✅ SubCheckCommand 拆 `CheckSubscriptionsAsync`（逐订阅循环原样迁移）+ 方法级 OCE 分类（token 已取消→"已取消"+0；未取消→1）+ per-sub 过滤器前置取消守卫 + 会话初始化纳入 try；与 watchlater/文档契约对齐；RF-2 记录勘误同步 |
+| RF-33 | ✅ API.md 字段清单补 `ErrorMessage`/`SavePaths` 两行（含"服务器本地路径"注意） |
+| RF-34 | ✅ 探针过滤器补 `Win32Exception`（return false 语义）+ Download.cs 探针调用补 `!myOption.SkipMux` 短路（SkipMux 下无谓进程启动一并省去） |
+| RF-35 | ✅ `DrmDecryptor.GetKeyWidevineAsync` 补 token 形参并透传 `GetKeysAsync`（下游取消分类现可达）；Decrypt.cs 调用点传入 |
+| RF-36 | ✅ ArticleCommand 改 `BBDownUtil.GetValidFileName`；直播 `SanitizeFileName` 复用新增公共方法 `PathUtil.IsReservedDeviceName`（保留名单一源）补保留名防护 |
+| RF-37 | ✅ TV 登录两个端点（auth_code + 轮询）切 `HTTPUtil.NoRedirectClient`（private→public，与 StreamingHttpClient 同模式）+ 3xx 显式拦截；顺带修复响应对象不释放 |
+| RF-38 | ✅ ServeCommand 取消 catch 补 `when (cancellationToken.IsCancellationRequested)`，未取消 OCE 落失败分支记日志 + 1 |
+| RF-39~RF-42 | ✅ 文档 4 项：CLI-Reference 弹幕示例 `xml,ass` + 默认双格式；README `--show-all` 语义修正；模板文档补 `<videoDate>` + 计数 19；README serve 表补 `--notify-webhook` |
+| Info 消纳 | ✅ ①CommentUtil/ArticleUtil 数据导出 InvariantCulture（fi-FI 回归各 1 例）②keyLine 实长覆写 ③`req.ConfigFile = null`（ClearsExecutionFields 补断言）④API.md 429+Retry-After 说明 |
+| 测试 | ✅ 新增 12 例（666→678）：TrackSort 畸形 id、DOVI 探针缺失二进制、DRM 取钥预取消 token（自构造最小 wvd+PSSH，零网络）、serve 用户取消退出码（经 StartServerAsync 全链）、评论/专栏 fi-FI 文化回归 ×2、直播保留名 Theory 6 断言、SanitizeUntrustedOptions configFile 清零断言 |
+| 测试缝说明 | ⏳ RF-30/RF-32 的命令层语义无注入缝（DoWorkAsync/ResolveAsync 静态直连网络），回归以代码走查 + 全量编译验证；测试缝待 OPTIMIZATION_PLAN P0-1（DownloadOrchestrator 拆分）落地后补 |
+| 修正 | 第 13 轮记录三个文档（FINDINGS/PLAN/OPTIMIZATION_PLAN）中由行编辑工具引入的多余前导空格（行标记剥离语义与预期不符），已按 git diff 新增行精确归一化（274+174 行），format 门禁不受影响 |
+| 对抗审查 | 提交前 code-reviewer 全量复核（9 项逐一判定：SubCommand 四条异常路径推演、TryParse 语义等价性、探针纵深、keyLine 覆写长度、TV 登录 using 作用域、ServeCommand 守卫、保留名判定等价性、测试质量、文档事实），核心修复无缺陷。审查产出 3 点已处置：①RF-38 回归只钉住"取消→0"主干（预取消 token 下修复前代码同样返回 0，无法判别 when 守卫本身），测试注释已如实修正；②RF-30/RF-32 登记结论所提回归测试未交付（命令层无注入缝），FINDINGS 状态行已如实标注；③TV 登录切 NoRedirectClient 使两个 POST 超时 2 分钟→1 分钟（与 WEB 轮询同池语义），已在 CHANGELOG 记录 |
+| 遗留观察（对抗审查产出，不登记 RF，下轮评估） | ① 非 DOVI 探针的 `Process.Start` `Win32Exception`（muxer/decrypt 启动"已解析但不可启动"的二进制）仍不在两级过滤器内——RF-34 同族逃逸面只收口了探针处；② `SanitizeFileName` 仍接受纯点号名（`.`/`..`——`Trim()` 不裁点，Windows/Unix 均无法落盘），`GetValidFileName` 已有兜底（PathUtil.cs:77-81），直播标题同属服务器可控输入 |
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；单测 678/678 全绿（PR gate 过滤器，+12）；dotnet format --verify-no-changes 通过 |
+
+---
+
+## 第 14 轮：全库续审（2026-09-15）
+
+> 本轮为第 13 轮消纳批（RF-30~RF-42）合入后的续审：①第 13 轮消纳批 13 项验收；②两条"遗留观察"定案；③四路并行深查（下载管线/命令层、serve 服务层、Core 解析网络层、测试与文档 CI）；④全部 **7 项 Medium 逐项人工核实**（过滤器白名单逐字核对 + 证据链逐行验证）。新发现 **7 Medium + 12 Low**，登记 REVIEW_FINDINGS（RF-43~RF-61），另修正 RF-28 消纳记录（勘误：普通响应体一半从未落地，接续为 RF-51）；Info 级观察不登记 RF，见表末行。**仅登记评估未修复**，修复待消纳批。
+
+| 项 | 结果 |
+|----|------|
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；单测 678/678 全绿（PR gate 过滤器，与 CHANGELOG 声明一致）；dotnet format --verify-no-changes 通过（exit 0） |
+| 第 13 轮消纳批验收 | ✅ 13/13 全部在位：代码 8 项（SubCommand 双级重抛 :223/:237、TrackSort TryParse InvariantCulture、SubCheck OCE 分类 :164-173、探针 Win32Exception+SkipMux 短路、DrmDecryptor token 透传、ArticleCommand GetValidFileName、TV 登录 NoRedirectClient+3xx 拦截+using 释放、ServeCommand when 守卫）+ 文档 4 项（RF-39~42）+ 配套（keyLine 实长覆写、fi-FI 文化回归、configFile 清零、TV 登录 1 分钟超时 CHANGELOG）逐一核实；REVIEW_PLAN:305/307 两条"如实标注"在测试注释中确有落实；消纳批 31 个改动文件字节级卫生全部干净（无 BOM/纯 LF/末尾换行） |
+| 遗留观察定案 | ①升级 **Medium 定案为 RF-43**（亲验：5 个进程启动点全走 ExternalProcessRunner.cs:61 裸 `p.Start()`/Decrypt.cs:151，两级过滤器 Download.cs:96/:1093 白名单逐字核对无 Win32Exception；触发面为显式路径无执行位/损坏二进制——两处 File.Exists 探测均不查；LiveStreamUtil.cs:563 已显式捕获该类型是"真实发生过"的旁证）；②**维持 Info**（亲验：纯点号确实穿透 SanitizeFileName，但唯一调用点 LiveCommand.cs:71 拼接固定后缀 `_直播录制_{时间戳}.flv`，纯点不可能成为路径末段——无可达触发面；列入 Info 观察建议统一到 PathUtil.GetValidFileName，顺带修 LiveStreamUtil.cs:502 的不准确注释——SanitizeFileName 只处理双引号，单引号由 :522 的 concat 列表转义兜底） |
+| RF-43 (M) | 非 DOVI 进程启动点 Win32Exception 穿透两级过滤器（详见 FINDINGS；建议 SystemProcessRunner 启动点规范化为 InvalidOperationException，与 RF-14 先例同构） |
+| RF-44 (M) | `UnauthorizedAccessException` 不在两级过滤器 + 6 处裸 File.Delete + 4 处清理子句只捕 IOException——Windows 只读属性文件 File.Delete 抛 UA、Defender 受控文件夹访问等本地权限错误中止整批（亲验 ：421/:433 裸删与 ：674 单类型 catch 在位） |
+| RF-45 (M) | 免二压重发降级丢失杜比/Hi-Res（RF-26 旁支）：pass1 降级路径无条件从旧文档重赋值 audio 列表（冲掉 pass0 追加项）而 dolbyApplied 标记仍为 true——重试越忙越容易丢杜比，无日志（亲验 Parser.cs:295-369 三路径推演成立） |
+| RF-46 (M) | 直播录制 KeyNotFoundException 逃逸 :319 重连过滤器：code=0 但 data/playurl_info 缺节点的畸形响应 → 整场录制终止，违背"不设重试上限"设计承诺（亲验 :100 链式取节点与 :319/:338 两级 catch 在位） |
+| RF-47 (M) | AppHelper ParseId 抛 ArgumentException / ParseFrom 抛 InvalidProtocolBufferException 均不在两级过滤器（--use-app-api 每分 P 必经）；SubUtil 对姊妹接口 DmViewReply 已显式防此两类，更重路径（含 access_token）反而不设防（亲验 :63/:67/:88） |
+| RF-48 (M) | Page.bvid getter 对服务器可控 aid（收藏夹条目 id="0"/负数/超界）经 BilibiliBvConverter.Encode 抛 AOORE 穿透过滤器——Download.cs 三处注释明言 AOORE 须逐点防护，此处漏网（亲验 getter 与 :31-38 范围校验） |
+| RF-49 (M) | E1 超时类型统一（HTTPUtil.cs:574-579 抛 TimeoutException）后三处逐条降级过滤器未同步：FavListFetcher/SpaceVideoFetcher/BuvidProvider——单稿件超时从"记 failures 跳过"放大为整收藏夹/整空间解析中止；buvid3 纯装饰标识超时竟能炸掉整个空间抓取（亲验三处过滤器逐字核对） |
+| RF-50~RF-60 (L) | 11 项 Low：携 SESSDATA 的 GetWebSourceCoreAsync 仍自动跟随重定向（收口族凭据最重漏网成员）；RF-28 消纳缺口（普通响应体仍无 64MB 上限，记录已勘误）；Series/MediaList 先取节点后查 code 致诊断不可达；GetPropertySafe 键名清单注入面；RF-25 日志脱敏旁支（UrlResolver 派生串 aidOri 含 CRLF 落日志）；webhook 域名空解析"校验空过"+addresses[0] 越界误报；SanitizeUntrustedOptions 漏 Area；ToolFinder 在 CWD 搜索 mp4decrypt/device.wvd（违背 FindExecutable 信任边界注释）；FormatSavePath 轨道元数据占位符未净化（RF-18 同族）；登录轮询 3xx 无 Location 误报"跳数超限"；Audio.shortCodecs 文化敏感 ToUpper |
+| RF-61 (L) | 文档族 6 项：wiki archives.txt 文件名/位置 ×2（实为程序目录 BBDown.archives）、README 占位符表缺 `<videoDate>`（RF-41 漏改同页）、API.md 缺 413、忽略清单缺 configFile ×2、API.md 引用不存在的 serve `--work-dir`、ErrorMessage"单行化"措辞与实现不符 |
+| Info 级观察（不登记 RF） | ① aria2c input-file UA 行未剥 CRLF（RF-21 旁支，仅 CLI 用户输入面）；② DanmakuUtil.SaveAsAssAsync/CommentUtil.SaveToJsonAsync 本地写盘无 token（毫秒级窗口）；③ ExternalProcessRunner 成功路径 5s 管道观察超时可误杀 exit 0（第 12 轮已定案维持现状，不重开）；④ FindBinaries 显式工具路径不存在时静默回退 PATH 无警告；⑤ quick-skip 路径不清 aid 目录遗留分片（延迟清理被无限推迟，触发面窄）；⑥ CoverOnly 产物扩展名取自服务器 URL 的 Path.GetExtension 未净化；⑦ Program.cs:82 stty 进程未释放、Archive 写入在两级过滤器外；⑧ serve /add-task 不校验 Url 非空（null → NRE 型失败任务占 accept 槽）；⑨ Language 未校验（mp4box -add 值 `:`/`=` token 注入，argv 无命令行注入，仅功能影响）；⑩ SubscriptionStore.AtomicWrite 无 flush-to-disk、公共 Load 不持 _ioLock；⑪ ServeCommand.IsLoopbackListenUrl 与 BBDownApiServer.IsLoopbackListenAddress 双实现漂移面；⑫ serve 测试覆盖缺口：webhook 端到端投递/trusted-proxy/Retry-After/Cache-Control 零断言；⑬ Widevine 许可证错误体未过控制字符剥离入日志（B3-L3 族残余）；⑭ 直播流读取用自动重定向 StreamingHttpClient（一致性）；⑮ Logger 时间戳 CurrentCulture（仅日志可读性）；⑯ SanitizeFileName 纯点号名（遗留观察②定案：唯一调用点拼固定后缀无触发面，建议统一 PathUtil.GetValidFileName 并修 :502 注释）；⑰ MAINTENANCE_PLAN/OPTIMIZATION_PLAN 部分锚点随提交漂移（历史计划文档可接受，建议加"锚点以撰写时点为准"声明）；⑱ README --show-all 括注"前 5 个"未提默认还展示最后一个分 P（微瑕） |
+| 无新发现面 | 认证/Host/CSRF/Content-Type 闸（大小写、IPv4-mapped、多值头、段感知路由全部 fail-closed）；持久化原子性与锁序（_persistLock→_taskLock 无环）；SanitizeUntrustedOptions 字段完备性（对照 MyOption 全 60+ 字段，仅 Area/Language 瑕疵已登记）；webhook SSRF 三重防护；HttpClient 池隔离矩阵；WBI 签名链；gRPC 帧防御；时钟校准；DRM 密钥处理（覆写/ZeroMemory/FixedTimeEquals）；RF-9/10/15/17/24/32/38/11/12/26/31/35 修复复核无旁支（RF-26/RF-28/E1 旁支已另立 RF-45/RF-51/RF-49）；直播循环其余面（看门狗/退避封顶/合成校验）；取消令牌透传主链路；测试卫生（failSkips 在位、零 Skip 残留、try/finally 恢复、Collection 串行、Category 纪律）；CI 门禁与 AGENTS.md 逐字一致；Release 工序；4 个 RF-29 文件字节复核仍干净；CLI-Reference 65 选项/API.md 端点/退出码表全对齐；Config AsyncLocal 隔离；BBDown.config 与 serve 不合并 |
+| 审查方法备注 | 四路并行深查 + Medium 全量人工复核（过滤器白名单、异常链、证据行号逐条亲验）；对第 9-13 轮全部修复项做了"旁支漏洞"复查（产出 RF-45/RF-49/RF-51 三条旁支 + RF-28 勘误——消纳批验证不能只验"修复在位"，要验"修复是否覆盖登记声称的全部引用面"） |
+
+---
+
+## 第 14 轮消纳批：RF-43~RF-61 修复（2026-09-15）
+
+> 本批消纳第 14 轮登记的全部 19 项（7 Medium + 12 Low，含文档族 RF-61）。修复路线遵循既有先例：异常逃逸面优先"源头规范化"（RF-14/RF-47 同构），过滤器白名单只补确有真实触发面的类型，净化下沉到来源而非逐 sink 打补丁。
+
+| 项 | 结果 |
+|----|------|
+| RF-43 | ✅ `SystemProcessRunner.RunAsync` 的 `p.Start()` 包裹转译（Win32Exception → InvalidOperationException，消息带工具名）；`Decrypt.cs` 新增 `StartProcessSafe` 同构收口 mp4decrypt 启动点 |
+| RF-44 | ✅ 两级过滤器（Download.cs 页面级/重试级）+ 命令级过滤器（SubCommand ×2/WatchLater）补 `UnauthorizedAccessException`；7 处单类型 `catch (IOException)` 清理子句对齐为双类型 |
+| RF-45 | ✅ Parser.cs 列表重赋值收进 `reparsePass == 0` 分支——降级路径保持 pass 0 列表（含已追加 dolby/flac）不动；回归测试待 DownloadOrchestrator 拆分（ExtractTracksAsync 静态直连网络无注入缝，与 RF-30/RF-32 同批如实标注） |
+| RF-46 | ✅ LiveStreamUtil 两处链式取节点改 `TryGetPropertySafe` 逐级判空，缺节点抛"暂时无法获取…将自动重试"的 InvalidOperationException 走既有瞬态退避 |
+| RF-47 | ✅ AppHelper `ParseId` 改抛 InvalidOperationException；`ParseFrom` 包 try/catch 转译 InvalidProtocolBufferException |
+| RF-48 | ✅ `Page.bvid` getter 包 try/catch，Encode 越界回落原始 aid（与非纯数字分支同语义） |
+| RF-49 | ✅ FavListFetcher/SpaceVideoFetcher/BuvidProvider 三处过滤器补 `TimeoutException`；SpaceVideoFetcher 过时注释同步修正 |
+| RF-50 | ✅ `GetWebSourceCoreAsync` 重构为逐跳循环：sendCookie 路径走 NoRedirectClient + 每跳 `IsTrustedCookieHost`；匿名路径保持 AppHttpClient 自动跳转不变；3xx 无 Location 按终态读 body（RF-59 同族语义） |
+| RF-51 | ✅ `GetWebSourceCoreAsync`/`GetWebSourceAnonymousCheckedAsync` 改 `ReadContentBoundedAsync` + `DecodeBodyBytes`（后者顺带补 EnsureSuccessStatusCode）；`DecodeBodyBytes` 补 BOM 剥离对齐 ReadAsStringAsync 行为 |
+| RF-52 | ✅ SeriesListFetcher/MediaListFetcher（含分页块）改先查 code 再取 data；MediaList 回退过滤器补 KeyNotFoundException |
+| RF-53 | ✅ `GetPropertySafe` 键名清单过控制字符剥离 + 截断保留前 8 个（`FormatAvailableKeys`） |
+| RF-54 | ✅ `ResolveAsync` 返回前统一 `SanitizeLogString` 单行化；Pages.cs/Options.cs 两处含客户端原文的 LogError 套用；SanitizeLogString 补单测（此前零单测） |
+| RF-55 | ✅ `IsSafeCallbackUrlAsync` 空数组返回 false；`SendCallbackAsync` 空数组记 Warn 跳过；回调过滤器放宽为 `catch (Exception)` |
+| RF-56 | ✅ `SanitizeUntrustedOptions` 补 `req.Area` 白名单（hk/tw/th 大小写不敏感，其余回落 ""）+ 单测 |
+| RF-57 | ✅ `ToolFinder.FindTool` 移除 CWD 搜索（仅 PATH + 程序目录 + Unix 常见路径） |
+| RF-58 | ✅ `FormatSavePath` 的 dfn/videoCodecs/audioCodecs 占位符统一过 `GetValidFileName`（res/fps/bandwidth 为纯数字/格式化值无需净化） |
+| RF-59 | ✅ 登录轮询 3xx 无 Location 分支改读 body 返回（与 2xx 同路径），不再落"跳数超限"异常 |
+| RF-60 | ✅ `Audio.shortCodecs` 改 `ToUpperInvariant()` |
+| RF-61 | ✅ 文档族 6 项：archives 产物说明 ×2（程序目录 BBDown.archives）、README 补 `<videoDate>`、API.md 补 413 + 忽略清单补 configFile/area 白名单 + 移除不存在的 `--work-dir` 表述 + ErrorMessage 措辞对齐 |
+| 配套 | CHANGELOG Unreleased 补 19 项条目（修复 10 / 改进 8 / 安全性 1 / 文档 1 / 测试增强）；REVIEW_FINDINGS 状态表与详述章节全部翻 ✅ |
+| 测试 | ✅ 全库 715/715 全绿（+37：SanitizeLogString 契约、area 白名单、webhook 零地址、GetPropertySafe 净化/截断、Page.bvid 回落、shortCodecs 文化不变） |
+
+---
+
+## 第 15 轮：全库续审（2026-09-15）
+
+> 本轮为第 14 轮消纳批（RF-43~RF-61，v1.6.18）合入后的续审：①消纳批 19 项复核；②四路并行深查（下载管线/命令层、serve 服务层、Core 解析网络层、测试与文档 CI）；③全部 Medium 逐项人工亲验 + **本地实测复现**。新发现 **2 Medium + 9 Low**，登记 REVIEW_FINDINGS（RF-62~RF-71）。**仅登记评估未修复**，修复待消纳批。本轮另有一条方法论级产出：**测试基线红≠代码缺陷**——RF-69 的假红经实测定案（见下）。
+
+| 项 | 结果 |
+|----|------|
+| 基线 | ✅ `dotnet build` Release 0 警告 0 错误；**单测 700/700 全绿**（PR gate 过滤器，`NO_PROXY=*` 下）；`dotnet format --verify-no-changes` exit 0。⚠️ 默认环境（系统代理在线）下 `HostValidation_WithoutToken_*` 2 例假红，根因见 RF-69 |
+| 第 14 轮消纳批复核 | ✅ 重点项在位：RF-44（`Download.cs:98` 含 `UnauthorizedAccessException`，清理点 `:227/:232/:282/:302/:307` 均已双类型）、RF-50/51（`HTTPUtil` 逐跳循环 + `ReadContentBoundedAsync`）、RF-53（`JsonElementExtensions.cs:69` 键名过净化）、RF-54（`SanitizeLogString` 调用点落地）、RF-60（`Entity.cs:189` `ToUpperInvariant`）、RF-61（文档族）。**复核产出两处消纳缺口**：RF-58 的"统一净化"实际漏 `res`/`fps`（→ **RF-63**）；RF-60 的代码修复正确但回归测试输入不含 `'i'`，防线失效（→ **RF-68**）——再次印证"消纳批验证不能只验修复在位，要验是否覆盖登记声称的全部引用面"（RF-51 教训的同类复发） |
+| RF-62 (M) | DRM 取钥链 `CryptographicException` 穿透两级过滤器：`WidevineCdm.cs:324` 的 RSA 二次解密无 catch（`:317-325` 只护第一次 OAEP-SHA1）→ `DrmDecryptor` 无 try → `Decrypt.cs:84` 白名单不含 → `Download.cs:98` 白名单不含 → 逃出 `foreach`，**剩余分 P 全部放弃 + webhook/failedPages 汇总丢失**。触发面真实（wvd 与服务器协商不匹配，区别于证书吊销走 `:305-311` return null）。与 RF-43/47/48/49 同族 |
+| RF-67 (M) | PR CI `vulnerability-scan` 门禁失效：`pr.yml:49-52` 的 `dotnet list package --vulnerable` **退出码恒为 0**（NuGet/Home#11315），只打印报告、永不阻断 PR。安全门禁形同虚设 |
+| RF-63~66、68~71 (L) | 9 项 Low：RF-63 `res`/`fps` 未净化（RF-58 消纳缺口，与 `PathHelper.cs:61-62` 注释自相矛盾）；RF-64 评论保存 catch 窄于页面级过滤器（评论 API 超时 → 成功页误判失败，违背 `:798` 注释意图）；RF-65 fetcher 顶层 `GetPropertySafe` 未经 `code` 先行检查致中文诊断不可达（RF-52 同族残留 6 处，`SpaceVideoFetcher.cs:236` 最重）；RF-66 `NoRedirectClient` 超时 1 分钟为超时矩阵唯一非 2 分钟项（RF-50 切池后头阶段上限隐性减半）；RF-68 `EntityTests` RF-60 回归测试假绿；RF-69 测试套件未隔离系统代理；RF-70 `WatchLater`/`Live` 服务器可控标题未脱敏入日志（RF-54 同族）；RF-71 `API.md` 时间戳"本机时区"措辞与 `ToUnixTimeSeconds()` 语义不符 |
+| RF-69 实测定案 | 初始基线 2 例红（`localhost` 返回 400、POST 返回 400 而非 403）→ 逐条排查：`/add-task` 的 400 只可能来自 `Results.BadRequest("输入有误")`（绑定失败），意味中间件放行 → 实测 `serve` + curl 复现（`Host: 127.0.0.1` 200、其余 502，暴露代理介入）→ 决定性实验 `NO_PROXY=* dotnet test` → **2/2 通过、全量 700/700 全绿**。结论：本机系统代理（`127.0.0.1:7890`）转发回环请求导致的**假红，代码无缺陷**；`ServeApiHttpTests.cs:74` 未设 `UseProxy=false` 是测试基础设施缺陷（CI 无代理故绿，本地在线代理故红） |
+| 无新发现面 | serve 安全边界（token `FixedTimeEquals`、Host 回环白名单、CSRF/Content-Type 闸、webhook SSRF `ConnectCallback` 绑定校验、`SanitizeUntrustedOptions` 字段完备性、锁序 `_persistLock→_taskLock` 无环、内存上界）；Core 逐条降级过滤器（`FavList.ProcessPageAsync:114`、`SpaceVideo.ExpandEntriesAsync:121`、`BuvidProvider:46` 均已含 KNFE/Timeout，RF-46/49 在位）；进程启动收口（全仓仅 `Decrypt.cs:29`/`SystemProcessRunner.cs:65` 两处 `Process.Start`，均已规范化）；资源释放（`BBDownDownloadUtil`/`BBDownMuxer`/`ExternalProcessRunner`/`ProgressBar` 的双 Timer）；测试卫生（零 `[Fact(Skip)]`、`failSkips` 在位、`Config.Current` AsyncLocal 隔离、`MuxerProcessRunnerCollection` 串行化正确）；文档一致性（对照 `MyOption`/`Commands`/`BBDownApiServer` 全面核对，除 RF-71 外无新漂移） |
+| 审查方法备注 | 四路并行深查 + Medium 全量人工亲验；本轮新增**环境干扰排查**环节（RF-69）——基线出现红色时先区分"代码缺陷"与"环境假色"，用禁用代理/绕过代理的对照实验定案，避免把环境污染误记为代码问题（与既有的"防假绿"纪律互为镜像） |
+
+| Info 级观察（不登记 RF） | ① `BBDownApiServer.cs:337-339` 在途任务登记窗口（关停排空快照理论上可漏，窗口为单条指令且 30s 超时兜底）——维持现状；② `:715-718` 已完成任务按 `TaskCreateTime` 计龄（RF-10 已决策按该字段保留最新），非漏网——维持现状；③ `AGENTS.md:27` 的本地 `dotnet format` 与 CI `--verify-no-changes` 差异已由同行注释说明（本地修复、CI 把关），非不一致——不登记；④ `Parser.cs:762` `QualityMap` 为空时 `Max()` 抛 IOE（配置非服务器输入，触发面极低） |
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；dotnet format --verify-no-changes 通过 |
+
+---
+
+## 第 16 轮：全库续审 + 分析（2026-09-18）
+
+> 第 15 轮登记（RF-62~RF-71）后的续审 + 新一轮深查。新发现 **6 Medium + 11 Low**，登记 REVIEW_FINDINGS（RF-72~RF-88），**仅登记评估未修复**。
+> 本轮同时完成**第 15 轮 RF-62~RF-71 的消纳批**（下详）：10 项中 9 项修复 + **RF-62 亲验前提不成立定案**。
+> 产出分析报告 [`docs/PROJECT_ANALYSIS.md`](PROJECT_ANALYSIS.md)。
+
+### 16-A：第 15 轮消纳批（RF-62~RF-71）
+
+| 项 | 处理 |
+|----|------|
+| RF-62 | ⭕ **前提不成立，维持现状**。亲验：`WidevineCdm.GetKeysAsync`（`WidevineCdm.cs:26-56`）已在 `:51` 用 `catch (Exception ex) { …; return null; }` 包裹整个取钥链（blame 2026-05-29，早于登记），`ParseResponse:324` 的 `CryptographicException` 在此被吞、异常不出 `WidevineCdm`，"整批中止"面不存在。原拟在 `Decrypt.cs:84` 补类型的修改已回退（死代码）。**登记所述逃逸链失实** |
+| RF-63 | ✅ `PathHelper.cs:66-67` 的 `res`/`fps` 补 `GetValidFileName(..., filterSlash: true).Trim().TrimEnd('.').Trim()`（含 null 合并）；+1 回归测试 |
+| RF-64 | ✅ 评论 catch 补 `TimeoutException or AggregateException or UnauthorizedAccessException`（`Download.cs:819-821`） |
+| RF-65 | ✅ 6 处 fetcher 顶层改逐级判空/先 code 后 data（NormalInfoFetcher ×2、CheeseInfoFetcher、FavListFetcher ×2、IntlBangumiInfoFetcher、SpaceVideoFetcher ×2） |
+| RF-66 | ✅ `HTTPUtil.cs:225-228` 两池超时对齐 `FromMinutes(2)` |
+| RF-67 | ✅ `pr.yml` vulnerability-scan 改 `--format json` + `jq` 真失败语义 |
+| RF-68 | ✅ `EntityTests` 输入改 `"avci"`（含 'i'）——原 `"e-ac-3"` 不含 'i'，tr-TR 规则不触发（假绿） |
+| RF-69 | ✅ `ServeApiHttpTests.cs:74` 客户端改 `SocketsHttpHandler { UseProxy = false }` |
+| RF-70 | ✅ `WatchLaterCommand.cs:81-83`、`LiveCommand.cs:63-65` 服务器字段过 `SanitizeLogString` |
+| RF-71 | ✅ `API.md:125/:129` 改"UTC 纪元秒（与时区无关）" |
+| 测试 | ✅ 全库 **701/701 全绿**（+1：`FormatSavePath_ResAndFps_AreSanitized`）；两个新增/修正的回归测试均经**变异验证**（改回缺陷实现则测试失败） |
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；dotnet format --verify-no-changes exit 0 |
+
+### 16-B：新一轮深查（RF-72~RF-88）登记 + 消纳
+
+> 本轮完成第 16 轮发现的**消纳批**：RF-72~RF-88 已全部处理（含新增 1 处 RF-86 Snapshot 锁）。
+
+| 项 | 结果 |
+|----|------|
+| 基线 | ✅ dotnet build Release 0 警告 0 错误；单测 **716/716 全绿**（+16）；format 通过 |
+| RF-72 (M) | ✅ 两级过滤器 + 命令级过滤器补 `InvalidDataException` |
+| RF-73 (M) | ✅ `Page.aid/cid/epid` 属性 setter 经 `PathUtil.SanitizePathSegment` 单一收口；+1 回归测试 |
+| RF-74 (M) | ✅ 401 sink 改 `TruncateForLog`；限速分支只记 IP |
+| RF-75 (M) | ✅ 抽生产 `ArchiveTracker`/`ProgressAggregator`；均经**变异验证** |
+| RF-76 (M) | ✅ AOT 防线 `SettingsTypes` 补齐 10 个类型 |
+| RF-77 (M) | ✅ `pr.yml` local-integration 安装 ffmpeg 后断言 `command -v ffmpeg` |
+| RF-78 (L) | ✅ `WvdDevice.Load` 补零长度分支；+1 回归测试 |
+| RF-79 (L) | ✅ `ReadContentBoundedAsync` 提为 public，4 处裸读改有界 |
+| RF-80 (L) | ✅ `JsonElementExtensions.SanitizeServerText` 在 12 处 fetcher `message` 拼接前应用 |
+| RF-81 (L) | ✅ `ParsePageSelection` 累计上限；`Download.cs:35` 日志截断；serve 忽略 `DanmakuFilter*` |
+| RF-82 (L) | ✅ `SanitizeUntrustedOptions` 清零 6 个废弃兼容开关 |
+| RF-83 (L) | ✅ `/add-task` 队列满 429 补 `Retry-After` |
+| RF-84 (L 文档) | ✅ wiki 6 项（退出码/格式/占位符计数/子命令选项/错误码/样例字段） |
+| RF-85 (L 文档) | ✅ Docker 配方改挂 `/app` + token 环境变量 |
+| RF-86 (L) | ✅ `Snapshot()` 状态字段入锁 |
+| RF-87 (L) | ✅ PR CI 加 docker-build-smoke；build_latest 加 concurrency |
+| RF-88 (L 测试) | ✅ DRM 测试精确异常类型/改名 |
+
+> 完整详情见 [`docs/REVIEW_FINDINGS.md`](REVIEW_FINDINGS.md) RF-72~RF-88；分析报告见 [`docs/PROJECT_ANALYSIS.md`](PROJECT_ANALYSIS.md)。
+
+---
+
+## 第 17 轮：PR #50 审查 + 消纳（2026-09-26）
+
+> 本轮对象为外部贡献 PR（#50 `feat(sub): sub check 新增 --per-sub-dir 按订阅分目录下载`，作者 Weidows，Closes #49），非全库续审。审查方式：源码精读 + **隔离 worktree 内实构建/实测试** + BCL/行为探针实测 + 变异验证。新发现 **2 Medium + 3 Low**，登记 REVIEW_FINDINGS（RF-89~RF-93），并在**同一 PR 分支内**由维护者提交完成消纳（`maintainerCanModify` 开启）。
+
+| 项 | 结果 |
+|----|------|
+| PR 基线复现 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **728/728 全绿**（PR 声称属实）；`dotnet format --verify-no-changes` exit 0；`sub check --help` 可见 `--per-sub-dir` |
+| PR 修复有效性 | ✅ 实测复现其声称的嵌套缺陷：相对 `-w` 连续两订阅解析为 `first=[out] second=[out\out]`（`ChangeWorkingDir` 在 CLI 下写进程 CWD）——该顺带修复确有价值 |
+| PR 特性有效性 | ✅ 落盘链路核对：`DownloadPageExecution.cs:79/:258` 的 `savePath` 经 `PathUtil.ResolveWorkPath`（基于 `Config.WorkDir`），per-sub 目录确实控制产物位置；净化后目录段不逃出 work-dir（`..\..\..\Windows\System32` → `.._.._.._Windows_System32`） |
+| 根因核对 | ✅ Issue #49 的三条根因均成立：`BuildOption` 只透传 `-w`（默认模板 `SinglePageDefaultSavePath`）、`SubCheckSettings` 无 `-F`、`BBDownConfigParser.cs:106` 对 `sub` 整体跳过配置合并 |
+| RF-89 (M) | ✅ `-w` 规范化移出循环、改为 `TryResolveWorkDir` 双返回值；非法 `-w` 明确报错 + 退出码 1，不再被命令级处理器报成"请尝试升级到最新版本后重试!"并静默放弃其余订阅 |
+| RF-90 (M) | ✅ `watchlater` 同源缺陷一并修复（共用同一入口），根因不再只打在单个命令内 |
+| RF-91 (L) | ✅ `ResolveSubDirName` 回退判据改用净化前的原始值；死代码与假绿测试修正（含死断言、弱不变式、名实不符的占号用例） |
+| RF-92 (L) | ✅ `TryResolveWorkDir` 提为 internal 纯函数，+4 例覆盖 PR 中零覆盖的 `-w` 绝对化改动 |
+| RF-93 (L) | ✅ `sub add` 无 `--name` 时提示；wiki 补命名建议 |
+| 测试 | ✅ 全库 **736/736 全绿**（728 + 8）；新增/修正用例均经**变异验证**（回退判据或 catch 白名单改回缺陷实现则 5 例失败） |
+| 基线（消纳后） | ✅ dotnet build Release 0 警告 0 错误；dotnet format --verify-no-changes exit 0 |
+
+| Info 级观察（不登记 RF） | ① PR #50 提交时 `statusCheckRollup` 为空：fork 首次贡献者的 `pull_request` workflow 处于 `action_required`，需维护者批准后才运行（master 保护要求 `Build & Test`/`Format Check`/`NuGet Vulnerability Scan` 三项）——`mergeStateStatus: BLOCKED` 由此而来而非冲突，合并前必须先批准 workflow。② `ResolveSubDirName` 为测试便利而暴露 `internal` + 外部 `HashSet<string>` 参数；若后续扩展分目录命名逻辑，可考虑封装为独立小类 |
+
+---
+
+## 第 18 轮：PR #53 / PR #55 审查 + 消纳（2026-09-30）
+
+> 本轮对象为两个外部贡献 PR（#53 `fix(cli): 选项值以 '-' 开头时可用空格写法传入`，Closes #52；#55 `perf(sub): sub check 增量扫描改为轻量列举 aid（不再逐个展开投稿）+ --full-scan`，Closes #54；作者均为 Weidows），非全库续审。审查方式：源码精读 + **隔离 worktree 内实构建/实测试/A-B 对比** + Spectre 行为探针 + **变异验证**。新发现 **2 Medium + 3 Low**，登记 REVIEW_FINDINGS（RF-94~RF-98），并在**各自 PR 分支内**由维护者提交完成消纳（`maintainerCanModify` 开启）。
+
+| 项 | 结果 |
+|----|------|
+| 基线复现（#52） | ✅ A/B 实测：基线 10e1049 下 `sub add mid:19231317 --name "-尾野"` 报 `Option 'name' is defined but no value has been provided.`（退出码 1）；`BBDown.config` 侧 `--work-dir` + `-wdtest` 报 `Option 'work-dir' is defined but no value has been provided.`（issue 描述的 `Short option does not have a valid name.` 文案与实测不符，结论本身成立） |
+| PR #53 有效性 | ✅ 修复后同命令行输出 `已添加订阅`，`sub list` 显示 `[-尾野]`；配置文件侧正常解析；`--name --cookie x` 保持原报错（非零退出且不写订阅） |
+| PR #53 关键假设 | ✅ 自建 Spectre 探针（驱动 `CommandApp`）：合并产出的 `-q=-1080P`（短选项+等号）、`--name=-尾野`、文档宣称的 `--name:-尾野`（冒号）三种形式均被正确绑定——原 PR 单测只钉字符串合并结果，未钉上游库接受该形式 |
+| PR #53 护栏 | ✅ bool 开关不合并（`--skip-mux --skip-subtitle` 实测无 `Flags cannot be assigned a value`）；下一 token 是已知选项名时不合并（恢复原 `no value` 报错） |
+| PR #55 有效性 | ✅ 路径核对：旧路径确为逐稿 `NormalInfoFetcher` 展开 + 120ms 间隔而调用方只取 aid；新路径只翻投稿列表页（issue 的机制描述属实；性能数字无法离线复现，机制与请求量降幅一致） |
+| PR #55 历史键一致性 | ✅ **排除错位风险**：旧路径写历史的 aid 来自 `NormalInfoFetcher` 的 `new Page(..., id, ...)`，其 `id` 即空间列表 `entry.Aid`；新路径比较同一 `entry.Aid`，同源同格式（`Page.aid` 的 `SanitizePathSegment` 对纯数字 aid 为恒等变换） |
+| PR #55 边界 | ✅ 首屏空抛错、空页 break 不丢结果、`page.count` 解析、跨页去重、`pageNumber < totalPage` 均与既有 `FetchAllEntriesAsync` 对齐；`IsSteinGate` 旧路径本就丢弃，无语义损失 |
+| RF-94 (M) | ✅ 入口 E2E +3 例（进程内直调 `Program.Main`，覆盖 argv→配置合并→并入→Spectre→命令执行）；变异验证：禁用入口调用则 2 例失败 |
+| RF-95 (L) | ✅ `SettingsTypeCatalog` 反射枚举 + AOT root 对拍；当场发现三处硬编码清单都漏掉的 `SubSettings`/`ServeRequestOptions` |
+| RF-96 (L) | ✅ `CliOptionIndex` 前提固化 + canonical 类型一致性用例（102 属性 / 132 token 全量核对无冲突） |
+| RF-97 (M) | ✅ `CheckSubscriptionsAsync` 可注入 fetcher 工厂 + `SubCheckPathSelectionTests` 5 例；变异验证：强制旁路轻量路径则 4 例失败 |
+| RF-98 (L) | ✅ README 提示 + wiki「已知限制与建议」小节 |
+| 测试 | ✅ #53 分支 **757/757 全绿**（750 + 7）；#55 分支 **751/751 全绿**（746 + 5）；新增用例均经**变异验证** |
+| 两 PR 组合 | ✅ 本地虚拟合并：唯一冲突 `CHANGELOG.md`（纯格式），解冲突后 build 0 警告 0 错误、**760/760 全绿**、`dotnet format --verify-no-changes` exit 0 |
+| 合并 | ✅ 走 merge commit（自定义标题+正文，沿 PR #50 先例）；CI 三项必过检查（`Build & Test`/`Format Check`/`NuGet Vulnerability Scan`）全绿后合并 |
+
+| Info 级观察（不登记 RF） | ① `sub check` 轻量路径不再触发旧路径的"逐稿展开连续失败 ≥5 即中止"早失败——详情 API 系统性风控时会退化成"发现 N 个新内容 + 逐个下载失败"（退出码仍非 0、错误仍逐条打印），请求量更大、诊断粒度更粗，判定可接受。② 两 PR 均为作者自建 issue 自修复（issue 与 PR 同分钟创建），符合 CONTRIBUTING 的 issue-first 要求；`CHANGELOG.md` 的 `## [未发布]` 小节两者都要新增，合并第二个前需 rebase 一次。③ `REVIEW_FINDINGS.md` 的「状态总览」表此前只维护到 RF-88（RF-89~RF-93 只有详情段、无索引行），本轮一并补齐 89~98 的索引行，消除该文档漂移。 |
+
+---
+
+## 第 19 轮：REFACTOR_PLAN 批 1a 验收 + 批 1b 落地（2026-10-01）
+
+> 本轮按 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md) §6 的批次序执行：①验收批 1a（I7 异常过滤策略收口，PR #60）；②落地批 1b（I11/I14/I15/I3，PR #61）。**无新发现登记**——I11 实测出的"门面大半是死代码"属既有条目的范围细化，登记在 REFACTOR_PLAN §1 实测校正表。用户可见行为零变化，故不改 CHANGELOG / README / wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **775/775 全绿**（PR gate 过滤器）；`dotnet format --verify-no-changes` exit 0 |
+| 批 1a 验收 | ✅ `BBDown.Core/Util/ExceptionPolicies.cs` 9 条具名策略在位；生产代码 **64 处**站点全部改用具名谓词（Core 9 + App 55），另有真值表 9 处引用（`ExceptionPolicies.*` 实测 73 引用 = 64 + 9）；`ExceptionPolicyTests` 逐类型钉住集合；未收口的站点保留内联集合与站点自有守卫（数量口径见 Info 观察④）。第 5 轮 H1 式"声称拆分但文件不存在"的勘误**未复现**（策略类真实存在且被引用） |
+| I11 | ✅ 实测 13 个门面成员中 **9 个全库零引用**（`COOKIE`/`TOKEN`/`DEBUG_LOG`/`HOST`/`EPHOST`/`TVHOST`/`AREA`/`SKIP_SSL_CHECK`/`qualitys`）→ 按 H7/I17「死代码逐条删除」先例删除；存活 4 个改 PascalCase（`Wbi`/`WbiFlow`/`CookieFlow`/`SetClockOffset`，9 处调用点同步）；类级文档写明"读写配置直接用 `Config.Current`，不再新增门面成员" |
+| I14 | ✅ `AppHelper` 的 `internal AudioMaterial` → `AppRoleAudioDto`（与 `Entity.AudioMaterial` 同名冲突消除）；序列化字段名不变，`[JsonSerializable]` 同步 |
+| I15 | ✅ 新增 `Display.BuildTrackLine`/`Display.EstimatedBytes`（internal）：**6 处**带宽估算公式收口、**3 处** `.Replace("[] ", "")` 收口（实测为 3 处，非登记时的 ×4）；去掉 `DownloadTrackAsync` 未使用的 `bool video` 形参（`Func<>` 契约 + 5 个调用点同步）；挂错方法的 XML 文档归位到 `SelectTrackManually` |
+| I3 | ✅ 新增 `BBDown.Core/Util/BiliApiKeys.cs`：4 个常量（TV/BiliPlus appkey、两把盐）+ 全库唯一 `GetSign`/`GetTimeStamp`；删除 `Parser.GetSign`/`Parser.GetTimeStamp`/`BBDownUtil.GetSign`/`BBDownUtil.GetTimeStamp` 四份重复实现，3 处 appkey 字面量改常量。**签名算法与盐值一字未改**，`ParserFixtureTests` 的 `appkey=4409e2ce8ffd12b8` 断言仍绿 |
+| 测试 | ✅ 新增 `TrackLineFormatTests` 9 例（775 → **784**）：展示行组装与旧 `.Replace` 写法逐字符等价 ×4、字段内容不被误伤 ×1、估算算式 ×3、长整型不溢出 ×1；两个助手提 internal 供直测（沿用 `FormatSavePath`/`SortTracks`/`TryResolveWorkDir` 先例） |
+| 基线（收批） | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**；`dotnet format --verify-no-changes` exit 0；新增两文件字节卫生（无 BOM / 纯 LF / 末尾换行） |
+| Info 级观察（不登记 RF） | ① `Config.Wbi` 仍是"全局写"门面（serve 流内应走 `WbiFlow`），彻底移除需先改造 4 处调用点，留待后续评估；② `EstimatedBytes` 的 kbps 口径依赖 `Parser.cs` 的 `bandwidth / 1000`（接口给 bps），已写入 XML 文档与测试注释防漂移；③ `AppRoleAudioDto` 与 `Entity.AudioMaterial` 的同名冲突已消除，但两者的"元数据 vs 本地文件"语义差异仍只靠注释表达；④ **批 1a 的统计基数与收批实测对不上**：批 1a 记录称全库 when-过滤器 94 处 = 64 处收口 + 2 处带附加条件 + 28 种唯一集合（`ExceptionPolicies.cs` 类文档内又写"66 处重复族"，与 64/28/2 亦不自洽）；本轮按 `catch (Exception …) when (` 统一口径逐文件实测（排除 `bin`/`obj`）为 **102 处生产站点**（另 1 处命中是类文档中的示例文本），其中 **64 处**用具名谓词、**38 处**保留内联集合。差异不影响收口本身的正确性（64 处逐字等价 + 真值表钉住）。**✅ 第 32 轮已重算统一**：口径定为"全仓 `catch (Exception …) when (…)` 按正则统计（排除 bin/obj），具名 = 谓词含 `ExceptionPolicies.`，其余为内联"——收口批后实测 **104 处（具名 67 / 内联 37）**，历史 94/102/66 三组数字作废（当前数字已写入 `ExceptionPolicies` 类文档与 `REFACTOR_PLAN` §3） |
+
+---
+
+## 第 20 轮：REFACTOR_PLAN 批 4 落地（I2 Parser 巨方法拆解，2026-10-01）
+
+> 按 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md) §6 批次序执行批 4：`ExtractTracksAsync` **532 行 → 39 行**，数据根定位 3 份漂移变体、轨道基址选择 6 处重复、两次重发的文档所有权全部收口。**无新发现登记**——两处偏差（不引入 `ApiMode`、I16 未并批）已记入该计划 §1/§6。用户可见行为零变化，故不改 CHANGELOG/README/wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **775/775 全绿**（PR gate 过滤器）；`dotnet format --verify-no-changes` exit 0 |
+| 前置（强制）· 基线存档 | ✅ 临时转储用例回放 **18 夹具 / 15 场景**（UGC web dash、pgc video_info/result 两种根、TV dash、INTL 双轮、FLV durl、TV durl qn_extras、DRM 好/坏 kid、免二压 dash 重发、durl 空重发降级、dolby+flac 追加、业务错误、播放限制、缺节点容忍），输出含轨道全字段（id/dfn/res/fps/codecs/bandwidth/dur/size/URL）、分段、清晰度、DRM 字段与**请求序列**（query 中 `wts`/`w_rid`/`sign`/`ts` 归一为 `<v>`）；**两次运行 SHA-256 一致**（`75FE2843…`），确认转储本身可复现（TV 场景的 `TvHost` 定向在首轮即被修正，避免误打真实网络） |
+| 拆解 | ✅ 主方法拆为"取文档 → `PlayResponse`（文档 + 当前数据根，接管即释放旧文档）→ `PickDataRoot` → dash/durl/intl 分派 → 轨道映射纯函数"；新增私有 `PlayRequest`（长参数收敛）与 15 个私有方法 |
+| 拆解后比对 | ✅ 同一转储 **SHA-256 完全相同**（逐字节）；9 条日志文案排序后逐字相等、`throw` 1 处 / `catch` 8 处 / `Logger.*` 9 处计数不变 |
+| 偏差（写入计划 §1） | ① **`ApiMode` 枚举未落地**：三 bool 组合语义无法用单一枚举等价表达（`tvApi && appApi` 同时为真时两处 `!tvApi` 门控与"Intl > App > Tv"优先级不等价），且 `Workflow.cs:159` 的 `apiType` 用的是另一套优先级（TV > APP > INTL > WEB）——两处口径不一致已记为本批 Info 观察；② **I16 未并入**（跨子系统，留待批 7）；③ 顺带清理 FLV 分支冗余局部变量（`url` 恒为空串、`quality`/`videoCodecid`/`size`/`length` 声明即赋值） |
+| 基线（收批） | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**（拆解期间含临时转储用例时为 785，删除后 784）；`dotnet format --verify-no-changes` exit 0；`Parser.cs` 784 → 885 行（新增 XML 文档与所有权助手，主方法净减 493 行） |
+| Info 级观察（不登记 RF） | ① `Workflow.apiType`（用于 `<apiType>` 占位符与日志）与 `Parser.GetPlayJsonAsync` 的实际分派优先级不一致：前者 TV > APP > INTL > WEB、后者 INTL > APP > TV > WEB——同时给出多个 `--use-*-api` 时展示值与实际走的接口可能不同（当前无用户可见后果，登记待评估）；② 拆解后 `Parser.cs` 行数上升 101 行，属"注释与所有权助手换行数"，主方法规模才是本项收益口径 |
+
+---
+
+## 第 21 轮：REFACTOR_PLAN 批 6 落地（H1 serve 文件级切分，2026-10-01）
+
+> 按 [`REFACTOR_PLAN.md`](REFACTOR_PLAN.md) §6 批次序执行批 6：`BBDownApiServer.cs` **1683 行 → 7 个文件**，`SetupServer()` 245 行 → 编排 + 5 个具名映射方法。**无新发现登记**——一处偏差（不新建 4 个独立类型）已记入该计划 §1/§6。用户可见行为零变化，故不改 CHANGELOG/README/wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**（PR gate 过滤器）；`dotnet format --verify-no-changes` exit 0 |
+| 切分 | ✅ 7 文件：主 **163** 行（构造 / `SetupServer` 编排 / `ValidateListenUrl` / `RunAsync`）、`Security` **456**、`Routes` **183**、`Tasks` **321**、`TaskFileStore` **159**、`Callback` **283**、`ServeApiModels` **235**（6 个顶层类型 + 2 个 AOT 源生成上下文） |
+| 编排 | ✅ `SetupServer()` 拆为 `UseServeSecurityMiddleware` / `MapTaskQueryRoutes` / `MapAddTaskRoute` / `MapCancelRoute` / `MapFinishedRemovalRoutes`（端点 lambda 逐字保留，仅换宿主方法） |
+| 零丢失验证 | ✅ 有效行多重集比对：原文件 1060 行 vs 新 7 文件 1201 行，**34 处差异全部是新脚手架**（每文件的 using/namespace/partial 包装、5 个方法声明与其调用点）——**无代码行丢失或重复**；成员逐字搬运（不重排 / 不重命名 / 不重新格式化），各文件按需精简 using |
+| 偏差（写入计划 §1） | ✅ **不新建 `ServeSecurityMiddleware` / `TaskRouteMapper` / `TaskFileStore` / `CallbackGuard` 四个独立类型**：这些成员共享同一份实例状态（任务列表 / `_taskLock` / 闸门 / token），外置状态或引入门面属行为风险改动，超出"类已 `partial`，可零风险按成员切分"的范围；将来若要抽类，应先给 serve 端点补可注入缝（与端点处理器具名化同一议题） |
+| AOT 纪律 | ✅ `[JsonSerializable]` 源生成上下文与它们序列化的类型**同文件迁移**（`ServeApiModels.cs`），CI 的 Native AOT smoke 通过 |
+| 基线（收批） | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**；`dotnet format --verify-no-changes` exit 0；7 个文件字节卫生（无 BOM / 纯 LF / 末尾换行） |
+| Info 级观察（不登记 RF） | ① 端点处理器仍是内联 lambda（`SetupServer` 时代遗留）：抽成具名 `internal` 处理器即可直接单测，但需把任务注册表状态以参数/门面显式传入，属独立议题；② 第 5 轮 H1 提出的"四个拆分文件"名称与本次落地形态不同（`BBDownApiServer.<职责>.cs` 而非四个独立类），勘误链在此闭环：**文件结构上 god 类已拆分，功能层面维持原先已验证的实现** |
+
+---
+
+## 第 22 轮：REFACTOR_PLAN 批 3a 落地（H2/H3 参数对象，2026-10-01）
+
+> 批 3 按依赖拆为 **3a（H2/H3 参数对象）** 与 **3b（I5/I13 结构收敛）**（沿批 1a/1b 先例，各自独立可回滚）。本轮完成 3a：`MuxAV` 20 参 / `MuxByMp4box` 16 参 → `MuxRequest`；`RangeDownloadToTmpAsync` 10 参 → `RangeDownloadRequest`。**无新发现登记**；两处口径修正（H3 调用点 4 → 实测 2、H2 第二方法 15 → 实测 16 参）记入计划 §1。用户可见行为零变化。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **784/784 全绿**；`dotnet format --verify-no-changes` exit 0 |
+| H2 | ✅ `MuxRequest`（18 字段 + 由 `Bvid` 派生的 `Url`）：`MuxAV(bool, MuxRequest, CancellationToken)` 为唯一实现，`MuxByMp4box(MuxRequest, CancellationToken)`；**保留旧 20 参兼容重载**（逐字转发），13 处调用点中 12 处测试**零改动**，生产调用点 `Download.cs` 迁到参数对象 |
+| H2 细节 | ✅ 原"就地改写入参"改为显式形态：`audioOnly/videoOnly` → 局部归一化 + `request with { VideoPath, AudioPath }` 传 mp4box 分支；mp4box 的 5 个转义值 → 转义后本地副本（`EscapeString(request.X)`），语义等价 |
+| H3 | ✅ `RangeDownloadRequest`（9 字段，`CancellationToken` 仍独立）：方法体改 `request.X` 命名访问，2 处调用点改命名构造 |
+| 等价性验证 | ✅ 新增 `MuxAV_RequestObject_MatchesCompatOverloadArgs`（Theory ×2 分支）：同一组输入下**参数对象入口与兼容重载生成的 argv 逐项相等**——兼容重载若漂移、或记录字段映射写错，立即失败；另断言派生 `Url` 确实进入 `comment=` 元数据 |
+| 机械改写兜底 | ✅ **字面量多重集比对**（元数据键名 `title=`/`comment=`/`album=`/`artist=`… 在改写前后逐条一致）：该比对当场抓出机械改写的 3 处字符串键名误伤（`"title=…"` → `"request.Title=…"`）与 5 行重复转义，均已修复；修复后比对为 0 差异 |
+| 基线（收批） | ✅ build 0 警告 0 错误；单测 **786/786 全绿**（+2）；`dotnet format --verify-no-changes` exit 0 |
+| Info 级观察（不登记 RF） | ① 兼容重载使同一能力有两个入口（旧 20 参 + `MuxRequest`）——按计划决策保留，待所有调用点迁移后再评估删除；② 参数对象化的**真正收益在调用点**（命名构造），方法体内为 `request.X` 形式，diff 较大但语义等价性已由 argv 等价测试与字面量比对双重钉住 |
+
+---
+
+## 第 23 轮：REFACTOR_PLAN 批 3b 落地（I5/I13 结构收敛，2026-10-01）
+
+> 批 3 收尾：I5 `SetUpWork` 9 元组 → `DownloadContext`（并收敛 4 层透传）、I13 `Page` 4 个阶梯构造器 → 无参构造 + 初始化器。**无新发现登记**；两处口径修正（I5 实测 9 元组 / 透传链 11+15 参、I13 构造器 5 个与调用点 11 处）记入计划 §1。用户可见行为零变化。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ build 0 警告 0 错误；单测 **786/786 全绿**；`format exit 0` |
+| I5 | ✅ `DownloadContext`（9 字段）取代 `SetUpWork` 元组；`DownloadPagesAsync` **11 → 4 参**；`DownloadPageAsync` **15 参 → `PageDownloadRequest` + token**，`DownloadPageForOrchestratorAsync` 塌缩为一次转发；两个调用方改为 `context with { AidOri = fetchedAid }` 传递 |
+| I13 前置 | ✅ 先补 `EntityTests` 3 例（字段映射 / aid·cid·epid 净化 / 拷贝构造），用**重构前的构造器**跑绿，作为重构前后共同遵守的契约 |
+| I13 | ✅ `Page` 删 4 个阶梯构造器、加无参构造、保留拷贝构造；**11 处调用点**改对象初始化器（`required` 编译期强制，净化仍在 setter 单点收口）；同一批断言在重构后**逐字未改**仍全绿 |
+| 机械改写兜底 | ✅ 纯字面量多重集比对（7 fetcher + 2 测试文件）**零差异**；生成器把 9 处行尾注释挂到相邻字段，已修复为"注释随原实参"（`epid = "", //epid`） |
+| 基线（收批） | ✅ build 0 警告 0 错误；单测 **789/789 全绿**（+3）；`dotnet format --verify-no-changes` exit 0 |
+| Info 级观察（不登记 RF） | ① 批 3 两批合计改动面较大（参数对象 + 上下文 + 构造形态），但每批均配"机械等价性校验 + 独立 PR 回滚"；② 剩余 I 组 7 项中 `I10` 已定案不做、`I16` 属配置解析层，其余（I1/I6/I7/I9/I12）分布在批 5/7 |
+
+---
+
+## 第 24 轮：REFACTOR_PLAN 批 5a 落地（I1 `DownloadPageAsync` 拆解，2026-10-01）
+
+> 批 5 拆为 **5a（I1）/ 5b（H4）/ 5c（H5）**。本轮完成 5a：主方法 182 → 141 行。**无新发现登记**；一处口径修正（登记所述三个重复块已被早前批次消化，见计划 §1）。用户可见行为零变化。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ build 0 警告 0 错误；单测 **789/789**；format exit 0 |
+| I1 | ✅ 拆出 `BuildPageExecutionContext`（34 行对象装配 → 12 参纯函数）与 `ReportNoTrackFailure`（24 行失败诊断，恒返回 false）；其余（重试循环、dash/flv 分派、取消清理）保持原位——它们本就是一个内聚的"尝试-重试-分派"单元 |
+| 验证 | ✅ 纯搬运（无标识符改名、无字面量改动）；build 0 警告 0 错误；单测 **789/789**；format exit 0 |
+| 基线（收批） | ✅ 同上；`Download.cs` 387 → 417 行（新增两个带 XML 文档的 helper） |
+| Info 级观察（不登记 RF） | ① I1 登记描述与现状偏差较大（三个重复块早已消化），说明"审查条目描述会随批次推进而过时"——每批开批前实测已成惯例；② 主方法剩余 141 行中约 40 行是重试/catch 样板，进一步拆解需引入"重试策略"抽象，收益低于风险，暂不排期 |
+
+
+---
+
+## 第 25 轮：批 2b 增量（H8 命名一致性 3/5 项，2026-10-01）
+
+> 批 2 的 2b 尚未收口；本轮先落地 H8 中**编译器可验证的三项改名**（零风险、无行为变化），其余两项（`ReadLinesThrottled` 名实不符、`QualityName` 档位映射顺序）需先读实现再定名/补注释，与 H10 一并留待 2b 收尾。**状态总览计数不变**（H8 作为一个条目尚未完成）。
+
+| 项 | 结果 |
+|----|------|
+| 改名 | ✅ `_savePathLock` → `_taskStateLock`（并补"保护 SavePaths/Status/IsSuccessful/Aid"注释）；`MyOptionBindingResult<T>` → `RequestBodyBindingResult<T>`；`nowId` → `inputTrackId` |
+| 验证 | ✅ build 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0（改名由编译器全程护航） |
+| 余项 | ⏳ H8：`ReadLinesThrottled` 改名、`QualityName` 档位映射注释；H10：`SubscriptionStore.ReadHistoryLocked()` 单入口 |
+
+---
+
+## 第 26 轮：REFACTOR_PLAN 批 5b 落地（H4 下载工具类深层嵌套，2026-10-01）
+
+> 批 5 拆为 **5a（I1）/ 5b（H4）/ 5c（H5）**。本轮完成 5b：`BBDownDownloadUtil` 两处深层嵌套拆解 + 检查块收敛（PR #70，合并提交 `7d648cd`）。**无新发现登记**；一处口径修正（H5 的"权威大小复核 ×3"已被本轮消化）与一处状态回填（I7 已在批 1a 落地但总览漏记）。用户可见行为零变化，故不改 CHANGELOG / README / wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| H4-a 预检决策 | ✅ `DownloadFileCoreAsync` **163 → 91 行**：目标/临时文件预检的四段决策树（目标已完整 → 权威总长复核／临时文件完整且身份一致 → 直接移动／部分临时文件续传 + If-Range／临时文件越界删除）收口为 `PrepareSingleThreadTargetAsync`，决策以 `SingleThreadPrecheck(TmpName, FileSize, ResumeIfRange, AlreadyComplete)` 返回——**权威总长修正随决策返回**，调用方不再持有可变的探测值 |
+| H4-b 分片重试 | ✅ `MultiThreadDownloadCoreAsync` **196 → 152 行、嵌套 7 → 4 层**：分片级重试/退避/五路 catch 归一化 → `DownloadClipWithRetryAsync`（50 行），以返回值代替闭包变量——`null` = 分片完成，非 null = 权威总长（尺寸错位 → 调用方按权威总长整轨重切分） |
+| H4-c 检查块收敛 | ✅ 「目标已存在且长度匹配 → GET 权威总长复核 → 不符则删除重下」的 **3 处副本**（单线程 Core / 多线程 Core / 多线程 Merge 外层）→ `VerifyExistingTargetAsync`（返回 `(Trustworthy, KnownSize)`）；各调用点保留自身差异（清分片 / 清 `.merging` / 返回 `AlreadyComplete`） |
+| 机械等价对账 | ✅ 与 `master` 版逐项比对多重集：`catch` 子句 **22 = 22（零差异）**；`Logger` 调用 **30 → 28**（唯一差异即收敛掉的那条重复，其余 28 条逐字未变）；显著代码行 855 → 877 的增删逐条一一对应（`return;`×3 → 决策返回×2 + `return ex.ActualTotal`×1；`break;`×1 → `return null;`×1；复核 5 行 ×3 → ×1；`{/}` +3/+3 = 3 个新方法体；`RangeDownloadRequest(..., _)` → `(..., token)`、`Task.Delay(backoffMs, _)` → `(backoffMs, token)` 同值替换），无丢失逻辑 |
+| 语义等价差异 | ✅ 资源身份字符串改为调用点算一次后传参（原为两处各算一次），`"R"` 字面量 5 → 4（纯表达式，值相同）；三个新方法均 `private`（不新增可测 API 面） |
+| 安全网 | ✅ 27 例 `DownloadPipelineTests`（HTTP 假服务器：逐字节一致 / HEAD 与真实长度不符的尺寸修复 / 陈旧文件删除重下 / 请求计数 HEAD=1 GET=0 Range=1 / 分片清理）+ `CanResumeFrom_*` 4 例；无新增用例——三项均逐字搬运（沿用 5a 先例） |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 口径修正 | ⚠️ H5 登记为 6 簇，其中"**权威大小复核 ×3**"已由本轮 H4-c 消化 → 5c 开批前须实测重列（已在第 6 轮 H5 行标注） |
+| 状态回填 | ⚠️ **I7**（异常过滤器收口）第 19 轮已记录"批 1a 验收 ✅"（PR #60：`ExceptionPolicies` 9 条策略 + 生产 64 处站点），但状态总览仍列其为剩余项——本轮回填（I 组 16/6 → 17/5，合计 77/13 → 79/11）；1a 的"94/102 处"口径疑点仍按第 19 轮 Info ④ 挂账 |
+| Info 级观察（不登记 RF） | ① `VerifyExistingTargetAsync` 的"复核失败/未知总长一律退回纯长度跳过"是刻意保守（宁可重下不可误删），三处调用点**跳过后的副作用各不相同**（清分片 / 清合并临时文件 / 直接返回决策），故只收敛复核本身而不合并调用点；② 主方法剩余 91/152 行中约 40 行是重试/catch 样板，进一步拆解需引入"重试策略"抽象，收益低于风险，暂不排期（同 5a 观察②） |
+
+---
+
+## 第 27 轮：REFACTOR_PLAN 批 5c 增量一落地（H5 下载侧重复簇，2026-10-01）
+
+> 批 5c（H5 重复簇）按仓库先例拆为 **5c-1（下载侧，本轮）** 与 **5c-2（serve 侧安全敏感路径）**。本轮落地 5c-1（PR #72，合并提交 `77c306a`）。**无新发现登记**；一处口径校正（H5 登记 6 簇、实测 7 簇；DNS + 逐地址校验实测 2 处非 ×3；IsLoopback 为 4 份实现）。用户可见行为零变化，故不改 CHANGELOG / README / wiki。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| 实测校正（H5） | ✅ 逐簇实测：clip 路径推导 **4 处**、头块 **3 处**、IsLoopback **4 份实现**（`ServeCommand.IsLoopbackListenUrl` + `Security.IsLoopbackOrigin/IsLoopbackHost/IsLoopbackListenAddress`）、SSRF 字面 IP **2 处**（`Callback.cs:43`/`:171` 逐字重复）、DNS + 逐地址校验 **2 处**（`Callback.cs:83` 可注入 dnsResolver / `:192` 直连）、任务收尾四元组 **待实测**；"权威大小复核 ×3"已由 5b 消化 |
+| clip 路径推导 ×4 | ✅ `ClipPathFor(path, index)`：`"00000_"` 字面量 1 → 0、`ToString("00000")` 3 → 1、`.vclip`/`.aclip` 各 5 → 2（余 1 对在 `CleanStaleClipsFor` 的 glob 匹配里，语义不同故不合并） |
+| 头块 ×3 | ✅ `ApplyMediaRequestHeaders(request, url)`：Referer/User-Agent/Cookie + TV 接口不加 Referer 的守卫；五个字面量各 3 → 1 |
+| 机械等价对账 | ✅ `catch` **22 = 22**、`Logger` **28 = 28**（零差异）；显著代码行 877 → 869 增删逐条一一对应；字面量差异全部是 3 → 1 的重复收敛 |
+| 安全网 | ✅ `MultipleClips_AssembledInOrderByteExact`（5 位序号决定合并顺序）、`CleanStaleClips_*` ×2、`OversizedStaleClip_IsTruncatedNotMerged`、`StaleSegmentFromOtherResource_IsReplacedWithFreshContent`、`ProbesOnce_NotPerLayer`（HEAD=1/GET=0/Range=1 请求计数）+ 全量单测；无新增用例（逐字搬运） |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 状态计数 | **不变**（H5 作为条目未整体完成：余 4 簇 → H 仍为 9/4、合计 **79/11**） |
+| 范围决策 | 5c-2 全部落在 **webhook SSRF 守卫 / 监听地址判定**（`BBDownApiServer.Callback.cs`、`.Security.cs`、`ServeCommand.cs`）——判定语义一动即影响安全边界，须单独 PR + 逐判定对照，不在 5c-1 内合并推进 |
+| Info 级观察（不登记 RF） | ① `CleanStaleClipsFor` 用 `*_<stem>.vclip` glob 而非 `ClipPathFor`，看似可合并，但前者按"目录内任意序号"匹配（含其它任务残留），后者按确定的 5 位序号——**语义不同，刻意不合并**，其 `.vclip/.aclip` 一对字面量因此保留；② 三处头块收敛后 helper 的参数名恰好与原调用点局部名一致（`request`），故 `request.Headers.*` 三行在显著行对账中计数不变，属对账口径的正常现象 |
+
+---
+
+## 第 28 轮：REFACTOR_PLAN 批 5c-2 落地（H5 serve 侧四簇，2026-10-01）
+
+> 批 5c 增量二：serve 侧四簇收敛（PR #74，合并提交 `d044a05`）。**H5 7 簇全部收口**，批 5（I1/H4/H5）随之完成。**无新发现登记**；一处实现事实修正（`IsSafeCallbackUrlAsync` 的字面 IP 分支与 `IsUnsafeLiteralIpAddress` 是两份人工同步的同一判定）。用户可见行为零变化。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| IsLoopback 判定 | ✅ **4 份实现 → 1**：`BBDownApiServer.IsLoopbackHost` 为唯一实现，`Security.IsLoopbackOrigin` / `IsLoopbackListenAddress` / `ServeCommand.IsLoopbackListenUrl` 委托；`"localhost"` 字面量 3+1 → 1；CLI 与服务器启动守卫从此不可能漂移 |
+| 字面 IP 判定 | ✅ `TryParseLiteralIp`（判定 + IPv4-mapped 归一化）+ `NormalizeMappedIpv4`；`IsSafeCallbackUrlAsync` 的 8 行内联敏感段检查改为 `!IsUnsafeLiteralIpAddress(...)`，与连接侧结构性同源（此前靠注释声明一致） |
+| DNS + 逐地址校验 | ✅ `ResolveCallbackAddressesAsync` + `CallbackHostVerdict`：解析失败 / 零地址（RF-55）/ 命中敏感段三种结局与三条 Warn 文案逐字保留，校验侧与连接侧共用同一份判定 |
+| 任务收尾四元组 | ✅ `FinishTask(task)`：五条语句（lock + Dispose + Remove + Add + Persist）各 **4 → 1**，四条退出路径共用；"必须在 `_taskLock` 内 Dispose"的理由随注释进入方法文档 |
+| 机械等价对账 | ✅ 四文件 Logger 调用 **7/3/4/7 不变**；catch 仅 Callback.cs **4 → 3**（两个 `SocketException` catch 合并，无类型被吞）；显著代码行 183/242/81/199 → 178/231/75/185，增删逐条一一对应 |
+| 安全网 | ✅ `ServeApiSecurityTests` 40 处判定引用（`IsLoopbackHost`/`IsLoopbackOrigin`/SSRF 字面 IP/回环与链路本地 IPv6 用例）+ `ServeCommandTests`（非回环无 token 拒绝启动）+ `ServeApiHttpTests`（任务生命周期）；无新增用例（等值搬运） |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 状态计数 | H **9/4 → 10/3**（H5 ✅），合计 **79/11 → 80/10**；剩余 H6/H8/H10 + I6/I9/I10/I12/I16 + J1/J2 |
+| Info 级观察（不登记 RF） | ① `CallbackHostVerdict` 是"用枚举表达多结局"的正例——与批 4 拒绝 `ApiMode` 的判据一致：**结局可枚举且每个分支有独立处置**才引入，bool 组合语义不可枚举时不引入；② `IsLoopbackHost` 现在承担四种调用语义（Host 白名单 / Origin / 监听 / CLI），方法名仍准确，但若将来出现"需要 DNS 解析的回环判定"必须新开方法而非放宽它（文档已写明"刻意不做 DNS 解析"）；③ `ServeCommand` 依赖 `BBDownApiServer` 的静态判定属跨层引用，考虑到两处判定必须一致（否则启动守卫与 CLI 提示错位），这个方向的依赖比复制实现更安全 |
+
+---
+
+## 第 29 轮：REFACTOR_PLAN 批 2b-1 落地（H8 命名收口，2026-10-01）
+
+> 批 2b 按 2a/2b 先例再拆为 **2b-1（H8 余项，本轮）** 与 **2b-2（H10）**。本轮落地 2b-1（PR #76，合并提交 `9e9d7e7`）——**H8 全部 5 项收口**。**无新发现登记**，无行为变化。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| 命名核实 | ✅ 先读实现再定名（H8 原话要求"避免换成另一个不准确的名字"）：`ReadLinesThrottled` 的真实语义是**连续重复行合并**（只与上一行比较）+ **总行数封顶**，与时间无关 → `ReadLinesDedupedAndCapped`；四处引用（2 调用 + 定义 + `<see cref>`）同步，XML 引用由编译器校验 |
+| `QualityName` | ✅ 补"分支顺序即语义"文档：阈值臂需降序且整体先于精确值臂，反例与新增档位约定一并写明（映射结果一字未改） |
+| 机械等价对账 | ✅ `ExternalProcessRunner.cs` 显著代码行 **190 = 190**、`LiveStreamUtil.cs` **466 = 466**；两文件 `Logger`/`catch` 零差异；字面量差异仅来自 `<see cref>` 改名的 XML 引用与新注释 |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 状态计数 | H **10/3 → 11/2**（H8 ✅），合计 **80/10 → 81/9**；剩余 H6/H10 + I6/I9/I10/I12/I16 + J1/J2 |
+| Info 级观察（不登记 RF） | ① "改名"这类 R1 项的价值取决于**先读实现**：本次读完才发现"throttled"既不是时间限速也不是丢弃全部重复行（只合并**相邻**重复），若直接改为 `ReadLinesRateLimited` 反而制造新误导；② `QualityName` 一类"顺序即语义"的 switch，注释比改名更能防回归（读者重排的动机来自可读性，注释正对此动机）；③ 批 2b 已两次拆分（#69 三项改名 / #76 余两项），说明"条目内剩余项的风险与验证成本差异"是拆分的主要依据，而非条目边界 |
+
+---
+
+## 第 30 轮：REFACTOR_PLAN 批 2b-2 落地（H10 历史读取单入口，2026-10-01）
+
+> 批 2b 第二增量落地（PR #78，合并提交 `2cc7848`）——**批 2（H8/H9/H10）全部收口**，H 组仅剩 H6。本轮**含刻意行为变化**，按 REFACTOR_PLAN §4 纪律 #5 补 3 例变异验证；无新发现登记。
+
+| 项 | 结果 |
+|----|------|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **789/789**；`dotnet format --verify-no-changes` exit 0 |
+| 单入口 | ✅ `ReadHistoryLockedAsync`（调用方须持 `_ioLock`）：返回 `{"target":[avid,...]}` 可变副本；"损坏 → 隔离 `.corrupt-*` + 抛 `SubscriptionDataCorruptException`"语义收口一处，读写两条路径共用 |
+| 分歧修复 | ✅ 写路径 `RecordDownloadedAsync` 此前只 catch `JsonException`，**读取的 IO 失败以原始异常穿透**（不隔离、不告警）；现统一 `IsJsonOrIoFailure`（`catch` 5 → 4）。校验范围也统一为整个文件（旧读路径只看被请求的 target） |
+| 行为变化 + 变异验证 | ✅ ① 字面量 `null` 历史文件：写路径此前静默当空并重写 → 现按损坏处理；② `{"mid:1":null}`：写路径此前在 `list.Remove` 处抛 **NullReferenceException** → 现按损坏处理（顺带修 NRE）；③ 别的订阅条目损坏：读健康订阅也中止。`SubscriptionStoreTests` **11 → 14**，全量 **789 → 792** |
+| 机械等价对账 | ✅ `SubscriptionStore.cs` 显著代码行 **209 → 199**、`catch` **5 → 4**、`Logger` **4 → 3**；诊断由逐 target 改为逐属性遍历（`{target}` → `{prop.Name}`，等价）；`SubscriptionStoreTests.cs` 日志/catch 零差异 |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **792/792**；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 状态计数 | H **11/2 → 12/1**（H10 ✅），合计 **81/9 → 82/8**；H 组仅剩 H6 |
+| Info 级观察（不登记 RF） | ① `LoadCoreAsync`（订阅**清单**文件）仍用 `?? []` 容忍字面量 `null`，与历史文件刻意不同——历史当空 = "全部内容被当新增重下"，清单当空只是"没有订阅"；差异已写入计划与 PR 描述，若完全对齐需另开评估；② 本轮是批 2 唯一**净增测试**的增量（789 → 792）："统一语义"类改动应以测试而非多重集对账为主要证据；③ 命名按 async 约定取 `ReadHistoryLockedAsync`（登记为 `ReadHistoryLocked()`），偏差已在计划 §3 注明 |
+
+---
+
+## 第 31 轮：REFACTOR_PLAN 批 7 落地（H6/I6/I9/I12，2026-10-01）
+
+> 批 7 是本计划（`REFACTOR_PLAN.md`）的最后一批：PR #80（合并提交 `eb0fbb9`）落地后 **H 组清零、I 组仅剩 I16**。四项均为 R2 结构调整，逐项配机械等价对账；一处实测偏差（I9 的 Spectre 分支约束）已记入该计划 §1。**无新发现登记**；唯一用户可见差异（`watchlater --help` 的 `--limit` 位置）已记 CHANGELOG。
+
+| 项 | 结果 |
+|---|---|
+| 开批基线 | ✅ `dotnet build` Release 0 警告 0 错误；单测 **792/792**；`dotnet format --verify-no-changes` exit 0 |
+| H6 | ✅ "下播"判定由异常**消息文本**（抛出点/`IsRoomLiveAsync`/录制循环三处各自 `Contains("当前未在直播")`）改为 `LiveRoomClosedException`（继承 `InvalidOperationException`，瞬态过滤器仍捕获、仅改走"正常结束"）；+2 用例（精确类型 + 不重试立即 `NoData`），**变异验证**：换回 `InvalidOperationException` 两例失败；`LiveStreamUtil.cs` Logger 14 = 14、catch 19 = 19 |
+| I6 | ✅ `LoginWEB`/`LoginTV` 四处逐字复制 → `RenderQrCodeAsync` + `WriteOwnerOnlyFileAsync` + `QrPollCode`（86038/86101/86090/86039，WEB int / TV string 并注明不可互换）；Logger 29 → 25、catch 8 → 7（减少量全为重复收敛），**日志文案集合 23 = 23 零差异**；纯搬运故不新增用例（同批 5a/5b 口径） |
+| I9 | ✅ 8 个下载选项 + 两份 `BuildOption` → `DownloadOptionSettings`（`abstract`、`: SubSettings`）+ 唯一 `ToMyOption(url, workDir)`；**实测约束**：Spectre 分支注册要求 Settings 派生自 `SubSettings`（协变 `ICommandLimiter<SubSettings>`），选项放进 `SubSettings` 会让 `sub add/list/remove` 多出无效选项、显式泛型注册重载在该版本不存在 → 取中间层；`[CommandOption]` 全仓 111 → 103；+5 用例（含真实 `CommandApp` 分支绑定与选项名/描述硬编码快照），**三次变异验证**（复制副本 / 改基类描述 / 选项上移 → 2/1/1 例失败）；`--help` 实测：`--help`/`sub --help`/`sub check --help` 逐字节不变，`sub add/list --help` 只列自身选项 |
+| I12 | ✅ `ResolveAsync` 实测 208 行 → 入口分派 + `ResolveHttpUrlAsync` + `ResolveBareIdAsync`（`internal`），累加变量 `avid` → `target`；按计划**先补 http 分支夹具**：12 例本地夹具在拆分前先跑绿（54/54），拆分后补 10 例直测（av/bv 分支经 `FixAvidAsync` 会触网，只能直测内部方法）；字面量 120 → 123（+3 全为新增 XML 文档引用）、catch 3 = 3 / Logger 2 = 2 / throw 10 = 10 / 正则调用 24 = 24、显著行差异逐条对应 |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **792 → 821**（+29）全绿；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿**（Build & Test / Format Check / NuGet Vulnerability Scan / CodeQL / 两个 Integration / Native AOT smoke / Docker smoke） |
+| 状态计数 | H **12/1 → 13/0**（H6 ✅），I **17/5 → 20/2**（I6/I9/I12 ✅），合计 **82/8 → 86/4**；剩余 = I10（定案不做）+ I16（未排期）+ J1/J2（跟踪项） |
+| Info 级观察（不登记 RF） | ① 批 7 之后 **I16**（`BBDownConfigParser` 手工扫参收敛）是本计划体系内唯一的未排期项：别名表已由 `CliOptionIndex` 收口，剩余扫参循环属可读性收益，建议与 J1/J2 一并决定"另开小批"或"维持现状"；② `DownloadOptionSettings` 派生自 `SubSettings` 纯属 Spectre 约束（无行为含义），若 `sub` 分支结构调整可重新评估移出该继承链；③ I12 的 av/bv 分支只能直测内部方法——若给 `FixAvidAsync` 加可注入缝，可把这两例并回公开入口用例 |
+
+---
+
+## 第 32 轮：剩余项收口批落地（I16 + 三挂账决策 + P2-3，2026-10-01）
+
+> 批 7 之后的收口批（PR #82，合并提交 `028f67e`）：**I16 落地**（I 组仅剩定案不做的 I10），并一次性收口三项挂账决策——①四族"单条目可跳过"异常过滤器（批 1a 登记为"需行为决策"）、②`apiType` 展示与实际分派不一致（第 20 轮 Info ①）、③`OPTIMIZATION_PLAN` P2-3 DRM 密钥清零。**无新发现登记**；含三处用户可见行为变化，均已记 CHANGELOG。
+
+| 项 | 结果 |
+|---|---|
+| 开批基线 | ✅ build Release 0 警告 0 错误；单测 **821/821**；`dotnet format --verify-no-changes` exit 0 |
+| I16 | ✅ `BBDownConfigParser`（205 → 223 行）：3 份 argv 扫描（`IsSubCommandInvocation`/`GetPositionalTokens`/`--config-file` 手扫）→ `SkipArgument`/`GetOptionValue`/`OptionName`；2 段逐字相同的取值收集 while → `CountOptionValueTokens`。显式选项扫描**刻意不跳过值**（多识别只会更保守，注释写明理由）；`ConfigMergeTests` 13 例 + 位置参数提取器用例兜底，**变异验证**：`SkipArgument` 不跳过值 → 4 例失败 |
+| 过滤器对齐 | ✅ `ExceptionPolicies.IsItemFailureCore`（12 型）+ `IsSkippableItemFailure`（核心 + `TaskCanceledException`，站点须有取消守卫）+ `IsRetryablePageFailure`（仅核心）；5 处站点（`SubCommand` ×2 / `watchlater` / 逐 P 编排 / 页面级重试 / 评论附加资源）统一。捕获面按"不再中止整批"扩大：watchlater +KNFE/Aggregate/Format/Overflow、sub check +Aggregate/Format/Overflow、编排 +KNFE/Argument、页面重试 +KNFE/Argument、评论 +Argument/InvalidData；**取消语义不变**。真值表扩到 10 条策略 + **两条策略同源关系式**；变异：核心集去掉 `FormatException` → 真值表失败 |
+| apiType 单一来源 | ✅ `Parser.PlayApiMode` + `ResolveApiMode`/`ApiModeLabel`：分派与展示共用（优先级统一为 **INTL > APP > TV > WEB**，此前展示是 TV > APP > INTL）；`PlayApiModeTests` 9 例（含多开关组合）。用户可见：多开关时 `<apiType>`/日志值可能与旧版不同（已记 CHANGELOG） |
+| P2-3 DRM 清零 | ✅ `WvdDevice.Dispose` 清零 client_id 原始字节；`Create` 的 finally 清零私钥源字节（成功/失败路径均不留）；`WidevineCdm` 不再保留未使用的 `macKeyClient`。`Dispose_ClearsClientIdBytes` 变异验证（去掉清零即失败） |
+| 统计口径统一 | ✅ 口径定为"全仓 `catch (Exception …) when (…)` 正则统计（排除 bin/obj），具名 = 谓词含 `ExceptionPolicies.`"；收口后 **104 处（具名 63 → 67 / 内联 41 → 37）**；`ExceptionPolicies` 类文档与 `REFACTOR_PLAN` §3 同步，历史 94/102/66 作废（第 19 轮 Info ④ 消纳） |
+| 基线（收批） | ✅ build Release 0 警告 0 错误；单测 **821 → 832**（+11）全绿；`dotnet format --verify-no-changes` exit 0；CI **9 项全绿** |
+| 状态计数 | I **20/2 → 21/1**（I16 ✅，仅剩定案不做的 I10），合计 **86/4 → 87/3**；J1/J2 仍为跟踪项 |
+| Info 级观察（不登记 RF） | ① **J1 的早期预警机制已确认**：`build_latest.yml` 在每次 master push 上用同一 `ubuntu:18.04` 容器构建，apt 源一旦失效会在合并后立即暴露（而非等到发版），触发条件因此可观测；② `DownloadOptionSettings` 继承链与 I12 直测缝两条批 7 观察**维持登记**（结构变动时再评估）；③ P0-1/P1-1/P1-2（`OPTIMIZATION_PLAN`）仍是多日工程，本批不收口 |

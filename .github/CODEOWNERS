@@ -1,0 +1,14 @@
+# 代码所有者
+# 本文件定义了仓库各目录/文件的审查责任人
+
+# 根级文件中，全局默认所有者
+*       @AliverAnme
+
+# 核心解析逻辑
+BBDown.Core/      @AliverAnme
+
+# CLI 入口和命令
+BBDown/           @AliverAnme
+
+# CI/CD 配置
+.github/workflows/  @AliverAnme

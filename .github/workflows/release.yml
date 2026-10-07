@@ -1,0 +1,414 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  DOTNET_SDK_VERSION: "10.0.302"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # 内置 mp4decrypt（Bento4，GPLv2）的固定版本与归档 SHA256：发布包开箱即用，
+  # 不再要求用户自行安装；下载源被篡改/静默换包会让构建失败（供应链固定）。
+  BENTO4_VERSION: "1-6-0-641"
+  BENTO4_SHA256_WIN: "6916a390f75878872594be74554b8b54ab220bb29812424441a8e1ecc9a6ac5e"
+  BENTO4_SHA256_LINUX: "d48dc6b164941212e5614237b4d9aeff81d4d111ee8b1508892764078a0870e8"
+  BENTO4_SHA256_MAC: "0570cf0dd59f362904d6f1cb472cbf4cdd37928fb0fe28e4c7f98c460e8e0ced"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # 发布路径同样必须先过测试：打了 tag 就直接产出 release 会把回归带给所有用户
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Install local integration tools
+        run: bash scripts/install-local-test-tools.sh
+
+      - name: Restore locked dependencies
+        run: dotnet restore BBDown.sln --locked-mode
+
+      - name: Test
+        # 单元测试与本地工具集成；外部网络仍由独立 job 验证。
+        run: dotnet test -c Release --no-restore --filter "Category!=Integration&Category!=NetworkIntegration"
+        env:
+          BBDOWN_REQUIRE_LOCAL_TOOLS: "1"
+
+  build-win-x64-arm64:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Install zip
+        run: choco install zip --no-progress --yes
+
+      - name: Publish [win-x64]
+        run: |
+          dotnet restore BBDown/BBDown.csproj --locked-mode
+          dotnet publish BBDown -r win-x64 -c Release -o artifact-win-x64 --no-restore
+
+      - name: Publish [win-arm64]
+        run: dotnet publish BBDown -r win-arm64 -c Release -o artifact-win-arm64 --no-restore
+
+      # 内置 mp4decrypt（Bento4，GPLv2）：DRM 解密所需的外部工具，随包分发（用户无需自行安装）。
+      # 版本与归档 SHA256 固定在 env：下载源变化会让构建失败而非静默换二进制。
+      # Bento4 官方不提供 arm64 Windows 构建：win-arm64 也放 x64 版（Windows 11 on ARM 的
+      # x64 模拟可直接运行）；纯 arm64 环境可用 --mp4decrypt-path 指向系统安装版。
+      - name: Bundle mp4decrypt (Bento4)
+        shell: pwsh
+        run: |
+          $ver = "${{ env.BENTO4_VERSION }}"
+          $zip = Join-Path $env:RUNNER_TEMP "bento4-sdk-win.zip"
+          Invoke-WebRequest -Uri "https://www.bok.net/Bento4/binaries/Bento4-SDK-$ver.x86_64-microsoft-win32.zip" -OutFile $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($hash -ne "${{ env.BENTO4_SHA256_WIN }}") { throw "Bento4 归档 SHA256 不匹配: $hash" }
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $env:RUNNER_TEMP "bento4") -Force
+          $root = Get-ChildItem (Join-Path $env:RUNNER_TEMP "bento4") -Directory | Select-Object -First 1
+          foreach ($rid in @("win-x64", "win-arm64")) {
+            Copy-Item (Join-Path $root.FullName "bin/mp4decrypt.exe") "artifact-$rid/mp4decrypt.exe"
+            Copy-Item (Join-Path $root.FullName "docs/LICENSE.txt") "artifact-$rid/mp4decrypt-LICENSE.txt"
+          }
+
+      - name: Package [win]
+        run: |
+          $ver = "${{ github.ref_name }}"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          cd artifact-win-x64
+          # device.wvd 是内置的 Widevine 设备文件：必须与可执行文件一起打包，
+          # 否则用户拿到的是"需要自己找 device.wvd"的半成品（解压即用是承诺）
+          if (-not (Test-Path device.wvd)) { throw "device.wvd 未随 publish 产出" }
+          if (-not (Test-Path mp4decrypt.exe)) { throw "mp4decrypt.exe 未随发布包产出" }
+          zip ../BBDown_${ver}_win-x64.zip BBDown.exe device.wvd mp4decrypt.exe mp4decrypt-LICENSE.txt
+          cd ../artifact-win-arm64
+          if (-not (Test-Path device.wvd)) { throw "device.wvd 未随 publish 产出" }
+          if (-not (Test-Path mp4decrypt.exe)) { throw "mp4decrypt.exe 未随发布包产出" }
+          zip ../BBDown_${ver}_win-arm64.zip BBDown.exe device.wvd mp4decrypt.exe mp4decrypt-LICENSE.txt
+          # 打包后校验：zip 少了 device.wvd 时让构建失败，而不是等用户报告无法解密
+          foreach ($rid in @("win-x64", "win-arm64")) {
+            $zipPath = Resolve-Path "../BBDown_${ver}_${rid}.zip"
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+            try {
+              foreach ($required in @("device.wvd", "mp4decrypt.exe", "mp4decrypt-LICENSE.txt")) {
+                if (-not ($zip.Entries | Where-Object { $_.Name -eq $required })) { throw "$rid zip 缺少 $required" }
+              }
+            } finally { $zip.Dispose() }
+          }
+
+      - name: Upload Artifact [win-x64]
+        uses: actions/upload-artifact@v5
+        with:
+          name: BBDown_win-x64
+          path: BBDown_${{ github.ref_name }}_win-x64.zip
+          retention-days: 7
+
+      - name: Upload Artifact [win-arm64]
+        uses: actions/upload-artifact@v5
+        with:
+          name: BBDown_win-arm64
+          path: BBDown_${{ github.ref_name }}_win-arm64.zip
+          retention-days: 7
+
+  build-linux-x64-arm64:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build x64 in Ubuntu 18.04 container (for glibc 2.27 compatibility)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            ubuntu:18.04 \
+            bash -c "
+              set -e
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y wget build-essential clang libicu-dev zlib1g libcurl4-openssl-dev libkrb5-dev
+              DOTNET_SDK_VERSION='${{ env.DOTNET_SDK_VERSION }}'
+              DOTNET_SDK_URL=\"https://builds.dotnet.microsoft.com/dotnet/Sdk/\${DOTNET_SDK_VERSION}/dotnet-sdk-\${DOTNET_SDK_VERSION}-linux-x64.tar.gz\"
+              wget -nv \"\$DOTNET_SDK_URL\" -O dotnet-sdk.tar.gz
+              mkdir -p /opt/dotnet
+              tar -xzf dotnet-sdk.tar.gz -C /opt/dotnet
+              export PATH=\"/opt/dotnet:\$PATH\"
+              dotnet restore BBDown/BBDown.csproj --locked-mode
+              dotnet publish BBDown -r linux-x64 -c Release -o /workspace/artifact-linux-x64 --no-restore
+            "
+
+      - name: Build arm64 in Ubuntu 18.04 container (for glibc 2.27 compatibility)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-18.04-cross-arm64-20220312201346-b2c2436 \
+            bash -c "
+              set -e
+              DOTNET_SDK_VERSION='${{ env.DOTNET_SDK_VERSION }}'
+              DOTNET_SDK_URL=\"https://builds.dotnet.microsoft.com/dotnet/Sdk/\${DOTNET_SDK_VERSION}/dotnet-sdk-\${DOTNET_SDK_VERSION}-linux-x64.tar.gz\"
+              wget -nv \"\$DOTNET_SDK_URL\" -O dotnet-sdk.tar.gz
+              mkdir -p /opt/dotnet
+              tar -xzf dotnet-sdk.tar.gz -C /opt/dotnet
+              export PATH=\"/opt/dotnet:\$PATH\"
+              dotnet restore BBDown/BBDown.csproj --locked-mode
+              dotnet publish BBDown -r linux-arm64 -c Release -p:StripSymbols=true -p:CppCompilerAndLinker=clang-9 -p:SysRoot=/crossrootfs/arm64 -o /workspace/artifact-linux-arm64 --no-restore
+            "
+
+      # 内置 mp4decrypt（Bento4，GPLv2）：仅 x64 有官方 Linux 二进制；linux-arm64 官方未提供，
+      # 不内置（运行时预检会提示安装或用 --mp4decrypt-path 指定）。
+      - name: Bundle mp4decrypt (Bento4, linux-x64)
+        run: |
+          set -e
+          # artifact-linux-x64/ 由 ubuntu:18.04 容器内的 root 写出（属主是 root）：本步骤要往其中
+          # 写入 mp4decrypt，先取回属主，否则 cp 会因 Permission denied 失败
+          sudo chown -R "$(id -u):$(id -g)" artifact-linux-x64
+          ver="${{ env.BENTO4_VERSION }}"
+          curl -sSL -o /tmp/bento4-sdk.zip "https://www.bok.net/Bento4/binaries/Bento4-SDK-${ver}.x86_64-unknown-linux.zip"
+          echo "${{ env.BENTO4_SHA256_LINUX }}  /tmp/bento4-sdk.zip" | sha256sum -c -
+          unzip -q /tmp/bento4-sdk.zip -d /tmp/bento4
+          root=$(find /tmp/bento4 -mindepth 1 -maxdepth 1 -type d | head -n1)
+          cp "$root/bin/mp4decrypt" artifact-linux-x64/mp4decrypt
+          chmod +x artifact-linux-x64/mp4decrypt
+          cp "$root/docs/LICENSE.txt" artifact-linux-x64/mp4decrypt-LICENSE.txt
+
+      - name: Package [linux]
+        run: |
+          # device.wvd 是内置的 Widevine 设备文件，必须与可执行文件一起打包（解压即用）
+          cd artifact-linux-x64
+          test -f device.wvd || { echo "device.wvd 未随 publish 产出"; exit 1; }
+          test -f mp4decrypt || { echo "mp4decrypt 未随发布包产出"; exit 1; }
+          zip ../BBDown_${{ github.ref_name }}_linux-x64.zip BBDown device.wvd mp4decrypt mp4decrypt-LICENSE.txt
+          cd ../artifact-linux-arm64
+          test -f device.wvd || { echo "device.wvd 未随 publish 产出"; exit 1; }
+          # linux-arm64：Bento4 官方无 arm64 二进制，不内置 mp4decrypt
+          zip ../BBDown_${{ github.ref_name }}_linux-arm64.zip BBDown device.wvd
+          cd ..
+          for rid in linux-x64 linux-arm64; do
+            unzip -l "BBDown_${{ github.ref_name }}_${rid}.zip" | grep -q device.wvd \
+              || { echo "${rid} zip 缺少 device.wvd"; exit 1; }
+          done
+          unzip -l "BBDown_${{ github.ref_name }}_linux-x64.zip" | grep -q mp4decrypt \
+            || { echo "linux-x64 zip 缺少 mp4decrypt"; exit 1; }
+
+      - name: Upload Artifact [linux-x64]
+        uses: actions/upload-artifact@v5
+        with:
+          name: BBDown_linux-x64
+          path: BBDown_${{ github.ref_name }}_linux-x64.zip
+          retention-days: 7
+
+      - name: Upload Artifact [linux-arm64]
+        uses: actions/upload-artifact@v5
+        with:
+          name: BBDown_linux-arm64
+          path: BBDown_${{ github.ref_name }}_linux-arm64.zip
+          retention-days: 7
+
+  build-mac-x64-arm64:
+    runs-on: macos-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up dotnet
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Publish [osx-x64]
+        run: |
+          dotnet restore BBDown/BBDown.csproj --locked-mode
+          dotnet publish BBDown -r osx-x64 -c Release -o artifact-osx-x64 --no-restore
+
+      - name: Publish [osx-arm64]
+        run: dotnet publish BBDown -r osx-arm64 -c Release -o artifact-osx-arm64 --no-restore
+
+      # 内置 mp4decrypt（Bento4，GPLv2）：macOS 官方包是 universal 二进制，x64/arm64 通用。
+      - name: Bundle mp4decrypt (Bento4, universal)
+        run: |
+          set -e
+          ver="${{ env.BENTO4_VERSION }}"
+          curl -sSL -o /tmp/bento4-sdk.zip "https://www.bok.net/Bento4/binaries/Bento4-SDK-${ver}.universal-apple-macosx.zip"
+          echo "${{ env.BENTO4_SHA256_MAC }}  /tmp/bento4-sdk.zip" | shasum -a 256 -c -
+          unzip -q /tmp/bento4-sdk.zip -d /tmp/bento4
+          root=$(find /tmp/bento4 -mindepth 1 -maxdepth 1 -type d | head -n1)
+          for rid in osx-x64 osx-arm64; do
+            cp "$root/bin/mp4decrypt" "artifact-${rid}/mp4decrypt"
+            chmod +x "artifact-${rid}/mp4decrypt"
+            cp "$root/docs/LICENSE.txt" "artifact-${rid}/mp4decrypt-LICENSE.txt"
+          done
+
+      - name: Package [osx]
+        run: |
+          # device.wvd 是内置的 Widevine 设备文件，必须与可执行文件一起打包（解压即用）
+          cd artifact-osx-x64
+          test -f device.wvd || { echo "device.wvd 未随 publish 产出"; exit 1; }
+          test -f mp4decrypt || { echo "mp4decrypt 未随发布包产出"; exit 1; }
+          zip ../BBDown_${{ github.ref_name }}_osx-x64.zip BBDown device.wvd mp4decrypt mp4decrypt-LICENSE.txt
+          cd ../artifact-osx-arm64
+          test -f device.wvd || { echo "device.wvd 未随 publish 产出"; exit 1; }
+          test -f mp4decrypt || { echo "mp4decrypt 未随发布包产出"; exit 1; }
+          zip ../BBDown_${{ github.ref_name }}_osx-arm64.zip BBDown device.wvd mp4decrypt mp4decrypt-LICENSE.txt
+          cd ..
+          for rid in osx-x64 osx-arm64; do
+            unzip -l "BBDown_${{ github.ref_name }}_${rid}.zip" | grep -q device.wvd \
+              || { echo "${rid} zip 缺少 device.wvd"; exit 1; }
+            unzip -l "BBDown_${{ github.ref_name }}_${rid}.zip" | grep -q mp4decrypt \
+              || { echo "${rid} zip 缺少 mp4decrypt"; exit 1; }
+          done
+
+      - name: Upload Artifact [osx-x64]
+        uses: actions/upload-artifact@v5
+        with:
+          name: BBDown_osx-x64
+          path: BBDown_${{ github.ref_name }}_osx-x64.zip
+          retention-days: 7
+
+      - name: Upload Artifact [osx-arm64]
+        uses: actions/upload-artifact@v5
+        with:
+          name: BBDown_osx-arm64
+          path: BBDown_${{ github.ref_name }}_osx-arm64.zip
+          retention-days: 7
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build-win-x64-arm64, build-linux-x64-arm64, build-mac-x64-arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 只下载本次发布的 zip（pattern BBDown_*）：本 run 的 artifact 里还含 docker-publish 的
+      # buildx 缓存产物（aliveranme~BBDown~<hash>.dockerbuild），与 release 无关；
+      # 全量下载（不带 pattern）既拉下无关物，又会把偶发传输失败放大成整个 job 失败——
+      # 曾以 'Artifact download failed after 5 retries' 拖挂 create-release。
+      - name: Download artifacts (release zips only)
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+          merge-multiple: true
+          pattern: BBDown_*
+
+      - name: Build release notes
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+
+          # Extract changelog section for this version
+          NOTES_FILE=$(mktemp)
+          {
+            # Changelog for this version
+            if [ -f CHANGELOG.md ]; then
+              awk "/^## \\[$VERSION\\]/{flag=1; next} /^## \\[/{if(flag) exit} flag" CHANGELOG.md
+            fi
+
+            echo ""
+            echo "---"
+            echo ""
+
+            # Commits since previous tag
+            echo "## Commits"
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              git log --pretty=format:'- %s' --no-merges "$PREV_TAG..$TAG" || true
+            else
+              echo "Initial release."
+            fi
+            echo ""
+
+            # Downloads table
+            echo "## Downloads"
+            echo ""
+            echo "| Platform | Architecture |"
+            echo "|----------|-------------|"
+            echo "| Windows  | x64, arm64  |"
+            echo "| Linux    | x64, arm64  |"
+            echo "| macOS    | x64, arm64  |"
+            echo ""
+
+            if [ -n "$PREV_TAG" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
+            fi
+          } >> "$NOTES_FILE"
+
+          # 幂等发布：release 可能已被手动/脚本先行创建——同名会导致 gh release create
+          # 直接失败（'a release with the same tag name already exists'），构建产物永远传不上去。
+          # 先探测：已存在则跳过创建、仅补齐 assets；不存在则正常创建并随附 assets。
+          # --clobber 覆盖同名资产，保证重复运行/重跑安全。
+          # 生成 SHA256 校验文件：供用户下载后验证包完整性。
+          # 必须在 artifacts/ 内生成："sha256sum artifacts/*.zip" 会把工作目录前缀写进文件名列，
+          # 用户下载后直接 `sha256sum -c sha256sums.txt` 必然报 FAILED open or read，
+          # 得先自建一个同名目录才能校验——校验文件因此形同虚设。
+          (cd artifacts && sha256sum *.zip > sha256sums.txt)
+          RELEASE_ASSETS="artifacts/*.zip artifacts/sha256sums.txt"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists — skipping creation, uploading assets"
+            gh release upload "$TAG" $RELEASE_ASSETS --clobber
+          else
+            gh release create "$TAG" \
+              --title "BBDown ${TAG}" \
+              --notes-file "$NOTES_FILE" \
+              ${{ contains(github.ref_name, '-') && '--prerelease' || '' }} \
+              $RELEASE_ASSETS
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Docker 镜像发布 GHCR：测试通过即推送（镜像不依赖 zip 构建，无需等 build job）。
+  # 镜像 ghcr.io/aliveranme/bbdown：latest 始终指向最新 release。
+  docker-publish:
+    runs-on: ubuntu-latest
+    needs: [test]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/aliveranme/bbdown:latest
+            ghcr.io/aliveranme/bbdown:${{ github.ref_name }}

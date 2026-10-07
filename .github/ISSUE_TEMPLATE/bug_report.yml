@@ -1,0 +1,68 @@
+name: Bug 报告
+about: 报告一个 BUG
+title: "[Bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢提交 bug 报告！请确保在提交前已完成以下检查：
+        - 已搜索 [现有 Issue](https://github.com/AliverAnme/BBDown/issues) 确认未被报告过
+        - 已升级到最新版（Release / Actions / Dotnet Tool）
+        - Bug 为当前代码版本产生，非上游 B站 API 变更导致
+
+  - type: input
+    id: version
+    attributes:
+      label: BBDown 版本
+      description: 版本号或构建日期
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Docker
+    validations:
+      required: true
+
+  - type: input
+    id: dotnet
+    attributes:
+      label: .NET 运行时版本（如已知）
+      placeholder: "例如: net10.0"
+
+  - type: textarea
+    id: command
+    attributes:
+      label: 使用的完整命令
+      description: 请替换掉 Cookie/Token 等敏感信息
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: 日志输出
+      description: 请附上 `--debug` 模式的完整输出，注意隐藏 Cookie/Token/SESSDATA
+      render: shell

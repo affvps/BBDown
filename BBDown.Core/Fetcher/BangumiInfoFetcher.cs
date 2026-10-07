@@ -1,40 +1,71 @@
-﻿using BBDown.Core.Entity;
+using BBDown.Core.Entity;
+using BBDown.Core.Util;
+using System.Globalization;
 using System.Text.Json;
 using static BBDown.Core.Entity.Entity;
-using static BBDown.Core.Util.HTTPUtil;
 
 namespace BBDown.Core.Fetcher;
 
 public class BangumiInfoFetcher : IFetcher
 {
-    public async Task<VInfo> FetchAsync(string id)
+    private readonly IApiTransport _transport;
+
+    public BangumiInfoFetcher() : this(HttpApiTransport.Instance) { }
+
+    internal BangumiInfoFetcher(IApiTransport transport) => _transport = transport;
+
+    public async Task<VInfo> FetchAsync(string id, CancellationToken cancellationToken = default)
     {
         id = id[3..];
         string index = "";
-        string api = $"https://{Config.EPHOST}/pgc/view/web/season?ep_id={id}";
-        string json = await GetWebSourceAsync(api);
+        string api = $"https://{Config.Current.EpHost}/pgc/view/web/season?ep_id={id}";
+        string json = await _transport.GetStringAsync(api, cancellationToken);
         using var infoJson = JsonDocument.Parse(json);
-        var result = infoJson.RootElement.GetProperty("result");
-        string cover = result.GetProperty("cover").ToString();
-        string title = result.GetProperty("title").ToString();
-        string desc = result.GetProperty("evaluate").ToString();
-        string pubTimeStr = result.GetProperty("publish").GetProperty("pub_time").ToString();
-        long pubTime = string.IsNullOrEmpty(pubTimeStr) ? 0 : DateTimeOffset.ParseExact(pubTimeStr, "yyyy-MM-dd HH:mm:ss", null).ToUnixTimeSeconds();
-        var pages = result.GetProperty("episodes").EnumerateArray();
+        FetcherJson.ThrowIfApiError(infoJson.RootElement, "获取番剧信息失败");
+        if (!infoJson.RootElement.TryGetProperty("result", out var result))
+            throw new KeyNotFoundException("Bangumi API response missing 'result' node");
+        string cover = result.GetValueAsStringSafe("cover");
+        string title = result.GetValueAsStringSafe("title");
+        string desc = result.GetValueAsStringSafe("evaluate");
+        string pubTimeStr = result.TryGetPropertySafe("publish")?.GetValueAsStringSafe("pub_time") ?? "";
+        // InvariantCulture：pub_time 形如 "2021-07-15 11:00:00"，用 CurrentCulture 解析在
+        // 非公历默认历法（fa-IR/ar-SA 等）locale 下会错乱或失败（pubTime 静默归 0）。
+        long pubTime = !string.IsNullOrEmpty(pubTimeStr) && DateTimeOffset.TryParse(pubTimeStr, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var dto) ? dto.ToUnixTimeSeconds() : 0;
+        var pages = result.EnumerateArraySafe("episodes");
         List<Page> pagesInfo = new();
         int i = 1;
 
         //episodes为空; 或者未包含对应epid，番外/花絮什么的
-        if (!(pages.Any() && result.GetProperty("episodes").ToString().Contains($"/ep{id}")))
+        bool foundEp = false;
+        foreach (var ep in pages)
+        {
+            if (ep.TryGetProperty("id", out var eid) && eid.ToString() == id)
+            {
+                foundEp = true;
+                break;
+            }
+        }
+        if (!foundEp)
         {
             if (result.TryGetProperty("section", out JsonElement sections))
             {
                 foreach (var section in sections.EnumerateArray())
                 {
-                    if (section.ToString().Contains($"/ep{id}"))
+                    bool inSection = false;
+                    foreach (var ep in section.EnumerateArraySafe("episodes"))
                     {
-                        title += "[" + section.GetProperty("title").ToString() + "]";
-                        pages = section.GetProperty("episodes").EnumerateArray();
+                        if (ep.TryGetProperty("id", out var eid) && eid.ToString() == id)
+                        {
+                            inSection = true;
+                            break;
+                        }
+                    }
+                    if (inSection)
+                    {
+                        if (section.TryGetProperty("title", out var secTitle))
+                            title += "[" + secTitle.ToString() + "]";
+                        if (section.TryGetProperty("episodes", out var secEps))
+                            pages = secEps.EnumerateArray();
                         break;
                     }
                 }
@@ -43,27 +74,40 @@ public class BangumiInfoFetcher : IFetcher
 
         foreach (var page in pages)
         {
-            //跳过预告
-            if (page.TryGetProperty("badge", out JsonElement badge) && badge.ToString() == "预告") continue;
+            string pageId = page.GetValueAsStringSafe("id");
+            // 跳过非用户显式请求的预告（若用户指定了该 epId 则保留，防止 Index 变空导致整季被静默下载）
+            if (page.TryGetProperty("badge", out JsonElement badge) && badge.ToString() == "预告" && (string.IsNullOrEmpty(id) || pageId != id))
+                continue;
             string res = "";
-            try
+            if (page.TryGetProperty("dimension", out var dim) &&
+                dim.TryGetProperty("width", out var w) &&
+                dim.TryGetProperty("height", out var h))
             {
-                res = page.GetProperty("dimension").GetProperty("width").ToString() + "x" + page.GetProperty("dimension").GetProperty("height").ToString();
+                res = $"{w}x{h}";
             }
-            catch (Exception) { }
-            string _title = page.GetProperty("title").ToString() + " " + page.GetProperty("long_title").ToString();
+            string _title = page.GetValueAsStringSafe("title");
+            if (page.TryGetProperty("long_title", out var lt) && lt.ValueKind != JsonValueKind.Null)
+                _title += " " + lt.ToString();
             _title = _title.Trim();
-            Page p = new(i++,
-                page.GetProperty("aid").ToString(),
-                page.GetProperty("cid").ToString(),
-                page.GetProperty("id").ToString(),
-                _title,
-                0, res,
-                page.GetProperty("pub_time").GetInt64());
+            Page p = new()
+            {
+                index = i++,
+                aid = page.GetValueAsStringSafe("aid"),
+                cid = page.GetValueAsStringSafe("cid"),
+                epid = pageId,
+                title = _title,
+                dur = 0,
+                res = res,
+                pubTime = page.GetInt64Safe("pub_time"),
+            };
             if (p.epid == id) index = p.index.ToString();
             pagesInfo.Add(p);
         }
 
+        if (!string.IsNullOrEmpty(id) && string.IsNullOrEmpty(index))
+            throw new KeyNotFoundException($"未找到指定的剧集分P (ep_id={id})");
+        if (pagesInfo.Count == 0)
+            throw new KeyNotFoundException("未找到剧集分P信息");
 
         var info = new VInfo
         {
@@ -73,7 +117,7 @@ public class BangumiInfoFetcher : IFetcher
             PubTime = pubTime,
             PagesInfo = pagesInfo,
             IsBangumi = true,
-            IsCheese = true,
+            IsCheese = false,
             Index = index
         };
 
